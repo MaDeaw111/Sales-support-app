@@ -166,3 +166,124 @@ test('loadCustomersFromApi malformed DTO does not overwrite state.customers', as
     delete globalThis.fetch;
   }
 });
+
+test('saveCustomerToApi - create uses POST /api/customers', async () => {
+  const code = extractFunction('saveCustomerToApi(customer, mode)');
+  
+  let fetchMethod = '';
+  let fetchUrl = '';
+  let fetchBody = null;
+  
+  globalThis.fetch = async (url, options) => {
+    fetchUrl = url;
+    fetchMethod = options.method;
+    fetchBody = JSON.parse(options.body);
+    return {
+      ok: true,
+      async json() {
+        return {
+          status: 'SUCCESS',
+          data: {
+            customer: { id: 'CUST-NEW', name: 'Test' }
+          }
+        };
+      }
+    };
+  };
+
+  try {
+    const fn = new Function(`return (${code.trim()});`)();
+    const saved = await fn({ name: 'Test' }, 'create');
+    assert.equal(fetchUrl, '/api/customers');
+    assert.equal(fetchMethod, 'POST');
+    assert.equal(fetchBody.name, 'Test');
+    assert.equal(saved.id, 'CUST-NEW');
+  } finally {
+    delete globalThis.fetch;
+  }
+});
+
+test('saveCustomerToApi - update uses PUT /api/customers/:id', async () => {
+  const code = extractFunction('saveCustomerToApi(customer, mode)');
+  
+  let fetchMethod = '';
+  let fetchUrl = '';
+  let fetchBody = null;
+  
+  globalThis.fetch = async (url, options) => {
+    fetchUrl = url;
+    fetchMethod = options.method;
+    fetchBody = JSON.parse(options.body);
+    return {
+      ok: true,
+      async json() {
+        return {
+          status: 'SUCCESS',
+          data: {
+            customer: { id: 'CUST-1', name: 'Updated' }
+          }
+        };
+      }
+    };
+  };
+
+  try {
+    const fn = new Function(`return (${code.trim()});`)();
+    const saved = await fn({ id: 'CUST-1', name: 'Updated' }, 'update');
+    assert.equal(fetchUrl, '/api/customers/CUST-1');
+    assert.equal(fetchMethod, 'PUT');
+    assert.equal(fetchBody.name, 'Updated');
+    assert.equal(saved.id, 'CUST-1');
+  } finally {
+    delete globalThis.fetch;
+  }
+});
+
+test('saveCustomerToApi - throws error on failed response or malformed response', async () => {
+  const code = extractFunction('saveCustomerToApi(customer, mode)');
+  
+  globalThis.fetch = async (url, options) => {
+    return {
+      ok: false,
+      status: 400,
+      async json() {
+        return {
+          status: 'ERROR',
+          message: 'Validation failed'
+        };
+      }
+    };
+  };
+
+  try {
+    const fn = new Function(`return (${code.trim()});`)();
+    await assert.rejects(async () => {
+      await fn({ name: 'Test' }, 'create');
+    }, /Validation failed/);
+  } finally {
+    delete globalThis.fetch;
+  }
+});
+
+test('EXTERNAL_SALES UI cannot invoke Customer mutation controls', () => {
+  const canCreateCode = extractFunction('canCreateCustomer()');
+  const canEditCode = extractFunction('canEditCustomer()');
+  
+  const fnCreate = new Function('state', `return (${canCreateCode.trim()})();`);
+  const fnEdit = new Function('state', `return (${canEditCode.trim()})();`);
+  
+  const stateAdmin = { currentUser: { role: 'ADMIN' } };
+  const stateManager = { currentUser: { role: 'MANAGER' } };
+  const stateSupport = { currentUser: { role: 'SALES_SUPPORT' } };
+  const stateExternal = { currentUser: { role: 'EXTERNAL_SALES' } };
+  
+  assert.equal(fnCreate(stateAdmin), true);
+  assert.equal(fnCreate(stateManager), true);
+  assert.equal(fnCreate(stateSupport), true);
+  assert.equal(fnCreate(stateExternal), false);
+  
+  assert.equal(fnEdit(stateAdmin), true);
+  assert.equal(fnEdit(stateManager), true);
+  assert.equal(fnEdit(stateSupport), true);
+  assert.equal(fnEdit(stateExternal), false);
+});
