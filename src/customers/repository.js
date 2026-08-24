@@ -1,5 +1,3 @@
-import crypto from 'node:crypto';
-
 function wrapDb(db) {
   if (!db) throw new Error('D1 DB binding is required.');
   
@@ -109,6 +107,11 @@ export function createCustomerRepository(dbBinding) {
   const db = wrapDb(dbBinding);
   
   const repo = {
+    async userExists(userId) {
+      const row = await db.prepare('SELECT 1 FROM users WHERE user_id = ? LIMIT 1').bind(userId).first();
+      return !!row;
+    },
+
     async findCustomerById(customerId) {
       const customerRow = await db.prepare(`
         SELECT customer_id, customer_code, customer_name, country, source, owner_user_id, status, notes, created_at, updated_at
@@ -178,11 +181,15 @@ export function createCustomerRepository(dbBinding) {
       const status = dto.status || 'ACTIVE_CUSTOMER';
       const notes = dto.notes || '';
       
-      await db.prepare(`
-        INSERT INTO customers (
-          customer_id, customer_code, customer_name, country, source, owner_user_id, status, notes
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-      `).bind(customerId, code, name, country, source, ownerId, status, notes).run();
+      const batchStatements = [];
+      
+      batchStatements.push(
+        db.prepare(`
+          INSERT INTO customers (
+            customer_id, customer_code, customer_name, country, source, owner_user_id, status, notes
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        `).bind(customerId, code, name, country, source, ownerId, status, notes)
+      );
       
       const contacts = normalizeContacts(dto.contacts || []);
       for (const contact of contacts) {
@@ -193,12 +200,16 @@ export function createCustomerRepository(dbBinding) {
         const phone = contact.phone;
         const isPrimary = contact.isPrimary ? 1 : 0;
         
-        await db.prepare(`
-          INSERT INTO customer_contacts (
-            contact_id, customer_id, contact_name, position, email, phone, is_primary
-          ) VALUES (?, ?, ?, ?, ?, ?, ?)
-        `).bind(contactId, customerId, contactName, position, email, phone, isPrimary).run();
+        batchStatements.push(
+          db.prepare(`
+            INSERT INTO customer_contacts (
+              contact_id, customer_id, contact_name, position, email, phone, is_primary
+            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+          `).bind(contactId, customerId, contactName, position, email, phone, isPrimary)
+        );
       }
+      
+      await db.batch(batchStatements);
       
       return this.findCustomerById(customerId);
     },

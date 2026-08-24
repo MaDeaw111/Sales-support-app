@@ -35,6 +35,11 @@ export function createCustomerHandler({ repo, resolveUser }) {
       return json({ status: 'ERROR', message: 'Authentication required.' }, 401);
     }
     
+    const isAllowedRole = ['ADMIN', 'MANAGER', 'SALES_SUPPORT', 'EXTERNAL_SALES'].includes(user.role);
+    if (!isAllowedRole) {
+      return json({ status: 'ERROR', message: 'Permission denied.' }, 403);
+    }
+    
     const ownerFilter = customerOwnerFilter(user);
     const url = new URL(request.url);
     const path = url.pathname;
@@ -48,7 +53,7 @@ export function createCustomerHandler({ repo, resolveUser }) {
     }
     
     if (path === '/api/customers' && request.method === 'POST') {
-      if (ownerFilter === '__NO_ACCESS__') {
+      if (user.role === 'EXTERNAL_SALES') {
         return json({ status: 'ERROR', message: 'Permission denied.' }, 403);
       }
       
@@ -63,12 +68,22 @@ export function createCustomerHandler({ repo, resolveUser }) {
         return json({ status: 'ERROR', message: 'Customer code is required.' }, 400);
       }
       
-      let ownerId = body.ownerId || null;
-      if (user.role === 'EXTERNAL_SALES') {
-        if (ownerId && ownerId !== user.user_id) {
-          return json({ status: 'ERROR', message: 'External sales agent cannot assign ownership to another user.' }, 400);
+      const ownerId = body.ownerId || null;
+      if (ownerId) {
+        const exists = await repo.userExists(ownerId);
+        if (!exists) {
+          return json({ status: 'ERROR', message: 'Owner user does not exist.' }, 400);
         }
-        ownerId = user.user_id;
+      }
+      
+      const status = body.status !== undefined ? body.status : 'ACTIVE_CUSTOMER';
+      if (!['ACTIVE_CUSTOMER', 'INACTIVE_CUSTOMER'].includes(status)) {
+        return json({ status: 'ERROR', message: 'Invalid customer status.' }, 400);
+      }
+      
+      const explicitPrimaryCount = (body.contacts || []).filter(c => !!c.isPrimary).length;
+      if (explicitPrimaryCount > 1) {
+        return json({ status: 'ERROR', message: 'Only one primary contact is allowed.' }, 400);
       }
       
       try {
@@ -78,11 +93,11 @@ export function createCustomerHandler({ repo, resolveUser }) {
           country: body.country,
           source: body.source,
           ownerId,
-          status: body.status,
+          status,
           notes: body.notes,
           contacts: body.contacts
         });
-        return json({ status: 'SUCCESS', data: created }, 200);
+        return json({ status: 'SUCCESS', data: { customer: created } }, 200);
       } catch (err) {
         if (err.message && err.message.includes('UNIQUE constraint failed')) {
           return json({ status: 'ERROR', message: 'Customer code already exists.' }, 409);
@@ -101,18 +116,15 @@ export function createCustomerHandler({ repo, resolveUser }) {
           return json({ status: 'ERROR', message: 'Customer not found.' }, 404);
         }
         
-        if (ownerFilter === '__NO_ACCESS__') {
-          return json({ status: 'ERROR', message: 'Customer not found.' }, 404);
-        }
         if (ownerFilter && customer.ownerId !== ownerFilter) {
           return json({ status: 'ERROR', message: 'Customer not found.' }, 404);
         }
         
-        return json({ status: 'SUCCESS', data: customer });
+        return json({ status: 'SUCCESS', data: { customer } });
       }
       
       if (request.method === 'PUT') {
-        if (ownerFilter === '__NO_ACCESS__') {
+        if (user.role === 'EXTERNAL_SALES') {
           return json({ status: 'ERROR', message: 'Permission denied.' }, 403);
         }
         
@@ -121,23 +133,31 @@ export function createCustomerHandler({ repo, resolveUser }) {
           return json({ status: 'ERROR', message: 'Customer not found.' }, 404);
         }
         
-        if (ownerFilter && customer.ownerId !== ownerFilter) {
-          return json({ status: 'ERROR', message: 'Customer not found.' }, 404);
+        const body = await readJson(request);
+        
+        if (body && body.ownerId !== undefined && body.ownerId !== null) {
+          const exists = await repo.userExists(body.ownerId);
+          if (!exists) {
+            return json({ status: 'ERROR', message: 'Owner user does not exist.' }, 400);
+          }
         }
         
-        const body = await readJson(request);
-        if (user.role === 'EXTERNAL_SALES') {
-          if (body && body.ownerId !== undefined && body.ownerId !== user.user_id) {
-            return json({ status: 'ERROR', message: 'External sales agent cannot assign ownership to another user.' }, 400);
+        if (body && body.status !== undefined) {
+          if (!['ACTIVE_CUSTOMER', 'INACTIVE_CUSTOMER'].includes(body.status)) {
+            return json({ status: 'ERROR', message: 'Invalid customer status.' }, 400);
           }
-          if (body) {
-            body.ownerId = user.user_id; // enforce
+        }
+        
+        if (body && body.contacts !== undefined) {
+          const explicitPrimaryCount = (body.contacts || []).filter(c => !!c.isPrimary).length;
+          if (explicitPrimaryCount > 1) {
+            return json({ status: 'ERROR', message: 'Only one primary contact is allowed.' }, 400);
           }
         }
         
         try {
           const updated = await repo.updateCustomer(customerId, body);
-          return json({ status: 'SUCCESS', data: updated });
+          return json({ status: 'SUCCESS', data: { customer: updated } });
         } catch (err) {
           if (err.message && err.message.includes('UNIQUE constraint failed')) {
             return json({ status: 'ERROR', message: 'Customer code already exists.' }, 409);

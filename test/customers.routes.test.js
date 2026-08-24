@@ -127,6 +127,20 @@ test('customers route: EXTERNAL_SALES lists only owned customers', async () => {
   assert.equal(body.data.customers[0].id, 'CUST-0002');
 });
 
+test('customers route: ADMIN gets customer detail', async () => {
+  const { db, wrappedDb } = await setupTestDb();
+  await seedUserAndSession(db, 'USR-0001', 'Admin', 'admin@example.com', 'ADMIN', 'ALL', 'admin-token');
+  seedCustomer(db, 'CUST-0001', 'C-001', 'Cust 1', 'USR-0001');
+
+  const req = makeRequest('/api/customers/CUST-0001', 'GET', null, 'admin-token');
+  const res = await worker.fetch(req, { DB: wrappedDb });
+  assert.equal(res.status, 200);
+  const body = await res.json();
+  assert.equal(body.status, 'SUCCESS');
+  assert.equal(body.data.customer.name, 'Cust 1');
+  assert.equal(body.data.customer.code, 'C-001');
+});
+
 test('customers route: ADMIN creates customer', async () => {
   const { db, wrappedDb } = await setupTestDb();
   await seedUserAndSession(db, 'USR-0001', 'Admin', 'admin@example.com', 'ADMIN', 'ALL', 'admin-token');
@@ -147,29 +161,33 @@ test('customers route: ADMIN creates customer', async () => {
   assert.equal(res.status, 200);
   const body = await res.json();
   assert.equal(body.status, 'SUCCESS');
-  assert.equal(body.data.name, 'New Customer B.V.');
-  assert.equal(body.data.contacts.length, 1);
-  assert.equal(body.data.contacts[0].name, 'Primary Contact');
-  assert.equal(body.data.contacts[0].isPrimary, true);
+  assert.equal(body.data.customer.name, 'New Customer B.V.');
+  assert.equal(body.data.customer.contacts.length, 1);
+  assert.equal(body.data.customer.contacts[0].name, 'Primary Contact');
+  assert.equal(body.data.customer.contacts[0].isPrimary, true);
 });
 
-test('customers route: EXTERNAL_SALES cannot assign another owner', async () => {
+test('customers route: EXTERNAL_SALES mutation returns 403', async () => {
   const { db, wrappedDb } = await setupTestDb();
   await seedUserAndSession(db, 'USR-0001', 'Admin', 'admin@example.com', 'ADMIN', 'ALL', 'admin-token');
   await seedUserAndSession(db, 'USR-0002', 'Sales', 'sales@example.com', 'EXTERNAL_SALES', 'OWNED', 'sales-token');
+  seedCustomer(db, 'CUST-0002', 'C-002', 'Cust 2', 'USR-0002');
 
-  const payload = {
-    name: 'Sales Customer',
-    code: 'C-SALES-1',
-    ownerId: 'USR-0001'
-  };
+  // Try POST
+  const postReq = makeRequest('/api/customers', 'POST', { name: 'Sales Cust', code: 'C-S1' }, 'sales-token');
+  const postRes = await worker.fetch(postReq, { DB: wrappedDb });
+  assert.equal(postRes.status, 403);
+  const postBody = await postRes.json();
+  assert.equal(postBody.status, 'ERROR');
+  assert.match(postBody.message, /Permission denied/i);
 
-  const req = makeRequest('/api/customers', 'POST', payload, 'sales-token');
-  const res = await worker.fetch(req, { DB: wrappedDb });
-  assert.equal(res.status, 400);
-  const body = await res.json();
-  assert.equal(body.status, 'ERROR');
-  assert.match(body.message, /cannot assign ownership/i);
+  // Try PUT
+  const putReq = makeRequest('/api/customers/CUST-0002', 'PUT', { name: 'New Name' }, 'sales-token');
+  const putRes = await worker.fetch(putReq, { DB: wrappedDb });
+  assert.equal(putRes.status, 403);
+  const putBody = await putRes.json();
+  assert.equal(putBody.status, 'ERROR');
+  assert.match(putBody.message, /Permission denied/i);
 });
 
 test('customers route: duplicate customer code returns 409', async () => {
@@ -254,8 +272,79 @@ test('customers route: ADMIN updates customer and contacts', async () => {
   assert.equal(res.status, 200);
   const body = await res.json();
   assert.equal(body.status, 'SUCCESS');
-  assert.equal(body.data.name, 'Updated Cust 1');
-  assert.equal(body.data.contacts.length, 1);
-  assert.equal(body.data.contacts[0].name, 'New Primary');
-  assert.equal(body.data.contactPerson, 'New Primary');
+  assert.equal(body.data.customer.name, 'Updated Cust 1');
+  assert.equal(body.data.customer.contacts.length, 1);
+  assert.equal(body.data.customer.contacts[0].name, 'New Primary');
+  assert.equal(body.data.customer.contactPerson, 'New Primary');
+});
+
+test('customers route: validate ownerId exists when provided', async () => {
+  const { db, wrappedDb } = await setupTestDb();
+  await seedUserAndSession(db, 'USR-0001', 'Admin', 'admin@example.com', 'ADMIN', 'ALL', 'admin-token');
+
+  const payload = {
+    name: 'Test Cust',
+    code: 'C-T1',
+    ownerId: 'INVALID_USER'
+  };
+
+  const req = makeRequest('/api/customers', 'POST', payload, 'admin-token');
+  const res = await worker.fetch(req, { DB: wrappedDb });
+  assert.equal(res.status, 400);
+  const body = await res.json();
+  assert.equal(body.status, 'ERROR');
+  assert.match(body.message, /owner user does not exist/i);
+});
+
+test('customers route: validate status is ACTIVE_CUSTOMER or INACTIVE_CUSTOMER', async () => {
+  const { db, wrappedDb } = await setupTestDb();
+  await seedUserAndSession(db, 'USR-0001', 'Admin', 'admin@example.com', 'ADMIN', 'ALL', 'admin-token');
+
+  const payload = {
+    name: 'Test Cust',
+    code: 'C-T1',
+    status: 'PENDING_APPROVAL'
+  };
+
+  const req = makeRequest('/api/customers', 'POST', payload, 'admin-token');
+  const res = await worker.fetch(req, { DB: wrappedDb });
+  assert.equal(res.status, 400);
+  const body = await res.json();
+  assert.equal(body.status, 'ERROR');
+  assert.match(body.message, /invalid customer status/i);
+});
+
+test('customers route: reject payload with more than one explicit primary contact', async () => {
+  const { db, wrappedDb } = await setupTestDb();
+  await seedUserAndSession(db, 'USR-0001', 'Admin', 'admin@example.com', 'ADMIN', 'ALL', 'admin-token');
+
+  const payload = {
+    name: 'Test Cust',
+    code: 'C-T1',
+    contacts: [
+      { name: 'Contact A', isPrimary: true },
+      { name: 'Contact B', isPrimary: true }
+    ]
+  };
+
+  const req = makeRequest('/api/customers', 'POST', payload, 'admin-token');
+  const res = await worker.fetch(req, { DB: wrappedDb });
+  assert.equal(res.status, 400);
+  const body = await res.json();
+  assert.equal(body.status, 'ERROR');
+  assert.match(body.message, /only one primary contact/i);
+});
+
+test('customers route: EXPORT and PRODUCTION_WAREHOUSE customer access is denied', async () => {
+  const { db, wrappedDb } = await setupTestDb();
+  await seedUserAndSession(db, 'USR-EXPORT', 'Export User', 'export@example.com', 'EXPORT', 'ALL', 'export-token');
+  await seedUserAndSession(db, 'USR-WH', 'Warehouse User', 'wh@example.com', 'PRODUCTION_WAREHOUSE', 'ALL', 'wh-token');
+
+  const req1 = makeRequest('/api/customers', 'GET', null, 'export-token');
+  const res1 = await worker.fetch(req1, { DB: wrappedDb });
+  assert.equal(res1.status, 403);
+
+  const req2 = makeRequest('/api/customers', 'POST', { name: 'Some Name', code: 'C-SOME' }, 'wh-token');
+  const res2 = await worker.fetch(req2, { DB: wrappedDb });
+  assert.equal(res2.status, 403);
 });
