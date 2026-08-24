@@ -696,3 +696,123 @@ test('saveEditCustomer - rejects saving legacy ownerId and displays inline error
   }
 });
 
+test('loadExternalSalesFromApi success replaces state.externalSales', async () => {
+  const code = extractFunction('loadExternalSalesFromApi()');
+  
+  const mockState = { externalSales: [] };
+  let renderViewCalled = false;
+  
+  globalThis.state = mockState;
+  globalThis.renderView = () => { renderViewCalled = true; };
+  globalThis.fetch = async (url) => {
+    assert.equal(url, '/api/external-sales');
+    return {
+      ok: true,
+      async json() {
+        return {
+          status: 'SUCCESS',
+          data: {
+            externalSales: [{ id: 'USR-0002', name: 'Sira' }]
+          }
+        };
+      }
+    };
+  };
+
+  try {
+    const fn = new Function(`return (${code.trim()});`)();
+    await fn();
+    
+    assert.equal(renderViewCalled, true);
+    assert.equal(mockState.externalSales.length, 1);
+    assert.equal(mockState.externalSales[0].name, 'Sira');
+  } finally {
+    delete globalThis.state;
+    delete globalThis.renderView;
+    delete globalThis.fetch;
+  }
+});
+
+test('loadExternalSalesFromApi failed/malformed response preserves previous state', async () => {
+  const code = extractFunction('loadExternalSalesFromApi()');
+  
+  const mockState = { externalSales: [{ id: 'prev' }] };
+  let renderViewCalled = false;
+  
+  globalThis.state = mockState;
+  globalThis.renderView = () => { renderViewCalled = true; };
+  globalThis.fetch = async (url) => {
+    return { ok: false };
+  };
+
+  try {
+    const fn = new Function(`return (${code.trim()});`)();
+    await fn();
+    assert.equal(renderViewCalled, false);
+    assert.equal(mockState.externalSales.length, 1);
+    assert.equal(mockState.externalSales[0].id, 'prev');
+  } finally {
+    delete globalThis.fetch;
+  }
+});
+
+test('External Sales UI and Save Flow validation checks', () => {
+  const getRowsBlock = extractFunction('getExternalSalesManagementRows()');
+  const saveProfileBlock = extractFunction('saveExternalSalesProfile(userId)');
+  const openModalBlock = extractFunction('openExternalSalesModal(userId)');
+
+  assert.doesNotMatch(getRowsBlock, /state\.users/);
+  assert.match(getRowsBlock, /state\.externalSales/);
+
+  assert.match(openModalBlock, /disabled/);
+  assert.match(openModalBlock, /Prototype only/);
+
+  assert.doesNotMatch(saveProfileBlock, /google\.script\.run/);
+  assert.doesNotMatch(saveProfileBlock, /Save is available only in the deployed/);
+
+  assert.match(saveProfileBlock, /fetch\([`'"]\/api\/external-sales/);
+});
+
+test('External Sales Front-end RBAC and Users Fallback check', () => {
+  const canViewFn = extractFunction('canViewExternalSalesManagement()');
+  const canManageFn = extractFunction('canManageExternalSales()');
+  
+  // Verify canViewExternalSalesManagement rules
+  globalThis.state = { currentUser: { role: 'ADMIN' } };
+  const canView = new Function(`return (${canViewFn.trim()});`)();
+  assert.equal(canView(), true);
+  state.currentUser.role = 'MANAGER';
+  assert.equal(canView(), true);
+  state.currentUser.role = 'SALES_SUPPORT';
+  assert.equal(canView(), true);
+  state.currentUser.role = 'EXTERNAL_SALES';
+  assert.equal(canView(), false);
+
+  // Verify canManageExternalSales rules
+  const canManage = new Function(`return (${canManageFn.trim()});`)();
+  state.currentUser.role = 'ADMIN';
+  assert.equal(canManage(), true);
+  state.currentUser.role = 'MANAGER';
+  assert.equal(canManage(), true);
+  state.currentUser.role = 'SALES_SUPPORT';
+  assert.equal(canManage(), false);
+  state.currentUser.role = 'EXTERNAL_SALES';
+  assert.equal(canManage(), false);
+
+  delete globalThis.state;
+
+  // Verify no state.users fallback in External Sales UI helpers
+  const openModalBlock = extractFunction('openExternalSalesModal(userId)');
+  const openAddModalBlock = extractFunction('openAddExternalSalesModal()');
+  const saveNewBlock = extractFunction('saveNewExternalSales()');
+
+  // Verify openExternalSalesModal lookup only uses state.externalSales
+  assert.doesNotMatch(openModalBlock, /\(state\.users \|\| \[\]\)\.find\(u => u\.id === userId/);
+
+  // Verify saveNewExternalSales contains the reload calls
+  assert.match(saveNewBlock, /loadCustomersFromApi/);
+  assert.match(saveNewBlock, /loadExternalSalesFromApi/);
+  assert.match(saveNewBlock, /loadCustomerOwnersFromApi/);
+});
+
+
