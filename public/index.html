@@ -284,6 +284,20 @@
             }
         }
 
+        async function loadCustomerOwnersFromApi() {
+            try {
+                const res = await fetch('/api/customer-owners');
+                if (!res.ok) return;
+                const body = await res.json();
+                if (body && body.status === 'SUCCESS' && body.data && Array.isArray(body.data.owners)) {
+                    state.customerOwners = body.data.owners;
+                    renderView();
+                }
+            } catch (err) {
+                console.error('Failed to load customer owners:', err);
+            }
+        }
+
         function startAuthenticatedApp() {
             showAuthenticatedShell(true);
             state.selectedCustomerId = null;
@@ -297,6 +311,7 @@
                 callBackend('GET_MASTER_DATA', {}, hydrateData, msg => console.warn('Master data migration pending:', msg));
             }
             loadCustomersFromApi();
+            loadCustomerOwnersFromApi();
         }
 
         function openChangePasswordModal(forced = false) {
@@ -381,6 +396,7 @@
             poDocumentsLoadedFor: '',
             pricingTab: 'STANDARD',
             managerDashboardFilters: { year: '2026', month: 'ALL', salesOwnerId: 'ALL', customerId: 'ALL', productId: 'ALL' },
+            customerOwners: [],
             
             users: [
                 { id: 'USR-0001', name: 'Chiradet Chermchabok', email: 'chiradet_c@wcat-thai.com', role: 'SALES_SUPPORT', defaultCurrency: '-', status: 'ACTIVE', customerScope: 'ALL_ASSIGNED' },
@@ -4900,7 +4916,7 @@
                                 <label class="font-semibold text-slate-700">ผู้ดูแลหลัก (Owner)</label>
                                 <select id="addCOwner" class="w-full border border-slate-300 rounded p-2 mt-1 outline-none focus:border-blue-500">
                                     <option value="">-- ไม่ระบุ / Unassigned --</option>
-                                    ${state.users.filter(u=>u.role==='EXTERNAL_SALES' || u.role==='INTERNAL').map(u=>`<option value="${u.id}">${u.name} (${u.role})</option>`).join('')}
+                                    ${(state.customerOwners || []).map(u=>`<option value="${u.id}">${u.name} (${u.role})</option>`).join('')}
                                 </select>
                             </div>
                         </div>
@@ -5017,7 +5033,14 @@
                                     <label class="font-semibold text-slate-700">ผู้ดูแลหลัก</label>
                                     <select id="editCOwner" class="w-full border border-slate-300 rounded p-2 mt-1 outline-none bg-white">
                                         <option value="">-- ไม่ระบุ --</option>
-                                        ${state.users.filter(u=>u.role==='EXTERNAL_SALES' || u.role==='INTERNAL').map(u=>`<option value="${u.id}">${u.name}</option>`).join('')}
+                                        ${(() => {
+                                            const owners = state.customerOwners || [];
+                                            const options = owners.map(u => `<option value="${u.id}" ${u.id === c.ownerId ? 'selected' : ''}>${u.name} (${u.role})</option>`);
+                                            if (c.ownerId && !owners.some(u => u.id === c.ownerId)) {
+                                                options.push(`<option value="${c.ownerId}" selected>${c.ownerId} (Legacy/Unavailable)</option>`);
+                                            }
+                                            return options.join('');
+                                        })()}
                                     </select>
                                 </div>
                                 <div>

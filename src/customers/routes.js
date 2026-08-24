@@ -44,6 +44,11 @@ export function createCustomerHandler({ repo, resolveUser }) {
     const url = new URL(request.url);
     const path = url.pathname;
     
+    if (path === '/api/customer-owners' && request.method === 'GET') {
+      const owners = await repo.listCustomerOwners();
+      return json({ status: 'SUCCESS', data: { owners } });
+    }
+    
     if (path === '/api/customers' && request.method === 'GET') {
       if (ownerFilter === '__NO_ACCESS__') {
         return json({ status: 'SUCCESS', data: { customers: [] } });

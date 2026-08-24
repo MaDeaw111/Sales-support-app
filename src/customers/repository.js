@@ -171,6 +171,22 @@ export function createCustomerRepository(dbBinding) {
       });
     },
     
+    async listCustomerOwners() {
+      const sql = `
+        SELECT user_id, full_name, email, role
+        FROM users
+        WHERE status = 'ACTIVE' AND role = 'EXTERNAL_SALES'
+        ORDER BY full_name COLLATE NOCASE ASC
+      `;
+      const { results } = await db.prepare(sql).all();
+      return (results || []).map(r => ({
+        id: r.user_id,
+        name: r.full_name,
+        email: r.email,
+        role: r.role
+      }));
+    },
+    
     async createCustomer(dto) {
       const customerId = dto.id || await nextCustomerId(db);
       const code = dto.code;
