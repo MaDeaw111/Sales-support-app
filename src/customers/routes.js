@@ -58,14 +58,24 @@ export function createCustomerHandler({ repo, resolveUser }) {
       }
       
       const body = await readJson(request);
-      const name = String(body?.name || '').trim();
-      const code = String(body?.code || '').trim();
+      if (!body || typeof body !== 'object' || Array.isArray(body)) {
+        return json({ status: 'ERROR', message: 'Invalid request body.' }, 400);
+      }
+      
+      const name = String(body.name || '').trim();
+      const code = String(body.code || '').trim();
       
       if (!name) {
         return json({ status: 'ERROR', message: 'Customer name is required.' }, 400);
       }
       if (!code) {
         return json({ status: 'ERROR', message: 'Customer code is required.' }, 400);
+      }
+      
+      if (body.contacts !== undefined) {
+        if (!Array.isArray(body.contacts)) {
+          return json({ status: 'ERROR', message: 'Contacts must be an array.' }, 400);
+        }
       }
       
       const ownerId = body.ownerId || null;
@@ -134,21 +144,46 @@ export function createCustomerHandler({ repo, resolveUser }) {
         }
         
         const body = await readJson(request);
+        if (!body || typeof body !== 'object' || Array.isArray(body)) {
+          return json({ status: 'ERROR', message: 'Invalid request body.' }, 400);
+        }
         
-        if (body && body.ownerId !== undefined && body.ownerId !== null) {
+        if (body.name !== undefined) {
+          const trimmedName = String(body.name || '').trim();
+          if (!trimmedName) {
+            return json({ status: 'ERROR', message: 'Customer name is required.' }, 400);
+          }
+          body.name = trimmedName;
+        }
+        
+        if (body.code !== undefined) {
+          const trimmedCode = String(body.code || '').trim();
+          if (!trimmedCode) {
+            return json({ status: 'ERROR', message: 'Customer code is required.' }, 400);
+          }
+          body.code = trimmedCode;
+        }
+        
+        if (body.contacts !== undefined) {
+          if (!Array.isArray(body.contacts)) {
+            return json({ status: 'ERROR', message: 'Contacts must be an array.' }, 400);
+          }
+        }
+        
+        if (body.ownerId !== undefined && body.ownerId !== null) {
           const exists = await repo.userExists(body.ownerId);
           if (!exists) {
             return json({ status: 'ERROR', message: 'Owner user does not exist.' }, 400);
           }
         }
         
-        if (body && body.status !== undefined) {
+        if (body.status !== undefined) {
           if (!['ACTIVE_CUSTOMER', 'INACTIVE_CUSTOMER'].includes(body.status)) {
             return json({ status: 'ERROR', message: 'Invalid customer status.' }, 400);
           }
         }
         
-        if (body && body.contacts !== undefined) {
+        if (body.contacts !== undefined) {
           const explicitPrimaryCount = (body.contacts || []).filter(c => !!c.isPrimary).length;
           if (explicitPrimaryCount > 1) {
             return json({ status: 'ERROR', message: 'Only one primary contact is allowed.' }, 400);

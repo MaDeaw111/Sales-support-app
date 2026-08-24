@@ -348,3 +348,68 @@ test('customers route: EXPORT and PRODUCTION_WAREHOUSE customer access is denied
   const res2 = await worker.fetch(req2, { DB: wrappedDb });
   assert.equal(res2.status, 403);
 });
+
+test('customers route: PUT null/invalid body returns 400', async () => {
+  const { db, wrappedDb } = await setupTestDb();
+  await seedUserAndSession(db, 'USR-0001', 'Admin', 'admin@example.com', 'ADMIN', 'ALL', 'admin-token');
+  seedCustomer(db, 'CUST-0001', 'C-001', 'Cust 1', 'USR-0001');
+
+  // null body
+  const req1 = makeRequest('/api/customers/CUST-0001', 'PUT', null, 'admin-token');
+  const res1 = await worker.fetch(req1, { DB: wrappedDb });
+  assert.equal(res1.status, 400);
+  const body1 = await res1.json();
+  assert.equal(body1.status, 'ERROR');
+
+  // non-object body (e.g. array or raw string)
+  const headers = { 'cookie': 'wcat_session=admin-token', 'content-type': 'application/json' };
+  const req2 = new Request('https://example.com/api/customers/CUST-0001', {
+    method: 'PUT',
+    headers,
+    body: '"invalid_raw_string"'
+  });
+  const res2 = await worker.fetch(req2, { DB: wrappedDb });
+  assert.equal(res2.status, 400);
+  const body2 = await res2.json();
+  assert.equal(body2.status, 'ERROR');
+});
+
+test('customers route: PUT empty trimmed name or code returns 400', async () => {
+  const { db, wrappedDb } = await setupTestDb();
+  await seedUserAndSession(db, 'USR-0001', 'Admin', 'admin@example.com', 'ADMIN', 'ALL', 'admin-token');
+  seedCustomer(db, 'CUST-0001', 'C-001', 'Cust 1', 'USR-0001');
+
+  // PUT name: ""
+  const req1 = makeRequest('/api/customers/CUST-0001', 'PUT', { name: '   ' }, 'admin-token');
+  const res1 = await worker.fetch(req1, { DB: wrappedDb });
+  assert.equal(res1.status, 400);
+  const body1 = await res1.json();
+  assert.match(body1.message, /name/i);
+
+  // PUT code: ""
+  const req2 = makeRequest('/api/customers/CUST-0001', 'PUT', { code: '   ' }, 'admin-token');
+  const res2 = await worker.fetch(req2, { DB: wrappedDb });
+  assert.equal(res2.status, 400);
+  const body2 = await res2.json();
+  assert.match(body2.message, /code/i);
+});
+
+test('customers route: POST and PUT invalid contacts object returns 400', async () => {
+  const { db, wrappedDb } = await setupTestDb();
+  await seedUserAndSession(db, 'USR-0001', 'Admin', 'admin@example.com', 'ADMIN', 'ALL', 'admin-token');
+  seedCustomer(db, 'CUST-0001', 'C-001', 'Cust 1', 'USR-0001');
+
+  // POST contacts: {}
+  const req1 = makeRequest('/api/customers', 'POST', { name: 'New Name', code: 'C-NEW-2', contacts: {} }, 'admin-token');
+  const res1 = await worker.fetch(req1, { DB: wrappedDb });
+  assert.equal(res1.status, 400);
+  const body1 = await res1.json();
+  assert.match(body1.message, /contacts must be an array/i);
+
+  // PUT contacts: {}
+  const req2 = makeRequest('/api/customers/CUST-0001', 'PUT', { contacts: {} }, 'admin-token');
+  const res2 = await worker.fetch(req2, { DB: wrappedDb });
+  assert.equal(res2.status, 400);
+  const body2 = await res2.json();
+  assert.match(body2.message, /contacts must be an array/i);
+});
