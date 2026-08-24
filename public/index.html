@@ -5161,6 +5161,25 @@
             const c = getScopedCustomers().find(x => x.id === id);
             if (!c) return;
 
+            const errDiv = document.getElementById('editCustomerError');
+            if (errDiv) {
+                errDiv.classList.add('hidden');
+                errDiv.textContent = '';
+            }
+
+            const ownerId = document.getElementById('editCOwner').value || null;
+            if (ownerId) {
+                const owners = state.customerOwners || [];
+                const ownerExists = owners.some(u => u.id === ownerId);
+                if (!ownerExists) {
+                    if (errDiv) {
+                        errDiv.classList.remove('hidden');
+                        errDiv.textContent = 'The current Owner is no longer available. Please select a valid Owner or Unassigned.';
+                    }
+                    return;
+                }
+            }
+
             const uiStatus = document.getElementById('editCStatus').value;
             const apiStatus = uiStatus === 'ACTIVE' ? 'ACTIVE_CUSTOMER' : 'INACTIVE_CUSTOMER';
 
@@ -5186,17 +5205,11 @@
                 name: document.getElementById('editCName').value,
                 country: document.getElementById('editCCountry').value,
                 source: c.source || 'DIRECT',
-                ownerId: document.getElementById('editCOwner').value || null,
+                ownerId,
                 status: apiStatus,
                 notes: document.getElementById('editCNotes').value,
                 contacts
             };
-
-            const errDiv = document.getElementById('editCustomerError');
-            if (errDiv) {
-                errDiv.classList.add('hidden');
-                errDiv.textContent = '';
-            }
 
             try {
                 const saved = await saveCustomerToApi(payload, 'update');
