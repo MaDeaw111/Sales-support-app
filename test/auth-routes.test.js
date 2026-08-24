@@ -1,7 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { hashPassword } from '../src/auth/crypto.js';
-import { createAuthHandler } from '../src/auth/routes.js';
+import { readFile } from 'node:fs/promises';
+import { DatabaseSync } from 'node:sqlite';
+import { hashPassword, hashSessionToken } from '../src/auth/crypto.js';
+import { createAuthHandler, resolveAuthenticatedUser } from '../src/auth/routes.js';
 
 function makeUser(passwordRecord) {
   return {
@@ -137,4 +139,82 @@ test('change-password verifies current password, clears forced-change flag, and 
   assert.equal(oldLogin.status, 401);
   const newLogin = await handler(jsonRequest('/api/auth/login', { email: user.email, password: 'NewPassword456!' }));
   assert.equal(newLogin.status, 200);
+});
+
+test('resolveAuthenticatedUser resolves current user from valid cookie and returns null for missing or expired sessions', async () => {
+  const db = new DatabaseSync(':memory:');
+  const sql = await readFile(new URL('../migrations/0001_auth.sql', import.meta.url), 'utf8');
+  db.exec(sql);
+
+  db.prepare(`
+    INSERT INTO users (user_id, full_name, email, role, customer_scope, password_hash, password_salt)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+  `).run('USR-0001', 'Milan Wolff', 'm.wolff@meelunie.com', 'ADMIN', 'ALL', 'hash', 'salt');
+
+  const validToken = 'valid-token';
+  const validTokenHash = await hashSessionToken(validToken);
+  const expiredToken = 'expired-token';
+  const expiredTokenHash = await hashSessionToken(expiredToken);
+
+  const futureIso = new Date(Date.now() + 1000000).toISOString();
+  const pastIso = new Date(Date.now() - 1000000).toISOString();
+
+  db.prepare(`
+    INSERT INTO sessions (session_id, user_id, token_hash, expires_at)
+    VALUES (?, ?, ?, ?)
+  `).run('SES-1', 'USR-0001', validTokenHash, futureIso);
+
+  db.prepare(`
+    INSERT INTO sessions (session_id, user_id, token_hash, expires_at)
+    VALUES (?, ?, ?, ?)
+  `).run('SES-2', 'USR-0001', expiredTokenHash, pastIso);
+
+  const wrappedDb = {
+    prepare(sql) {
+      const stmt = db.prepare(sql);
+      return {
+        _params: [],
+        bind(...args) {
+          this._params = args;
+          return this;
+        },
+        async first() {
+          const rows = stmt.all(...this._params);
+          return rows[0] || null;
+        },
+        async run() {
+          const res = stmt.run(...this._params);
+          return { success: true, meta: res };
+        },
+        async all() {
+          const rows = stmt.all(...this._params);
+          return { results: rows, success: true };
+        }
+      };
+    }
+  };
+
+  const env = { DB: wrappedDb };
+
+  const req1 = new Request('https://example.com/api/some-endpoint', {
+    headers: { cookie: `wcat_session=${validToken}` }
+  });
+  const user = await resolveAuthenticatedUser(req1, env);
+  assert.ok(user);
+  assert.equal(user.user_id, 'USR-0001');
+  assert.equal(user.full_name, 'Milan Wolff');
+  assert.equal(user.email, 'm.wolff@meelunie.com');
+  assert.equal(user.role, 'ADMIN');
+  assert.equal(user.customer_scope, 'ALL');
+  assert.equal(user.password_hash, 'hash');
+
+  const req2 = new Request('https://example.com/api/some-endpoint', {
+    headers: { cookie: `wcat_session=${expiredToken}` }
+  });
+  const userExpired = await resolveAuthenticatedUser(req2, env);
+  assert.equal(userExpired, null);
+
+  const req3 = new Request('https://example.com/api/some-endpoint');
+  const userMissing = await resolveAuthenticatedUser(req3, env);
+  assert.equal(userMissing, null);
 });

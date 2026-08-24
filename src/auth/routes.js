@@ -141,3 +141,15 @@ export function createAuthHandler({ repo, now = () => new Date() }) {
 export function createAuthHandlerFromEnv(env) {
   return createAuthHandler({ repo: createAuthRepository(env.DB) });
 }
+
+export async function resolveAuthenticatedUser(request, env) {
+  const token = getCookie(request, COOKIE_NAME);
+  if (!token) return null;
+  const tokenHash = await hashSessionToken(token);
+  const repo = createAuthRepository(env.DB);
+  const nowIso = new Date().toISOString();
+  const user = await repo.findSessionUserByTokenHash(tokenHash, nowIso);
+  if (!user) return null;
+  await repo.touchSession(user.session_id, nowIso);
+  return user;
+}

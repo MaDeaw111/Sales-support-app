@@ -270,6 +270,20 @@
             }
         }
 
+        async function loadCustomersFromApi() {
+            try {
+                const res = await fetch('/api/customers');
+                if (!res.ok) return;
+                const body = await res.json();
+                if (body && body.status === 'SUCCESS' && body.data && Array.isArray(body.data.customers)) {
+                    state.customers = body.data.customers;
+                    renderView();
+                }
+            } catch (err) {
+                console.error('Failed to load customers:', err);
+            }
+        }
+
         function startAuthenticatedApp() {
             showAuthenticatedShell(true);
             state.selectedCustomerId = null;
@@ -282,6 +296,7 @@
             if (typeof callBackend === 'function') {
                 callBackend('GET_MASTER_DATA', {}, hydrateData, msg => console.warn('Master data migration pending:', msg));
             }
+            loadCustomersFromApi();
         }
 
         function openChangePasswordModal(forced = false) {
@@ -598,7 +613,7 @@
             return (state.shipments || []).filter(sh => state.currentUser.role !== 'EXTERNAL_SALES' || allowedPO.has(sh.poId));
         }
         function canViewCommercialFields() { return ['ADMIN','MANAGER','SALES_SUPPORT','EXTERNAL_SALES'].includes(state.currentUser.role); }
-        function canCreateCustomer() { return ['ADMIN','SALES_SUPPORT'].includes(state.currentUser.role); }
+        function canCreateCustomer() { return ['ADMIN','MANAGER','SALES_SUPPORT'].includes(state.currentUser.role); }
         function canEditCustomer() { return ['ADMIN','MANAGER','SALES_SUPPORT'].includes(state.currentUser.role); }
         function canCreatePO() { return ['ADMIN','SALES_SUPPORT'].includes(state.currentUser.role); }
         function canEditPO() { return ['ADMIN','SALES_SUPPORT'].includes(state.currentUser.role); }
@@ -1409,7 +1424,7 @@
 
         function getAdminDashboardData() {
             const users = state.users || [];
-            const customers = state.customers || [];
+            const customers = getScopedCustomers();
             const products = state.products || [];
             const providers = state.logisticsProviders || [];
             const pos = state.pos || [];
@@ -1535,7 +1550,7 @@
                 const diPending = scopedDIs.filter(d=>d.status!=='CANCELLED' && calculateDIActualQty(d)<=0).length;
                 const bookingPending = scopedDIs.filter(d=>d.status!=='CANCELLED' && !d.booking).length;
                 const actions = [renderDashboardAction('New Customer','user-plus','openAddCustomerModal()',true),renderDashboardAction('Create PO','file-plus-2','openNewPOModal()'),renderDashboardAction('Create DI','truck','openCreateDIPrototype()'),renderDashboardAction('Request Special Price','badge-percent','openRequestSpecialPrice()')].join('');
-                container.innerHTML = `<div class="space-y-5">${renderDashboardHeader('Sales Operations','Customer · Pricing · PO · DI · Booking · Payment follow-up',actions)}<div class="grid grid-cols-2 lg:grid-cols-5 gap-3">${renderDashboardCard('Active Customers',scopedCustomers.filter(c=>c.status!=='INACTIVE').length,'users','blue')}${renderDashboardCard('Open PO',draftPO,'file-text','slate')}${renderDashboardCard('DI Pending',diPending,'truck','amber')}${renderDashboardCard('Booking Pending',bookingPending,'ship','fuchsia')}${renderDashboardCard('Payment Follow-up',unpaidPayments,'wallet','rose')}</div>${renderSalesSupportWorkQueue()}<div class="grid xl:grid-cols-3 gap-4"><div class="xl:col-span-2">${renderSalesSupportCustomerFollowUp()}</div>${renderSalesSupportUpcoming()}</div>${renderSalesSupportPOProgress()}<div class="grid xl:grid-cols-2 gap-4">${renderSalesSupportTrend()}${renderRecentActivity()}</div><div class="bg-slate-50 rounded-xl border border-slate-200 p-4 text-xs text-slate-600"><strong>Sales workflow:</strong> Customer → Pricing → PO → DI → Booking → Shipment → Payment</div></div>`;
+                container.innerHTML = `<div class="space-y-5">${renderDashboardHeader('Sales Operations','Customer · Pricing · PO · DI · Booking · Payment follow-up',actions)}<div class="grid grid-cols-2 lg:grid-cols-5 gap-3">${renderDashboardCard('Active Customers',scopedCustomers.filter(c => c.status === 'ACTIVE_CUSTOMER').length,'users','blue')}${renderDashboardCard('Open PO',draftPO,'file-text','slate')}${renderDashboardCard('DI Pending',diPending,'truck','amber')}${renderDashboardCard('Booking Pending',bookingPending,'ship','fuchsia')}${renderDashboardCard('Payment Follow-up',unpaidPayments,'wallet','rose')}</div>${renderSalesSupportWorkQueue()}<div class="grid xl:grid-cols-3 gap-4"><div class="xl:col-span-2">${renderSalesSupportCustomerFollowUp()}</div>${renderSalesSupportUpcoming()}</div>${renderSalesSupportPOProgress()}<div class="grid xl:grid-cols-2 gap-4">${renderSalesSupportTrend()}${renderRecentActivity()}</div><div class="bg-slate-50 rounded-xl border border-slate-200 p-4 text-xs text-slate-600"><strong>Sales workflow:</strong> Customer → Pricing → PO → DI → Booking → Shipment → Payment</div></div>`;
                 return;
             }
 
@@ -4854,6 +4869,7 @@
                     </div>
 
                     <form onsubmit="handleAddCustomerSubmit(event)" class="space-y-3 text-xs">
+                        <div id="addCustomerError" class="hidden rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-bold text-rose-700 mb-3"></div>
                         <div class="grid grid-cols-2 gap-3">
                             <div>
                                 <label class="font-semibold text-slate-700">ชื่อบริษัทลูกค้า *</label>
@@ -4898,35 +4914,62 @@
             `);
         }
 
-        function handleAddCustomerSubmit(e) {
+        async function saveCustomerToApi(customer, mode) {
+            const url = mode === 'create' ? '/api/customers' : `/api/customers/${customer.id}`;
+            const method = mode === 'create' ? 'POST' : 'PUT';
+            
+            const res = await fetch(url, {
+                method,
+                headers: { 'content-type': 'application/json' },
+                body: JSON.stringify(customer)
+            });
+            
+            const body = await res.json();
+            if (body && body.status === 'ERROR') {
+                throw new Error(body.message || 'API request failed');
+            }
+            if (!res.ok) {
+                throw new Error(`HTTP Error: ${res.status}`);
+            }
+            if (!body || body.status !== 'SUCCESS' || !body.data || !body.data.customer) {
+                throw new Error('Malformed API response');
+            }
+            return body.data.customer;
+        }
+
+        async function handleAddCustomerSubmit(e) {
             e.preventDefault();
-            const newCust = {
-                id: 'CUST-' + Math.floor(1000 + Math.random() * 9000),
+            const payload = {
                 code: document.getElementById('addCCode').value,
                 name: document.getElementById('addCName').value,
                 country: document.getElementById('addCCountry').value,
                 source: document.getElementById('addCSource').value,
-                ownerId: document.getElementById('addCOwner').value,
+                ownerId: document.getElementById('addCOwner').value || null,
                 status: 'ACTIVE_CUSTOMER',
-                customerTier: 'Tier A (VIP)',
-                defaultPaymentTerm: 'TT 10/90',
+                notes: '',
                 contacts: []
             };
-            callBackend('UPDATE_CUSTOMER', {
-                action_type: 'CREATE',
-                customer_id: newCust.id,
-                customer_code: newCust.code,
-                customer_name: newCust.name,
-                country: newCust.country,
-                customer_source: newCust.source,
-                owner_id: newCust.ownerId,
-                customer_status: newCust.status,
-                contactsJson: JSON.stringify(newCust.contacts)
-            }, () => {
-                state.customers.push(newCust);
+
+            const errDiv = document.getElementById('addCustomerError');
+            if (errDiv) {
+                errDiv.classList.add('hidden');
+                errDiv.textContent = '';
+            }
+
+            try {
+                const saved = await saveCustomerToApi(payload, 'create');
+                state.customers.push(saved);
+                state.selectedCustomerId = saved.id;
                 closeModal();
                 renderView();
-            }, msg => alert('Save customer failed: ' + msg));
+            } catch (err) {
+                if (errDiv) {
+                    errDiv.classList.remove('hidden');
+                    errDiv.textContent = 'Save customer failed: ' + err.message;
+                } else {
+                    alert('Save customer failed: ' + err.message);
+                }
+            }
         }
 
         // --- EDIT CUSTOMER MODAL ---
@@ -4952,6 +4995,7 @@
                     </div>
 
                     <form onsubmit="saveEditCustomer(event, '${c.id}')" class="space-y-4 text-xs">
+                        <div id="editCustomerError" class="hidden rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-bold text-rose-700 mb-3"></div>
                         <div class="p-3 bg-slate-50 rounded-lg border border-slate-200 space-y-3">
                             <div class="font-bold text-slate-800">ข้อมูลพื้นฐาน</div>
                             <div class="grid grid-cols-2 gap-3">
@@ -5090,41 +5134,46 @@
             renderContactRows();
         }
 
-        function saveEditCustomer(e, id) {
+        async function saveEditCustomer(e, id) {
             e.preventDefault();
             const c = getScopedCustomers().find(x => x.id === id);
             if (!c) return;
             const contacts = JSON.parse(JSON.stringify(currentEditContacts || []));
-            const draft = {
+            const payload = {
+                id,
+                code: c.code,
                 name: document.getElementById('editCName').value,
                 country: document.getElementById('editCCountry').value,
-                ownerId: document.getElementById('editCOwner').value,
+                source: c.source,
+                ownerId: document.getElementById('editCOwner').value || null,
                 status: document.getElementById('editCStatus').value,
-                billingAddress: document.getElementById('editCBilling').value,
-                defaultPaymentTerm: document.getElementById('editCPayTerm').value,
-                creditLimitUsd: parseFloat(document.getElementById('editCCredit').value) || 0,
-                customerTier: document.getElementById('editCTier').value,
-                dischargePort: document.getElementById('editCPort').value,
-                packagingPreference: document.getElementById('editCPackaging').value,
-                internalNotes: document.getElementById('editCNotes').value,
+                notes: document.getElementById('editCNotes').value,
                 contacts
             };
-            draft.contactPerson = contacts[0]?.name || '';
-            draft.contactEmail = contacts[0]?.email || '';
-            draft.contactPhone = contacts[0]?.phone || '';
 
-            callBackend('UPDATE_CUSTOMER', {
-                action_type: 'UPDATE', customer_id: c.id, customer_name: draft.name, country: draft.country,
-                owner_id: draft.ownerId, customer_status: draft.status, contactPerson: draft.contactPerson,
-                contactEmail: draft.contactEmail, contactPhone: draft.contactPhone, contactsJson: JSON.stringify(draft.contacts),
-                billingAddress: draft.billingAddress, defaultPaymentTerm: draft.defaultPaymentTerm,
-                creditLimitUsd: draft.creditLimitUsd, customerTier: draft.customerTier, dischargePort: draft.dischargePort,
-                packagingPreference: draft.packagingPreference, internalNotes: draft.internalNotes
-            }, () => {
-                Object.assign(c, draft);
+            const errDiv = document.getElementById('editCustomerError');
+            if (errDiv) {
+                errDiv.classList.add('hidden');
+                errDiv.textContent = '';
+            }
+
+            try {
+                const saved = await saveCustomerToApi(payload, 'update');
+                const idx = state.customers.findIndex(x => x.id === id);
+                if (idx !== -1) {
+                    state.customers[idx] = saved;
+                }
+                state.selectedCustomerId = saved.id;
                 closeModal();
                 renderView();
-            }, msg => alert('Save customer failed: ' + msg));
+            } catch (err) {
+                if (errDiv) {
+                    errDiv.classList.remove('hidden');
+                    errDiv.textContent = 'Save customer failed: ' + err.message;
+                } else {
+                    alert('Save customer failed: ' + err.message);
+                }
+            }
         }
 
         // --- PRODUCTS ---

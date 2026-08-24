@@ -26,6 +26,12 @@ export default {
       return createAuthHandlerFromEnv(env)(request);
     }
 
+    if (url.pathname === '/api/customers' || url.pathname.startsWith('/api/customers/')) {
+      if (!env.DB) return jsonResponse({ status: 'ERROR', message: 'D1 DB binding is not configured.' }, 503);
+      const { createCustomerHandlerFromEnv } = await import('./customers/routes.js');
+      return createCustomerHandlerFromEnv(env)(request);
+    }
+
     if (url.pathname === '/api/gateway') {
       return jsonResponse({
         status: 'ERROR',

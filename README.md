@@ -67,4 +67,43 @@ Then open the root URL and sign in with the first-user credentials. Login should
 
 ## Phase boundary
 
-`/api/gateway` is intentionally still not migrated. Customer, Product, Pricing, PO, DI/Shipping, Payment, Commission, and user-management write actions are handled in later phases. The dashboard continues using prototype state until master-data migration is implemented.
+`/api/gateway` is intentionally still not migrated. Product, Pricing, PO, DI/Shipping, Payment, Commission, and user-management write actions are handled in later phases. The dashboard continues using prototype state except for Customers, which is backed by D1.
+
+## Phase 5A — Customer CRM D1 Migration and Deployment Runbook
+
+### 1. Remote D1 Migration
+To apply the database schema changes to the remote production D1 instance:
+
+```bash
+npx wrangler d1 migrations apply wcat-sales-db --remote
+```
+
+### 2. Expected Migrations Applied
+- `0002_customers.sql` (Creates `customers` and `customer_contacts` tables and indexes.)
+
+### 3. Verification SQL
+After migration, verify the schema and tables in the Cloudflare D1 console with:
+
+```sql
+SELECT name
+FROM sqlite_master
+WHERE type = 'table'
+  AND name IN ('customers', 'customer_contacts');
+
+SELECT COUNT(*) AS customer_count FROM customers;
+```
+
+### 4. Production Smoke Test Checklist
+- **Login as ADMIN** and confirm successful authentication.
+- **Open Customer / CRM** menu item from the sidebar.
+- **Add one test customer** using the "เพิ่มลูกค้าใหม่" button.
+- **Refresh the browser** and confirm the added customer is still displayed.
+- **Edit country/contact** details for the customer.
+- **Refresh the browser again** and confirm that changes persist.
+- **Confirm Dashboard customer count** updates dynamically based on the active D1-backed customers count.
+- **Login as EXTERNAL_SALES** and verify they can see their owned customers only.
+- **Verify EXTERNAL_SALES** cannot see or invoke usable Customer Add/Edit controls in the UI.
+
+### 5. Rollback Instructions
+- Redeploy the previous Worker deployment from the Cloudflare panel (or git deployment history).
+- **Do NOT drop** the additive customer tables (`customers`, `customer_contacts`) to preserve any live customer details entered during post-deployment.
