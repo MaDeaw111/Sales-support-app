@@ -361,3 +361,64 @@ test('getExternalSalesDashboardData - customers metric reflects scoped customers
     delete globalThis.getDashboardPaymentRecords;
   }
 });
+
+test('renderDashboard - Active Customers counts only ACTIVE_CUSTOMER status', () => {
+  const code = extractFunction('renderDashboard(container)');
+  
+  const mockState = {
+    currentUser: { role: 'SALES_SUPPORT' }
+  };
+  
+  globalThis.state = mockState;
+  
+  globalThis.getScopedCustomers = () => [
+    { id: 'CUST-001', status: 'ACTIVE_CUSTOMER' },
+    { id: 'CUST-002', status: 'INACTIVE_CUSTOMER' },
+    { id: 'CUST-003', status: 'INACTIVE' }
+  ];
+  
+  globalThis.getScopedPOs = () => [];
+  globalThis.getScopedDIRecords = () => [];
+  globalThis.getDashboardPaymentRecords = () => [];
+  globalThis.deriveDIStage = () => '';
+  globalThis.calculateDIActualQty = () => 0;
+  globalThis.renderDashboardAction = () => '';
+  globalThis.renderDashboardHeader = () => '';
+  globalThis.renderDashboardCard = (label, value) => {
+    if (label === 'Active Customers') {
+      return `CARD:${label}:${value}`;
+    }
+    return '';
+  };
+  globalThis.renderSalesSupportWorkQueue = () => '';
+  globalThis.renderSalesSupportCustomerFollowUp = () => '';
+  globalThis.renderSalesSupportUpcoming = () => '';
+  globalThis.renderSalesSupportPOProgress = () => '';
+  globalThis.renderSalesSupportTrend = () => '';
+  globalThis.renderRecentActivity = () => '';
+
+  try {
+    const container = { innerHTML: '' };
+    const fn = new Function('container', `return (${code.trim()})(container);`);
+    fn(container);
+    
+    assert.match(container.innerHTML, /CARD:Active Customers:1/);
+  } finally {
+    delete globalThis.state;
+    delete globalThis.getScopedCustomers;
+    delete globalThis.getScopedPOs;
+    delete globalThis.getScopedDIRecords;
+    delete globalThis.getDashboardPaymentRecords;
+    delete globalThis.deriveDIStage;
+    delete globalThis.calculateDIActualQty;
+    delete globalThis.renderDashboardAction;
+    delete globalThis.renderDashboardHeader;
+    delete globalThis.renderDashboardCard;
+    delete globalThis.renderSalesSupportWorkQueue;
+    delete globalThis.renderSalesSupportCustomerFollowUp;
+    delete globalThis.renderSalesSupportUpcoming;
+    delete globalThis.renderSalesSupportPOProgress;
+    delete globalThis.renderSalesSupportTrend;
+    delete globalThis.renderRecentActivity;
+  }
+});
