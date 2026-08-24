@@ -519,3 +519,97 @@ test('Add Customer and Edit Customer dropdown generation and preservation', () =
   assert.match(openEditBlock, /Legacy\/Unavailable/);
 });
 
+test('saveEditCustomer - mappings, fallbacks, and payload validations', async () => {
+  const code = extractFunction('saveEditCustomer(e, id)');
+  
+  const mockState = {
+    customers: [
+      { id: 'CUST-1', code: 'C1', name: 'Original Name', source: 'EXTERNAL_SALES', ownerId: 'USR-LEGACY', status: 'ACTIVE_CUSTOMER', contacts: [{ id: 'CONT-1', name: 'Primary contact', isPrimary: true }] }
+    ],
+    customerOwners: [
+      { id: 'USR-1', name: 'Sales Owner 1' }
+    ]
+  };
+  
+  let renderViewCalled = false;
+  let closeModalCalled = false;
+  let saveCustomerToApiPayload = null;
+  let saveCustomerToApiMode = null;
+  
+  globalThis.state = mockState;
+  globalThis.getScopedCustomers = () => mockState.customers;
+  globalThis.renderView = () => { renderViewCalled = true; };
+  globalThis.closeModal = () => { closeModalCalled = true; };
+  
+  globalThis.saveCustomerToApi = async (payload, mode) => {
+    saveCustomerToApiPayload = payload;
+    saveCustomerToApiMode = mode;
+    return {
+      id: payload.id,
+      code: payload.code,
+      name: payload.name,
+      country: payload.country,
+      source: payload.source,
+      ownerId: payload.ownerId,
+      status: payload.status,
+      notes: payload.notes,
+      contacts: payload.contacts
+    };
+  };
+
+  const mockElements = {
+    editCName: { value: 'New Name' },
+    editCCountry: { value: 'Thailand' },
+    editCOwner: { value: 'USR-1' },
+    editCStatus: { value: 'INACTIVE' },
+    editCNotes: { value: 'CRM Notes' }
+  };
+  
+  globalThis.document = {
+    getElementById(id) {
+      if (mockElements[id]) return mockElements[id];
+      return { classList: { add() {}, remove() {} }, textContent: '' };
+    }
+  };
+  
+  globalThis.currentEditContacts = [
+    { id: 'CONT-1', name: 'Primary contact', isPrimary: true }
+  ];
+
+  try {
+    const fn = new Function(`return (${code.trim()});`)();
+    const e = { preventDefault() {} };
+    await fn(e, 'CUST-1');
+    
+    assert.equal(closeModalCalled, true);
+    assert.equal(renderViewCalled, true);
+    assert.equal(saveCustomerToApiMode, 'update');
+    
+    assert.equal(saveCustomerToApiPayload.status, 'INACTIVE_CUSTOMER');
+    
+    assert.equal(saveCustomerToApiPayload.billingAddress, undefined);
+    assert.equal(saveCustomerToApiPayload.defaultPaymentTerm, undefined);
+    assert.equal(saveCustomerToApiPayload.creditLimitUsd, undefined);
+    assert.equal(saveCustomerToApiPayload.customerTier, undefined);
+    assert.equal(saveCustomerToApiPayload.dischargePort, undefined);
+    assert.equal(saveCustomerToApiPayload.packagingPreference, undefined);
+    
+    assert.equal(saveCustomerToApiPayload.source, 'EXTERNAL_SALES');
+    assert.equal(saveCustomerToApiPayload.code, 'C1');
+    
+    assert.equal(saveCustomerToApiPayload.contacts.length, 1);
+    assert.equal(saveCustomerToApiPayload.contacts[0].id, 'CONT-1');
+    assert.equal(saveCustomerToApiPayload.contacts[0].isPrimary, true);
+    
+    assert.equal(mockState.customers[0].name, 'New Name');
+    assert.equal(mockState.customers[0].status, 'INACTIVE_CUSTOMER');
+  } finally {
+    delete globalThis.state;
+    delete globalThis.getScopedCustomers;
+    delete globalThis.renderView;
+    delete globalThis.closeModal;
+    delete globalThis.saveCustomerToApi;
+    delete globalThis.document;
+    delete globalThis.currentEditContacts;
+  }
+});
