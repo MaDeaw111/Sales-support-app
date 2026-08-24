@@ -5046,9 +5046,8 @@
                                 <div>
                                     <label class="font-semibold text-slate-700">สถานะ</label>
                                     <select id="editCStatus" class="w-full border border-slate-300 rounded p-2 mt-1 outline-none bg-white">
-                                        <option value="ACTIVE_CUSTOMER" ${c.status === 'ACTIVE_CUSTOMER' ? 'selected' : ''}>ACTIVE</option>
-                                        <option value="PROSPECT" ${c.status === 'PROSPECT' ? 'selected' : ''}>PROSPECT</option>
-                                        <option value="INACTIVE" ${c.status === 'INACTIVE' ? 'selected' : ''}>INACTIVE</option>
+                                        <option value="ACTIVE" ${c.status === 'ACTIVE_CUSTOMER' || c.status === 'ACTIVE' ? 'selected' : ''}>ACTIVE</option>
+                                        <option value="INACTIVE" ${c.status === 'INACTIVE_CUSTOMER' || c.status === 'INACTIVE' ? 'selected' : ''}>INACTIVE</option>
                                     </select>
                                 </div>
                             </div>
@@ -5068,23 +5067,23 @@
                             <div id="contactRowsContainer" class="space-y-2"></div>
                             
                             <div class="pt-2 border-t border-slate-100">
-                                <label class="font-semibold text-slate-700">ที่อยู่เปิดบิล & Tax ID</label>
-                                <input type="text" id="editCBilling" value="${c.billingAddress || ''}" placeholder="ที่อยู่จดทะเบียน / Tax ID" class="w-full border border-slate-300 rounded p-2 mt-1 outline-none">
+                                <label class="font-semibold text-slate-700">ที่อยู่เปิดบิล & Tax ID <span class="text-slate-400 font-normal">(Prototype only)</span></label>
+                                <input type="text" id="editCBilling" value="${c.billingAddress || ''}" placeholder="ที่อยู่จดทะเบียน / Tax ID" disabled class="w-full border border-slate-200 bg-slate-100 text-slate-500 rounded p-2 mt-1 outline-none cursor-not-allowed">
                             </div>
                         </div>
 
                         <div class="grid grid-cols-3 gap-3">
                             <div>
-                                <label class="font-semibold text-slate-700">Payment Term</label>
-                                <input type="text" id="editCPayTerm" value="${c.defaultPaymentTerm || 'TT 10/90'}" placeholder="e.g. TT 10/90, LC at sight" class="w-full border border-slate-300 rounded p-2 mt-1 outline-none">
+                                <label class="font-semibold text-slate-700">Payment Term <span class="text-slate-400 font-normal">(Prototype only)</span></label>
+                                <input type="text" id="editCPayTerm" value="${c.defaultPaymentTerm || 'TT 10/90'}" placeholder="e.g. TT 10/90, LC at sight" disabled class="w-full border border-slate-200 bg-slate-100 text-slate-500 rounded p-2 mt-1 outline-none cursor-not-allowed">
                             </div>
                             <div>
-                                <label class="font-semibold text-slate-700">Credit Limit (USD)</label>
-                                <input type="number" id="editCCredit" value="${c.creditLimitUsd || 0}" class="w-full border border-slate-300 rounded p-2 mt-1 outline-none">
+                                <label class="font-semibold text-slate-700">Credit Limit (USD) <span class="text-slate-400 font-normal">(Prototype only)</span></label>
+                                <input type="number" id="editCCredit" value="${c.creditLimitUsd || 0}" disabled class="w-full border border-slate-200 bg-slate-100 text-slate-500 rounded p-2 mt-1 outline-none cursor-not-allowed">
                             </div>
                             <div>
-                                <label class="font-semibold text-slate-700">เกรดลูกค้า</label>
-                                <select id="editCTier" class="w-full border border-slate-300 rounded p-2 mt-1 outline-none">
+                                <label class="font-semibold text-slate-700">เกรดลูกค้า <span class="text-slate-400 font-normal">(Prototype only)</span></label>
+                                <select id="editCTier" disabled class="w-full border border-slate-200 bg-slate-100 text-slate-500 rounded p-2 mt-1 outline-none cursor-not-allowed">
                                     <option value="Tier A (VIP)" ${c.customerTier==='Tier A (VIP)'?'selected':''}>Tier A (VIP)</option>
                                     <option value="Tier B" ${c.customerTier==='Tier B'?'selected':''}>Tier B</option>
                                     <option value="Tier C" ${c.customerTier==='Tier C'?'selected':''}>Tier C</option>
@@ -5094,16 +5093,16 @@
 
                         <div class="grid grid-cols-2 gap-3">
                             <div>
-                                <label class="font-semibold text-slate-700">ท่าเรือปลายทาง (POD)</label>
-                                <input type="text" id="editCPort" value="${c.dischargePort || ''}" placeholder="e.g. Rotterdam, Qingdao" class="w-full border border-slate-300 rounded p-2 mt-1 outline-none">
+                                <label class="font-semibold text-slate-700">ท่าเรือปลายทาง (POD) <span class="text-slate-400 font-normal">(Prototype only)</span></label>
+                                <input type="text" id="editCPort" value="${c.dischargePort || ''}" placeholder="e.g. Rotterdam, Qingdao" disabled class="w-full border border-slate-200 bg-slate-100 text-slate-500 rounded p-2 mt-1 outline-none cursor-not-allowed">
                             </div>
                             <div>
-                                <label class="font-semibold text-slate-700">บรรจุภัณฑ์ประจำ</label>
-                                <input type="text" id="editCPackaging" value="${c.packagingPreference || ''}" placeholder="e.g. Jumbo Bag 850 kg" class="w-full border border-slate-300 rounded p-2 mt-1 outline-none">
+                                <label class="font-semibold text-slate-700">บรรจุภัณฑ์ประจำ <span class="text-slate-400 font-normal">(Prototype only)</span></label>
+                                <input type="text" id="editCPackaging" value="${c.packagingPreference || ''}" placeholder="e.g. Jumbo Bag 850 kg" disabled class="w-full border border-slate-200 bg-slate-100 text-slate-500 rounded p-2 mt-1 outline-none cursor-not-allowed">
                             </div>
                             <div class="col-span-2">
                                 <label class="font-semibold text-slate-700">หมายเหตุภายใน / CRM Notes</label>
-                                <textarea id="editCNotes" rows="2" class="w-full border border-slate-300 rounded p-2 mt-1 outline-none" placeholder="บันทึกข้อควรระวังหรือความต้องการพิเศษ">${c.internalNotes || ''}</textarea>
+                                <textarea id="editCNotes" rows="2" class="w-full border border-slate-300 rounded p-2 mt-1 outline-none" placeholder="บันทึกข้อควรระวังหรือความต้องการพิเศษ">${c.internalNotes || c.notes || ''}</textarea>
                             </div>
                         </div>
 
@@ -5161,24 +5160,56 @@
             e.preventDefault();
             const c = getScopedCustomers().find(x => x.id === id);
             if (!c) return;
-            const contacts = JSON.parse(JSON.stringify(currentEditContacts || []));
-            const payload = {
-                id,
-                code: c.code,
-                name: document.getElementById('editCName').value,
-                country: document.getElementById('editCCountry').value,
-                source: c.source,
-                ownerId: document.getElementById('editCOwner').value || null,
-                status: document.getElementById('editCStatus').value,
-                notes: document.getElementById('editCNotes').value,
-                contacts
-            };
 
             const errDiv = document.getElementById('editCustomerError');
             if (errDiv) {
                 errDiv.classList.add('hidden');
                 errDiv.textContent = '';
             }
+
+            const ownerId = document.getElementById('editCOwner').value || null;
+            if (ownerId) {
+                const owners = state.customerOwners || [];
+                const ownerExists = owners.some(u => u.id === ownerId);
+                if (!ownerExists) {
+                    if (errDiv) {
+                        errDiv.classList.remove('hidden');
+                        errDiv.textContent = 'The current Owner is no longer available. Please select a valid Owner or Unassigned.';
+                    }
+                    return;
+                }
+            }
+
+            const uiStatus = document.getElementById('editCStatus').value;
+            const apiStatus = uiStatus === 'ACTIVE' ? 'ACTIVE_CUSTOMER' : 'INACTIVE_CUSTOMER';
+
+            const contacts = (currentEditContacts || []).map(ct => ({
+                id: ct.id || null,
+                name: ct.name,
+                position: ct.position || '',
+                email: ct.email || '',
+                phone: ct.phone || '',
+                isPrimary: !!ct.isPrimary
+            }));
+            let primaryIndex = contacts.findIndex(ct => !!ct.isPrimary);
+            if (primaryIndex === -1 && contacts.length > 0) {
+                primaryIndex = 0;
+            }
+            contacts.forEach((ct, idx) => {
+                ct.isPrimary = (idx === primaryIndex);
+            });
+
+            const payload = {
+                id,
+                code: c.code,
+                name: document.getElementById('editCName').value,
+                country: document.getElementById('editCCountry').value,
+                source: c.source || 'DIRECT',
+                ownerId,
+                status: apiStatus,
+                notes: document.getElementById('editCNotes').value,
+                contacts
+            };
 
             try {
                 const saved = await saveCustomerToApi(payload, 'update');
