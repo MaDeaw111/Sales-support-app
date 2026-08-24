@@ -84,7 +84,7 @@ function makeRequest(path, method = 'GET', body = null, token = null) {
   });
 }
 
-test('GET /api/customers returns 401 when unauthenticated', async () => {
+test('customers route: GET /api/customers returns 401 when unauthenticated', async () => {
   const { wrappedDb } = await setupTestDb();
   const req = makeRequest('/api/customers', 'GET');
   const res = await worker.fetch(req, { DB: wrappedDb });
@@ -94,7 +94,7 @@ test('GET /api/customers returns 401 when unauthenticated', async () => {
   assert.match(body.message, /Authentication required/i);
 });
 
-test('ADMIN lists all customers', async () => {
+test('customers route: ADMIN lists all customers', async () => {
   const { db, wrappedDb } = await setupTestDb();
   await seedUserAndSession(db, 'USR-0001', 'Admin', 'admin@example.com', 'ADMIN', 'ALL', 'admin-token');
   await seedUserAndSession(db, 'USR-0002', 'Sales', 'sales@example.com', 'EXTERNAL_SALES', 'OWNED', 'sales-token');
@@ -110,7 +110,7 @@ test('ADMIN lists all customers', async () => {
   assert.equal(body.data.length, 2);
 });
 
-test('EXTERNAL_SALES lists only owned customers', async () => {
+test('customers route: EXTERNAL_SALES lists only owned customers', async () => {
   const { db, wrappedDb } = await setupTestDb();
   await seedUserAndSession(db, 'USR-0001', 'Admin', 'admin@example.com', 'ADMIN', 'ALL', 'admin-token');
   await seedUserAndSession(db, 'USR-0002', 'Sales', 'sales@example.com', 'EXTERNAL_SALES', 'OWNED', 'sales-token');
@@ -127,7 +127,7 @@ test('EXTERNAL_SALES lists only owned customers', async () => {
   assert.equal(body.data[0].id, 'CUST-0002');
 });
 
-test('ADMIN creates customer', async () => {
+test('customers route: ADMIN creates customer', async () => {
   const { db, wrappedDb } = await setupTestDb();
   await seedUserAndSession(db, 'USR-0001', 'Admin', 'admin@example.com', 'ADMIN', 'ALL', 'admin-token');
 
@@ -153,7 +153,7 @@ test('ADMIN creates customer', async () => {
   assert.equal(body.data.contacts[0].isPrimary, true);
 });
 
-test('EXTERNAL_SALES cannot assign another owner', async () => {
+test('customers route: EXTERNAL_SALES cannot assign another owner', async () => {
   const { db, wrappedDb } = await setupTestDb();
   await seedUserAndSession(db, 'USR-0001', 'Admin', 'admin@example.com', 'ADMIN', 'ALL', 'admin-token');
   await seedUserAndSession(db, 'USR-0002', 'Sales', 'sales@example.com', 'EXTERNAL_SALES', 'OWNED', 'sales-token');
@@ -172,7 +172,7 @@ test('EXTERNAL_SALES cannot assign another owner', async () => {
   assert.match(body.message, /cannot assign ownership/i);
 });
 
-test('duplicate customer code returns 409', async () => {
+test('customers route: duplicate customer code returns 409', async () => {
   const { db, wrappedDb } = await setupTestDb();
   await seedUserAndSession(db, 'USR-0001', 'Admin', 'admin@example.com', 'ADMIN', 'ALL', 'admin-token');
   seedCustomer(db, 'CUST-0001', 'C-DUPE', 'Cust 1', 'USR-0001');
@@ -190,7 +190,7 @@ test('duplicate customer code returns 409', async () => {
   assert.match(body.message, /already exists/i);
 });
 
-test('invalid payload returns 400', async () => {
+test('customers route: invalid payload returns 400', async () => {
   const { db, wrappedDb } = await setupTestDb();
   await seedUserAndSession(db, 'USR-0001', 'Admin', 'admin@example.com', 'ADMIN', 'ALL', 'admin-token');
 
@@ -206,7 +206,7 @@ test('invalid payload returns 400', async () => {
   assert.match(body.message, /Name and code are required/i);
 });
 
-test('GET hidden customer returns 404 for EXTERNAL_SALES', async () => {
+test('customers route: GET hidden customer returns 404 for EXTERNAL_SALES', async () => {
   const { db, wrappedDb } = await setupTestDb();
   await seedUserAndSession(db, 'USR-0001', 'Admin', 'admin@example.com', 'ADMIN', 'ALL', 'admin-token');
   await seedUserAndSession(db, 'USR-0002', 'Sales', 'sales@example.com', 'EXTERNAL_SALES', 'OWNED', 'sales-token');
@@ -221,7 +221,7 @@ test('GET hidden customer returns 404 for EXTERNAL_SALES', async () => {
   assert.match(body.message, /Customer not found/i);
 });
 
-test('ADMIN updates customer and contacts', async () => {
+test('customers route: ADMIN updates customer and contacts', async () => {
   const { db, wrappedDb } = await setupTestDb();
   await seedUserAndSession(db, 'USR-0001', 'Admin', 'admin@example.com', 'ADMIN', 'ALL', 'admin-token');
   seedCustomer(db, 'CUST-0001', 'C-001', 'Cust 1', 'USR-0001');
