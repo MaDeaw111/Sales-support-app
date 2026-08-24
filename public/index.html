@@ -217,55 +217,57 @@
             }
         }
 
-        function submitLogin(event) {
+        async function submitLogin(event) {
             if (event) event.preventDefault();
             const email = document.getElementById('loginEmail')?.value.trim() || '';
             const password = document.getElementById('loginPassword')?.value || '';
             if (!email || !password) return setLoginError('Please enter email and password.');
-            if (typeof google === 'undefined' || !google.script?.run) return setLoginError('Login is available only in the deployed Apps Script Web App.');
-            setLoginError(''); setLoginBusy(true);
-            google.script.run
-                .withSuccessHandler(res => {
-                    setLoginBusy(false);
-                    if (!res || res.status !== 'SUCCESS') return setLoginError(res?.message || 'Unable to sign in.');
-                    const token = res.data?.session_token || '';
-                    const user = res.data?.user;
-                    if (!token || !user) return setLoginError('Invalid login response.');
-                    storeSessionToken(token);
-                    applyAuthenticatedUser(user);
-                    document.getElementById('loginPassword').value = '';
-                    if (user.must_change_password) {
-                        showAuthenticatedShell(false);
-                        openChangePasswordModal(true);
-                        return;
-                    }
-                    startAuthenticatedApp();
-                })
-                .withFailureHandler(err => { setLoginBusy(false); setLoginError(err?.message || 'Login failed.'); })
-                .loginUser(email, password);
+            setLoginError('');
+            setLoginBusy(true);
+            try {
+                const response = await fetch('/api/auth/login', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ email, password })
+                });
+                const res = await response.json().catch(() => null);
+                if (!response.ok || res?.status !== 'SUCCESS' || !res?.data?.user) {
+                    return setLoginError(res?.message || 'Unable to sign in.');
+                }
+                const user = res.data.user;
+                applyAuthenticatedUser(user);
+                document.getElementById('loginPassword').value = '';
+                if (user.must_change_password) {
+                    showAuthenticatedShell(false);
+                    openChangePasswordModal(true);
+                    return;
+                }
+                startAuthenticatedApp();
+            } catch (err) {
+                setLoginError(err?.message || 'Login failed.');
+            } finally {
+                setLoginBusy(false);
+            }
         }
 
-        function bootstrapAuth() {
-            const token = getStoredSessionToken();
-            if (!token) return showLoginScreen('');
-            if (typeof google === 'undefined' || !google.script?.run) return showLoginScreen('Open this page from the deployed Apps Script Web App.');
-            google.script.run
-                .withSuccessHandler(res => {
-                    if (!res || res.status !== 'SUCCESS' || !res.data?.valid) {
-                        storeSessionToken('');
-                        return showLoginScreen('Your session has expired. Please sign in again.');
-                    }
-                    const user = res.data.user;
-                    applyAuthenticatedUser(user);
-                    if (user.must_change_password) {
-                        showAuthenticatedShell(false);
-                        openChangePasswordModal(true);
-                    } else {
-                        startAuthenticatedApp();
-                    }
-                })
-                .withFailureHandler(() => { storeSessionToken(''); showLoginScreen('Unable to validate session. Please sign in again.'); })
-                .validateSession(token);
+        async function bootstrapAuth() {
+            try {
+                const response = await fetch('/api/auth/me', { method: 'GET' });
+                const res = await response.json().catch(() => null);
+                if (!response.ok || res?.status !== 'SUCCESS' || !res?.data?.valid || !res?.data?.user) {
+                    return showLoginScreen('');
+                }
+                const user = res.data.user;
+                applyAuthenticatedUser(user);
+                if (user.must_change_password) {
+                    showAuthenticatedShell(false);
+                    openChangePasswordModal(true);
+                } else {
+                    startAuthenticatedApp();
+                }
+            } catch (err) {
+                showLoginScreen('Unable to validate session. Please sign in again.');
+            }
         }
 
         function startAuthenticatedApp() {
@@ -277,7 +279,9 @@
             state.currentView = 'dashboard';
             renderSidebar();
             renderView();
-            if (typeof callBackend === 'function') callBackend('GET_MASTER_DATA', {}, hydrateData);
+            if (typeof callBackend === 'function') {
+                callBackend('GET_MASTER_DATA', {}, hydrateData, msg => console.warn('Master data migration pending:', msg));
+            }
         }
 
         function openChangePasswordModal(forced = false) {
@@ -292,7 +296,7 @@
             </div>`);
         }
 
-        function submitPasswordChange(forced = false) {
+        async function submitPasswordChange(forced = false) {
             const oldPassword = document.getElementById('authOldPassword')?.value || '';
             const newPassword = document.getElementById('authNewPassword')?.value || '';
             const confirmPassword = document.getElementById('authConfirmPassword')?.value || '';
@@ -301,30 +305,36 @@
             if (!oldPassword || !newPassword) return fail('Current and new password are required.');
             if (newPassword.length < 8) return fail('New password must be at least 8 characters.');
             if (newPassword !== confirmPassword) return fail('New password confirmation does not match.');
-            const token = getStoredSessionToken();
-            google.script.run
-                .withSuccessHandler(res => {
-                    if (!res || res.status !== 'SUCCESS') return fail(res?.message || 'Unable to change password.');
-                    applyAuthenticatedUser(res.data?.user || state.currentUser);
-                    closeModal();
-                    if (forced) startAuthenticatedApp();
-                })
-                .withFailureHandler(err => fail(err?.message || 'Unable to change password.'))
-                .changePassword(token, oldPassword, newPassword);
+            try {
+                const response = await fetch('/api/auth/change-password', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ current_password: oldPassword, new_password: newPassword })
+                });
+                const res = await response.json().catch(() => null);
+                if (!response.ok || res?.status !== 'SUCCESS') return fail(res?.message || 'Unable to change password.');
+                applyAuthenticatedUser(res.data?.user || state.currentUser);
+                closeModal();
+                if (forced) startAuthenticatedApp();
+            } catch (err) {
+                fail(err?.message || 'Unable to change password.');
+            }
         }
 
-        function signOut() {
-            const token = getStoredSessionToken();
-            storeSessionToken('');
+        async function signOut() {
             const finish = () => {
                 state.currentUser = { id:'', name:'', role:'', email:'', customerScope:'' };
                 showLoginScreen('Signed out successfully.');
                 const email = document.getElementById('loginEmail');
                 if (email) email.focus();
             };
-            if (typeof google !== 'undefined' && google.script?.run && token) {
-                google.script.run.withSuccessHandler(finish).withFailureHandler(finish).logoutUser(token);
-            } else finish();
+            try {
+                await fetch('/api/auth/logout', { method: 'POST' });
+            } catch (err) {
+                console.warn('Logout request failed:', err);
+            } finally {
+                finish();
+            }
         }
 
         function parseNum(val, fallback = null) {

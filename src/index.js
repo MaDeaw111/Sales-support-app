@@ -1,3 +1,5 @@
+import { createAuthHandlerFromEnv } from './auth/routes.js';
+
 function jsonResponse(body, status = 200) {
   return new Response(JSON.stringify(body), {
     status,
@@ -17,6 +19,11 @@ export default {
           runtime: 'Cloudflare Workers'
         }
       });
+    }
+
+    if (url.pathname.startsWith('/api/auth/')) {
+      if (!env.DB) return jsonResponse({ status: 'ERROR', message: 'D1 DB binding is not configured.' }, 503);
+      return createAuthHandlerFromEnv(env)(request);
     }
 
     if (url.pathname === '/api/gateway') {
