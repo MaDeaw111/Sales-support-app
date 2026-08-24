@@ -287,3 +287,77 @@ test('EXTERNAL_SALES UI cannot invoke Customer mutation controls', () => {
   assert.equal(fnEdit(stateSupport), true);
   assert.equal(fnEdit(stateExternal), false);
 });
+
+test('getAdminDashboardData - customers metric uses scoped customers length', () => {
+  const code = extractFunction('getAdminDashboardData()');
+  const getScopedCustomersCode = extractFunction('getScopedCustomers()');
+
+  const mockState = {
+    customers: [
+      { id: 'CUST-001', ownerId: 'USR-0001', status: 'ACTIVE_CUSTOMER' },
+      { id: 'CUST-002', ownerId: 'USR-0002', status: 'ACTIVE_CUSTOMER' }
+    ],
+    users: [
+      { id: 'USR-0001', role: 'EXTERNAL_SALES', status: 'ACTIVE' }
+    ],
+    products: [],
+    logisticsProviders: [],
+    pos: [],
+    diRecords: [],
+    currentUser: { id: 'USR-ADMIN', role: 'ADMIN' }
+  };
+
+  globalThis.state = mockState;
+  
+  globalThis.getScopedCustomers = new Function('state', `
+    return (${getScopedCustomersCode.trim()})();
+  `).bind(null, mockState);
+
+  try {
+    const fn = new Function(`return (${code.trim()});`)();
+    const data = fn();
+    assert.equal(data.customers.length, 2);
+
+    mockState.customers.push({ id: 'CUST-003', ownerId: 'USR-0001', status: 'ACTIVE_CUSTOMER' });
+    const dataUpdated = fn();
+    assert.equal(dataUpdated.customers.length, 3);
+    
+    assert.equal(dataUpdated.products.length, 0);
+  } finally {
+    delete globalThis.state;
+    delete globalThis.getScopedCustomers;
+  }
+});
+
+test('getExternalSalesDashboardData - customers metric reflects scoped customers count', () => {
+  const code = extractFunction('getExternalSalesDashboardData()');
+
+  const mockState = {
+    customers: [
+      { id: 'CUST-001', ownerId: 'USR-0005', status: 'ACTIVE_CUSTOMER' }
+    ],
+    users: [],
+    pos: [],
+    diRecords: [],
+    currentUser: { id: 'USR-0005', role: 'EXTERNAL_SALES' }
+  };
+
+  globalThis.state = mockState;
+  
+  globalThis.getScopedCustomers = () => mockState.customers;
+  globalThis.getScopedPOs = () => [];
+  globalThis.getScopedDIRecords = () => [];
+  globalThis.getDashboardPaymentRecords = () => [];
+
+  try {
+    const fn = new Function(`return (${code.trim()});`)();
+    const data = fn();
+    assert.equal(data.customers.length, 1);
+  } finally {
+    delete globalThis.state;
+    delete globalThis.getScopedCustomers;
+    delete globalThis.getScopedPOs;
+    delete globalThis.getScopedDIRecords;
+    delete globalThis.getDashboardPaymentRecords;
+  }
+});

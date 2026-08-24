@@ -1424,7 +1424,7 @@
 
         function getAdminDashboardData() {
             const users = state.users || [];
-            const customers = state.customers || [];
+            const customers = getScopedCustomers();
             const products = state.products || [];
             const providers = state.logisticsProviders || [];
             const pos = state.pos || [];
@@ -1550,7 +1550,7 @@
                 const diPending = scopedDIs.filter(d=>d.status!=='CANCELLED' && calculateDIActualQty(d)<=0).length;
                 const bookingPending = scopedDIs.filter(d=>d.status!=='CANCELLED' && !d.booking).length;
                 const actions = [renderDashboardAction('New Customer','user-plus','openAddCustomerModal()',true),renderDashboardAction('Create PO','file-plus-2','openNewPOModal()'),renderDashboardAction('Create DI','truck','openCreateDIPrototype()'),renderDashboardAction('Request Special Price','badge-percent','openRequestSpecialPrice()')].join('');
-                container.innerHTML = `<div class="space-y-5">${renderDashboardHeader('Sales Operations','Customer · Pricing · PO · DI · Booking · Payment follow-up',actions)}<div class="grid grid-cols-2 lg:grid-cols-5 gap-3">${renderDashboardCard('Active Customers',scopedCustomers.filter(c=>c.status!=='INACTIVE').length,'users','blue')}${renderDashboardCard('Open PO',draftPO,'file-text','slate')}${renderDashboardCard('DI Pending',diPending,'truck','amber')}${renderDashboardCard('Booking Pending',bookingPending,'ship','fuchsia')}${renderDashboardCard('Payment Follow-up',unpaidPayments,'wallet','rose')}</div>${renderSalesSupportWorkQueue()}<div class="grid xl:grid-cols-3 gap-4"><div class="xl:col-span-2">${renderSalesSupportCustomerFollowUp()}</div>${renderSalesSupportUpcoming()}</div>${renderSalesSupportPOProgress()}<div class="grid xl:grid-cols-2 gap-4">${renderSalesSupportTrend()}${renderRecentActivity()}</div><div class="bg-slate-50 rounded-xl border border-slate-200 p-4 text-xs text-slate-600"><strong>Sales workflow:</strong> Customer → Pricing → PO → DI → Booking → Shipment → Payment</div></div>`;
+                container.innerHTML = `<div class="space-y-5">${renderDashboardHeader('Sales Operations','Customer · Pricing · PO · DI · Booking · Payment follow-up',actions)}<div class="grid grid-cols-2 lg:grid-cols-5 gap-3">${renderDashboardCard('Active Customers',scopedCustomers.length,'users','blue')}${renderDashboardCard('Open PO',draftPO,'file-text','slate')}${renderDashboardCard('DI Pending',diPending,'truck','amber')}${renderDashboardCard('Booking Pending',bookingPending,'ship','fuchsia')}${renderDashboardCard('Payment Follow-up',unpaidPayments,'wallet','rose')}</div>${renderSalesSupportWorkQueue()}<div class="grid xl:grid-cols-3 gap-4"><div class="xl:col-span-2">${renderSalesSupportCustomerFollowUp()}</div>${renderSalesSupportUpcoming()}</div>${renderSalesSupportPOProgress()}<div class="grid xl:grid-cols-2 gap-4">${renderSalesSupportTrend()}${renderRecentActivity()}</div><div class="bg-slate-50 rounded-xl border border-slate-200 p-4 text-xs text-slate-600"><strong>Sales workflow:</strong> Customer → Pricing → PO → DI → Booking → Shipment → Payment</div></div>`;
                 return;
             }
 
