@@ -1,0 +1,390 @@
+# WCAT Sales Support App — Project Status
+
+**Last updated:** 2026-08-24  
+**Repository:** `MaDeaw111/Sales-support-app`  
+**Production:** Cloudflare Worker — `wcat-sales-support`  
+**Database:** Cloudflare D1 — `wcat-sales-db`
+
+---
+
+## 1. Current Architecture
+
+The project is being migrated from the original Google Apps Script / mock frontend flow to Cloudflare.
+
+```text
+Frontend
+  ↓
+Cloudflare Worker API
+  ↓
+Cloudflare D1
+```
+
+For modules already migrated to D1, Google Apps Script / mock state must not be used as the authoritative data source.
+
+---
+
+## 2. Completed Work
+
+### Phase 3–4 — Authentication Migration
+
+**Status:** COMPLETE / DEPLOYED
+
+Completed:
+- D1 `users` and `sessions`
+- Login API
+- Session handling
+- PBKDF2 password hashing
+- Change-password flow
+- Initial Admin account
+- D1 binding configured as `DB`
+
+Compatibility fix:
+- PBKDF2 iterations reduced from `210000` to `100000` for Cloudflare compatibility.
+
+Production login is working.
+
+---
+
+### Phase 5A — Customer CRM D1 Migration
+
+**Status:** COMPLETE / MERGED / DEPLOYED
+
+Implemented:
+- Customer tables in D1
+- Customer contacts
+- `GET /api/customers`
+- Customer detail/create/update
+- Customer ownership validation
+- Role-based Customer access
+- Frontend Customer loading from API
+- Add/Edit Customer connected to D1
+- Dashboard Customer metrics use D1-backed state
+
+Migration applied to production:
+
+```text
+0002_customers.sql
+```
+
+Verified production D1 tables:
+
+```text
+customers
+customer_contacts
+```
+
+PR #1 merge commit:
+
+```text
+c754c353fdce750a21f5ec82ef6b675ba6a21e89
+```
+
+---
+
+### Phase 5A.1 — Customer Owner Directory
+
+**Status:** COMPLETE / MERGED / DEPLOYED
+
+Problem:
+Customer Owner dropdown still used frontend mock `state.users`, while backend validated owners against real D1 users.
+
+Error observed:
+
+```text
+Owner user does not exist.
+```
+
+Implemented:
+- `GET /api/customer-owners`
+- Owner list sourced from D1
+- Frontend uses `state.customerOwners`
+- Add/Edit Customer Owner dropdown no longer uses mock users
+- Unassigned retained
+- Legacy/unavailable owner IDs handled safely
+
+PR #2 merge commit:
+
+```text
+ba1d3f76ad9d684ddebbee8c864cf7ef91dc9842
+```
+
+---
+
+### Detailed Customer Edit — D1 Fix
+
+**Status:** COMPLETE / MERGED / DEPLOYED
+
+Implemented:
+- Detailed Edit uses D1-backed `state.customerOwners`
+- Legacy/unavailable owner displayed safely
+- Save blocked when unavailable legacy owner remains selected
+- User must choose valid Owner or Unassigned
+- Status mapping:
+
+```text
+ACTIVE   → ACTIVE_CUSTOMER
+INACTIVE → INACTIVE_CUSTOMER
+```
+
+- Save uses `saveCustomerToApi()`
+- API-returned Customer becomes authoritative state
+- Customer code/source preserved
+- Contacts mapped to D1 DTO
+- Unsupported fields disabled and marked `Prototype only`
+
+Currently unsupported / not persisted:
+- Address / Tax ID
+- Payment Term
+- Credit Limit
+- Customer Tier
+- POD
+- Packaging
+
+PR #3 merge commit:
+
+```text
+8a38d9ccb34cffa32258f70c0d6c29d32ae4c9ca
+```
+
+---
+
+### Phase 5B — External Sales D1 Integration
+
+**Status:** CODE COMPLETE / MERGED / DEPLOYED  
+**Production smoke test still pending**
+
+Implemented backend:
+
+```text
+GET  /api/external-sales
+GET  /api/external-sales/:id
+POST /api/external-sales
+PUT  /api/external-sales/:id
+```
+
+External Sales users use existing D1 `users` table.
+
+Role:
+
+```text
+EXTERNAL_SALES
+```
+
+Supported statuses:
+
+```text
+ACTIVE
+INACTIVE
+SUSPENDED
+```
+
+Create External Sales:
+- Generates unique User ID
+- Generates secure temporary password
+- PBKDF2 hash + salt
+- Stores only hashed credentials
+- `must_change_password = 1`
+- Returns temporary password once
+- Supports initial Customer assignment
+
+Customer ownership source of truth:
+
+```text
+customers.owner_user_id
+```
+
+Permissions:
+
+```text
+Read:        ADMIN, MANAGER, SALES_SUPPORT
+Create/Edit: ADMIN, MANAGER
+```
+
+Frontend:
+- Added `state.externalSales`
+- Added `loadExternalSalesFromApi()`
+- Removed mock `state.users` fallback from External Sales flow
+- Removed Apps Script-only save behavior
+- After create/update, reloads:
+  - Customers
+  - External Sales
+  - Customer Owner Directory
+
+Default Commission Rate:
+- Still `Prototype only`
+- Disabled
+- Not stored in D1 yet
+
+Latest verification before merge:
+
+```text
+73 tests passed
+0 failed
+```
+
+No D1 migration required.
+
+PR #4 head before merge:
+
+```text
+42c5708fd1374543a815105630c1481475e845c7
+```
+
+PR #4 merge commit:
+
+```text
+efceacd607e21b94d71425bbd247278464481270
+```
+
+Cloudflare production deployment observed:
+
+```text
+Version ID: 91735047
+Merge pull request #4 — migrate External Sales management to D1
+```
+
+---
+
+# 3. CURRENT CHECKPOINT
+
+## STOPPED HERE — 2026-08-24
+
+Phase 5B is merged and deployed.
+
+**Sira TTPagro has NOT been created in production D1 yet.**
+
+This is intentional.
+
+Do not manually INSERT Sira with SQL before the smoke test.
+
+---
+
+# 4. NEXT STEP — Phase 5B Production Smoke Test
+
+Open production WCAT Sales Support.
+
+Go to:
+
+```text
+External Sales
+→ Add External Sales
+```
+
+Create:
+
+```text
+Name:   Sira TTPagro
+Email:  sira.p@ttpagro.com
+Status: ACTIVE
+```
+
+Assign:
+
+```text
+MEELUNIE B.V.
+```
+
+Then click:
+
+```text
+Create External Sales
+```
+
+Expected:
+
+1. Sira is created in D1 `users`
+2. Temporary password is displayed once
+3. Refresh → Sira still exists
+4. MEELUNIE remains assigned after refresh
+5. Customer / CRM → Owner dropdown shows `Sira TTPagro`
+6. Detailed Customer Edit can save with Sira as Owner
+7. Refresh does not lose the Owner
+8. No `Owner user does not exist`
+9. No Apps Script-only External Sales save error
+
+---
+
+# 5. Smoke Test Checklist
+
+- [ ] Sira created through production UI
+- [ ] Temporary password captured
+- [ ] Sira remains after refresh
+- [ ] MEELUNIE remains assigned after refresh
+- [ ] Customer Owner dropdown shows Sira
+- [ ] Detailed Customer Edit saves with Sira
+- [ ] Refresh keeps Owner assignment
+- [ ] No Owner validation error
+- [ ] No Apps Script save error
+
+---
+
+# 6. Important Rules Going Forward
+
+For migrated modules:
+
+```text
+Auth
+Customer CRM
+Customer Owner Directory
+Detailed Customer Edit
+External Sales
+```
+
+Production truth must come from:
+
+```text
+Worker API + D1
+```
+
+Do not hide persistence bugs with manual D1 seed SQL.
+
+Fields marked:
+
+```text
+Prototype only
+```
+
+must not appear to save unless persistence is actually implemented.
+
+---
+
+# 7. Recommended Next Development Order
+
+After Phase 5B smoke test passes:
+
+```text
+1. Confirm / clean Customer + External Sales production data
+2. Decide whether to migrate full Users / Roles management
+3. Product / Spec D1 migration
+4. Pricing
+5. PO Management
+6. Shipping / DI
+7. Operations Calendar
+8. Logistics Partners
+9. Payment Status
+10. Commission
+```
+
+Continue using:
+
+```text
+bounded scope
+→ feature branch
+→ TDD
+→ full tests
+→ code review
+→ PR
+→ Cloudflare preview
+→ merge
+→ production deploy
+→ smoke test
+→ update PROJECT_STATUS.md
+```
+
+---
+
+# 8. Quick Resume Note
+
+> Phase 5B is already merged and deployed. Do not rebuild it.  
+> Next action: production smoke test by creating Sira TTPagro through External Sales and assigning MEELUNIE B.V.  
+> After the smoke test, update this file before starting the next migration phase.
