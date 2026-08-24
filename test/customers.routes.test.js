@@ -107,7 +107,7 @@ test('customers route: ADMIN lists all customers', async () => {
   assert.equal(res.status, 200);
   const body = await res.json();
   assert.equal(body.status, 'SUCCESS');
-  assert.equal(body.data.length, 2);
+  assert.equal(body.data.customers.length, 2);
 });
 
 test('customers route: EXTERNAL_SALES lists only owned customers', async () => {
@@ -123,8 +123,8 @@ test('customers route: EXTERNAL_SALES lists only owned customers', async () => {
   assert.equal(res.status, 200);
   const body = await res.json();
   assert.equal(body.status, 'SUCCESS');
-  assert.equal(body.data.length, 1);
-  assert.equal(body.data[0].id, 'CUST-0002');
+  assert.equal(body.data.customers.length, 1);
+  assert.equal(body.data.customers[0].id, 'CUST-0002');
 });
 
 test('customers route: ADMIN creates customer', async () => {

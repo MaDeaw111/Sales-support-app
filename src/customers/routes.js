@@ -41,10 +41,10 @@ export function createCustomerHandler({ repo, resolveUser }) {
     
     if (path === '/api/customers' && request.method === 'GET') {
       if (ownerFilter === '__NO_ACCESS__') {
-        return json({ status: 'SUCCESS', data: [] });
+        return json({ status: 'SUCCESS', data: { customers: [] } });
       }
       const customers = await repo.listCustomers(ownerFilter ? { ownerUserId: ownerFilter } : {});
-      return json({ status: 'SUCCESS', data: customers });
+      return json({ status: 'SUCCESS', data: { customers } });
     }
     
     if (path === '/api/customers' && request.method === 'POST') {
