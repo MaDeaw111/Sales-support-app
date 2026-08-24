@@ -89,17 +89,48 @@ export function createExternalSalesRepository(db) {
         err.code = 'UNIQUE';
         throw err;
       }
+
+      const cids = dto.customerIds;
+      if (cids !== undefined && !Array.isArray(cids)) {
+        throw new Error('Customer IDs must be an array.');
+      }
+
+      if (cids && cids.length > 0) {
+        const uniqueCids = Array.from(new Set(cids));
+        const placeholders = uniqueCids.map(() => '?').join(',');
+        const { results: found } = await db.prepare(`
+          SELECT customer_id FROM customers WHERE customer_id IN (${placeholders})
+        `).bind(...uniqueCids).all();
+        if ((found || []).length !== uniqueCids.length) {
+          throw new Error('One or more customer IDs are invalid.');
+        }
+      }
       
       const tempPassword = bytesToBase64Url(crypto.getRandomValues(new Uint8Array(12)));
       const { hash, salt, iterations } = await hashPassword(tempPassword);
       
       const userId = await nextUserId(db);
-      await db.prepare(`
+      const batchStatements = [];
+
+      batchStatements.push(db.prepare(`
         INSERT INTO users (
           user_id, full_name, email, role, customer_scope, status,
           password_hash, password_salt, password_iterations, must_change_password
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
-      `).bind(userId, dto.name, dto.email, 'EXTERNAL_SALES', 'OWN_CUSTOMERS', dto.status, hash, salt, iterations).run();
+      `).bind(userId, dto.name, dto.email, 'EXTERNAL_SALES', 'OWN_CUSTOMERS', dto.status, hash, salt, iterations));
+
+      if (cids && cids.length > 0) {
+        const uniqueCids = Array.from(new Set(cids));
+        for (const cid of uniqueCids) {
+          batchStatements.push(db.prepare(`
+            UPDATE customers
+            SET owner_user_id = ?, updated_at = CURRENT_TIMESTAMP
+            WHERE customer_id = ?
+          `).bind(userId, cid));
+        }
+      }
+
+      await db.batch(batchStatements);
       
       const created = await this.findExternalSalesById(userId);
       return { user: created, tempPassword };

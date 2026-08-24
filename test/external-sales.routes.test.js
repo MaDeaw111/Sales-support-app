@@ -221,3 +221,70 @@ test('external-sales: unauthorized roles cannot mutate profiles', async () => {
   const res = await worker.fetch(req, { DB: wrappedDb });
   assert.equal(res.status, 403);
 });
+
+test('external-sales: MANAGER is allowed to POST and PUT profiles', async () => {
+  const { db, wrappedDb } = await setupTestDb();
+  await seedUserAndSession(db, 'USR-0001', 'Manager', 'manager@example.com', 'MANAGER', 'ALL', 'manager-token');
+  
+  const req1 = makeRequest('/api/external-sales', 'POST', { name: 'Sales 1', email: 'sales1@example.com', status: 'ACTIVE' }, 'manager-token');
+  const res1 = await worker.fetch(req1, { DB: wrappedDb });
+  assert.equal(res1.status, 200);
+  const body1 = await res1.json();
+  const newUserId = body1.data.externalSales.id;
+
+  const req2 = makeRequest(`/api/external-sales/${newUserId}`, 'PUT', { name: 'Sales 1 Updated', email: 'sales1@example.com', status: 'ACTIVE' }, 'manager-token');
+  const res2 = await worker.fetch(req2, { DB: wrappedDb });
+  assert.equal(res2.status, 200);
+});
+
+test('external-sales: POST with customerIds persists and returns assignments, invalid prevents user creation, reassigns correctly', async () => {
+  const { db, wrappedDb } = await setupTestDb();
+  await seedUserAndSession(db, 'USR-0001', 'Admin', 'admin@example.com', 'ADMIN', 'ALL', 'admin-token');
+  
+  db.prepare(`
+    INSERT INTO users (user_id, full_name, email, role, customer_scope, status, password_hash, password_salt)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  `).run('USR-0002', 'Sales 1', 'sales1@example.com', 'EXTERNAL_SALES', 'OWN_CUSTOMERS', 'ACTIVE', 'h', 's');
+
+  db.prepare(`
+    INSERT INTO customers (customer_id, customer_code, customer_name, owner_user_id)
+    VALUES (?, ?, ?, ?)
+  `).run('CUST-1', 'C-1', 'Cust 1', 'USR-0002');
+
+  db.prepare(`
+    INSERT INTO customers (customer_id, customer_code, customer_name, owner_user_id)
+    VALUES (?, ?, ?, ?)
+  `).run('CUST-2', 'C-2', 'Cust 2', null);
+
+  const req1 = makeRequest('/api/external-sales', 'POST', {
+    name: 'Sales New',
+    email: 'new@example.com',
+    status: 'ACTIVE',
+    customerIds: ['CUST-1', 'NON-EXISTENT']
+  }, 'admin-token');
+  const res1 = await worker.fetch(req1, { DB: wrappedDb });
+  assert.equal(res1.status, 400);
+
+  const userCheck = db.prepare("SELECT 1 FROM users WHERE email = 'new@example.com'").get();
+  assert.equal(userCheck, undefined);
+
+  const req2 = makeRequest('/api/external-sales', 'POST', {
+    name: 'Sales New',
+    email: 'new@example.com',
+    status: 'ACTIVE',
+    customerIds: ['CUST-1', 'CUST-2']
+  }, 'admin-token');
+  const res2 = await worker.fetch(req2, { DB: wrappedDb });
+  assert.equal(res2.status, 200);
+  
+  const body2 = await res2.json();
+  const createdUser = body2.data.externalSales;
+  assert.deepEqual(createdUser.customerIds, ['CUST-1', 'CUST-2']);
+
+  const cust1 = db.prepare('SELECT owner_user_id FROM customers WHERE customer_id = ?').all('CUST-1')[0];
+  assert.equal(cust1.owner_user_id, createdUser.id);
+
+  const cust2 = db.prepare('SELECT owner_user_id FROM customers WHERE customer_id = ?').all('CUST-2')[0];
+  assert.equal(cust2.owner_user_id, createdUser.id);
+});
+

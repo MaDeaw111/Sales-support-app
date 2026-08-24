@@ -76,8 +76,13 @@ export function createExternalSalesHandler({ repo, resolveUser }) {
         return json({ status: 'ERROR', message: 'Invalid status.' }, 400);
       }
 
+      const customerIds = body.customerIds;
+      if (customerIds !== undefined && !Array.isArray(customerIds)) {
+        return json({ status: 'ERROR', message: 'Customer IDs must be an array.' }, 400);
+      }
+
       try {
-        const { user: created, tempPassword } = await repo.createExternalSales({ name, email, status });
+        const { user: created, tempPassword } = await repo.createExternalSales({ name, email, status, customerIds });
         return json({ status: 'SUCCESS', data: { externalSales: created, tempPassword } });
       } catch (err) {
         if (err.code === 'UNIQUE') {

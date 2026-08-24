@@ -773,3 +773,46 @@ test('External Sales UI and Save Flow validation checks', () => {
   assert.match(saveProfileBlock, /fetch\([`'"]\/api\/external-sales/);
 });
 
+test('External Sales Front-end RBAC and Users Fallback check', () => {
+  const canViewFn = extractFunction('canViewExternalSalesManagement()');
+  const canManageFn = extractFunction('canManageExternalSales()');
+  
+  // Verify canViewExternalSalesManagement rules
+  globalThis.state = { currentUser: { role: 'ADMIN' } };
+  const canView = new Function(`return (${canViewFn.trim()});`)();
+  assert.equal(canView(), true);
+  state.currentUser.role = 'MANAGER';
+  assert.equal(canView(), true);
+  state.currentUser.role = 'SALES_SUPPORT';
+  assert.equal(canView(), true);
+  state.currentUser.role = 'EXTERNAL_SALES';
+  assert.equal(canView(), false);
+
+  // Verify canManageExternalSales rules
+  const canManage = new Function(`return (${canManageFn.trim()});`)();
+  state.currentUser.role = 'ADMIN';
+  assert.equal(canManage(), true);
+  state.currentUser.role = 'MANAGER';
+  assert.equal(canManage(), true);
+  state.currentUser.role = 'SALES_SUPPORT';
+  assert.equal(canManage(), false);
+  state.currentUser.role = 'EXTERNAL_SALES';
+  assert.equal(canManage(), false);
+
+  delete globalThis.state;
+
+  // Verify no state.users fallback in External Sales UI helpers
+  const openModalBlock = extractFunction('openExternalSalesModal(userId)');
+  const openAddModalBlock = extractFunction('openAddExternalSalesModal()');
+  const saveNewBlock = extractFunction('saveNewExternalSales()');
+
+  // Verify openExternalSalesModal lookup only uses state.externalSales
+  assert.doesNotMatch(openModalBlock, /\(state\.users \|\| \[\]\)\.find\(u => u\.id === userId/);
+
+  // Verify saveNewExternalSales contains the reload calls
+  assert.match(saveNewBlock, /loadCustomersFromApi/);
+  assert.match(saveNewBlock, /loadExternalSalesFromApi/);
+  assert.match(saveNewBlock, /loadCustomerOwnersFromApi/);
+});
+
+

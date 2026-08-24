@@ -661,7 +661,7 @@
         function canManageUsers() { return ['ADMIN'].includes(state.currentUser.role); }
         function canViewUsers() { return ['ADMIN','MANAGER'].includes(state.currentUser.role); }
         function canViewExternalSalesManagement() { return ['ADMIN','MANAGER','SALES_SUPPORT'].includes(state.currentUser.role); }
-        function canManageExternalSales() { return ['ADMIN','SALES_SUPPORT'].includes(state.currentUser.role); }
+        function canManageExternalSales() { return ['ADMIN','MANAGER'].includes(state.currentUser.role); }
 
         function getRoleNavLabel(item, role) {
             if (role === 'EXTERNAL_SALES') {
@@ -1640,7 +1640,7 @@
                             <p class="text-xs text-slate-500 mt-1">ดูและจัดการข้อมูล External Sales, Default Commission Rate และลูกค้าที่รับผิดชอบ</p>
                         </div>
                         <div class="flex items-center gap-2">
-                            <div class="text-[10px] font-bold px-3 py-2 rounded-lg ${editable ? 'bg-blue-50 text-blue-700 border border-blue-100' : 'bg-slate-100 text-slate-500 border border-slate-200'}">${editable ? 'Sales Support / Admin · Edit' : 'Manager · View only'}</div>
+                            <div class="text-[10px] font-bold px-3 py-2 rounded-lg ${editable ? 'bg-blue-50 text-blue-700 border border-blue-100' : 'bg-slate-100 text-slate-500 border border-slate-200'}">${editable ? 'Manager / Admin · Edit' : 'Sales Support · View only'}</div>
                             ${editable ? `<button onclick="openAddExternalSalesModal()" class="ui-btn ui-btn-primary"><i data-lucide="user-plus" class="w-4 h-4"></i><span>Add External Sales</span></button>` : ''}
                         </div>
                     </div>
@@ -1668,9 +1668,9 @@
 
 
         function openAddExternalSalesModal() {
-            if (!canManageExternalSales()) { alert('Only Sales Support or Admin can add External Sales.'); return; }
+            if (!canManageExternalSales()) { alert('Only Manager or Admin can add External Sales.'); return; }
             const customerRows = (state.customers || []).map(c => {
-                const currentOwner = (state.externalSales || []).find(u => u.id === c.ownerId) || (state.users || []).find(u => u.id === c.ownerId);
+                const currentOwner = (state.externalSales || []).find(u => u.id === c.ownerId);
                 const ownerNote = c.ownerId ? ` · currently ${currentOwner?.name || c.ownerId}` : '';
                 return `<label class="flex items-start gap-2 p-2.5 rounded-lg border border-slate-200 hover:bg-slate-50"><input type="checkbox" class="external-sales-new-customer mt-0.5" value="${c.id}"><span><span class="font-bold text-slate-800">${c.name}</span><span class="block text-[9px] text-slate-400">${c.code || c.id}${ownerNote}</span></span></label>`;
             }).join('');
@@ -1690,7 +1690,7 @@
         }
 
         async function saveNewExternalSales() {
-            if (!canManageExternalSales()) { alert('Only Sales Support or Admin can add External Sales.'); return; }
+            if (!canManageExternalSales()) { alert('Only Manager or Admin can add External Sales.'); return; }
             const fullName = document.getElementById('externalSalesNewName')?.value.trim() || '';
             const email = document.getElementById('externalSalesNewEmail')?.value.trim() || '';
             const status = document.getElementById('externalSalesNewStatus')?.value || 'ACTIVE';
@@ -1724,20 +1724,8 @@
                 const data = body.data || {};
                 const newUser = data.externalSales || {};
                 
-                state.externalSales.push({
-                    id: newUser.id,
-                    name: newUser.name,
-                    email: newUser.email,
-                    role: 'EXTERNAL_SALES',
-                    status: newUser.status,
-                    customerIds: newUser.customerIds || []
-                });
-                
-                const selected = new Set(newUser.customerIds || assignedCustomerIds);
-                (state.customers || []).forEach(c => {
-                    if (selected.has(c.id)) c.ownerId = newUser.id;
-                });
-                
+                await loadCustomersFromApi();
+                await loadExternalSalesFromApi();
                 await loadCustomerOwnersFromApi();
                 
                 openModal(`
@@ -1766,12 +1754,12 @@
         }
 
         function openExternalSalesModal(userId) {
-            if (!canManageExternalSales()) { alert('Only Sales Support or Admin can edit External Sales.'); return; }
+            if (!canManageExternalSales()) { alert('Only Manager or Admin can edit External Sales.'); return; }
             const user = (state.externalSales || []).find(u => u.id === userId);
             if (!user) { alert('External Sales user not found.'); return; }
             const assigned = new Set((state.customers || []).filter(c => c.ownerId === userId).map(c => c.id));
             const customerRows = (state.customers || []).map(c => {
-                const currentOwner = (state.externalSales || []).find(u => u.id === c.ownerId) || (state.users || []).find(u => u.id === c.ownerId);
+                const currentOwner = (state.externalSales || []).find(u => u.id === c.ownerId);
                 const ownerNote = c.ownerId && c.ownerId !== userId ? ` · currently ${currentOwner?.name || c.ownerId}` : '';
                 return `<label class="flex items-start gap-2 p-2.5 rounded-lg border border-slate-200 hover:bg-slate-50"><input type="checkbox" class="external-sales-customer mt-0.5" value="${c.id}" ${assigned.has(c.id) ? 'checked' : ''}><span><span class="font-bold text-slate-800">${c.name}</span><span class="block text-[9px] text-slate-400">${c.code || c.id}${ownerNote}</span></span></label>`;
             }).join('');
@@ -1791,7 +1779,7 @@
         }
 
         async function saveExternalSalesProfile(userId) {
-            if (!canManageExternalSales()) { alert('Only Sales Support or Admin can edit External Sales.'); return; }
+            if (!canManageExternalSales()) { alert('Only Manager or Admin can edit External Sales.'); return; }
             const user = (state.externalSales || []).find(u => u.id === userId);
             if (!user) return;
             const fullName = document.getElementById('externalSalesName')?.value.trim() || '';
