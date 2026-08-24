@@ -79,7 +79,7 @@ npx wrangler d1 migrations apply wcat-sales-db --remote
 ```
 
 ### 2. Expected Migrations Applied
-- `0002_customers.sql` (Creates `customers` and `customer_contacts` tables, indexes, and initial data).
+- `0002_customers.sql` (Creates `customers` and `customer_contacts` tables and indexes.)
 
 ### 3. Verification SQL
 After migration, verify the schema and tables in the Cloudflare D1 console with:
