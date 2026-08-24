@@ -270,6 +270,20 @@
             }
         }
 
+        async function loadCustomersFromApi() {
+            try {
+                const res = await fetch('/api/customers');
+                if (!res.ok) return;
+                const body = await res.json();
+                if (body && body.status === 'SUCCESS' && body.data && Array.isArray(body.data.customers)) {
+                    state.customers = body.data.customers;
+                    renderView();
+                }
+            } catch (err) {
+                console.error('Failed to load customers:', err);
+            }
+        }
+
         function startAuthenticatedApp() {
             showAuthenticatedShell(true);
             state.selectedCustomerId = null;
@@ -282,6 +296,7 @@
             if (typeof callBackend === 'function') {
                 callBackend('GET_MASTER_DATA', {}, hydrateData, msg => console.warn('Master data migration pending:', msg));
             }
+            loadCustomersFromApi();
         }
 
         function openChangePasswordModal(forced = false) {

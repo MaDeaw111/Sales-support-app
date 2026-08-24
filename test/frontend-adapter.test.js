@@ -14,6 +14,25 @@ function functionBlock(name, nextName) {
   return html.slice(start, end);
 }
 
+function extractFunction(name) {
+  const start = html.indexOf(`async function ${name}`) >= 0
+    ? html.indexOf(`async function ${name}`)
+    : html.indexOf(`function ${name}`);
+  assert.ok(start >= 0, `function ${name} must exist`);
+  
+  const openBrace = html.indexOf('{', start);
+  assert.ok(openBrace >= 0);
+  
+  let braceCount = 1;
+  let index = openBrace + 1;
+  while (braceCount > 0 && index < html.length) {
+    if (html[index] === '{') braceCount++;
+    else if (html[index] === '}') braceCount--;
+    index++;
+  }
+  return html.slice(start, index);
+}
+
 const adapter = functionBlock('callBackend(action, payload, onSuccess, onFailure)', 'initApp');
 
 test('callBackend uses Cloudflare gateway fetch transport', () => {
@@ -45,4 +64,105 @@ test('password change and sign out use Cloudflare auth endpoints', () => {
   assert.match(signOutBlock, /fetch\(['"]\/api\/auth\/logout['"]/);
   assert.doesNotMatch(passwordBlock, /google\.script\.run/);
   assert.doesNotMatch(signOutBlock, /google\.script\.run/);
+});
+
+test('loadCustomersFromApi successful load replaces state.customers', async () => {
+  const code = extractFunction('loadCustomersFromApi()');
+  
+  const mockState = { customers: [{ id: 'mock1' }] };
+  let renderViewCalled = false;
+  
+  globalThis.state = mockState;
+  globalThis.renderView = () => { renderViewCalled = true; };
+  globalThis.fetch = async (url) => {
+    assert.equal(url, '/api/customers');
+    return {
+      ok: true,
+      async json() {
+        return {
+          status: 'SUCCESS',
+          data: {
+            customers: [{ id: 'api1', name: 'API Cust 1' }]
+          }
+        };
+      }
+    };
+  };
+
+  try {
+    const fn = new Function(`return (${code.trim()});`)();
+    await fn();
+    
+    assert.equal(renderViewCalled, true);
+    assert.equal(mockState.customers.length, 1);
+    assert.equal(mockState.customers[0].id, 'api1');
+  } finally {
+    delete globalThis.state;
+    delete globalThis.renderView;
+    delete globalThis.fetch;
+  }
+});
+
+test('loadCustomersFromApi failed load preserves previous state.customers', async () => {
+  const code = extractFunction('loadCustomersFromApi()');
+  
+  const mockState = { customers: [{ id: 'mock1' }] };
+  let renderViewCalled = false;
+  
+  globalThis.state = mockState;
+  globalThis.renderView = () => { renderViewCalled = true; };
+  globalThis.fetch = async (url) => {
+    return {
+      ok: false
+    };
+  };
+
+  try {
+    const fn = new Function(`return (${code.trim()});`)();
+    await fn();
+    
+    assert.equal(renderViewCalled, false);
+    assert.equal(mockState.customers.length, 1);
+    assert.equal(mockState.customers[0].id, 'mock1');
+  } finally {
+    delete globalThis.state;
+    delete globalThis.renderView;
+    delete globalThis.fetch;
+  }
+});
+
+test('loadCustomersFromApi malformed DTO does not overwrite state.customers', async () => {
+  const code = extractFunction('loadCustomersFromApi()');
+  
+  const mockState = { customers: [{ id: 'mock1' }] };
+  let renderViewCalled = false;
+  
+  globalThis.state = mockState;
+  globalThis.renderView = () => { renderViewCalled = true; };
+  globalThis.fetch = async (url) => {
+    return {
+      ok: true,
+      async json() {
+        return {
+          status: 'SUCCESS',
+          data: {
+            // customers is missing
+          }
+        };
+      }
+    };
+  };
+
+  try {
+    const fn = new Function(`return (${code.trim()});`)();
+    await fn();
+    
+    assert.equal(renderViewCalled, false);
+    assert.equal(mockState.customers.length, 1);
+    assert.equal(mockState.customers[0].id, 'mock1');
+  } finally {
+    delete globalThis.state;
+    delete globalThis.renderView;
+    delete globalThis.fetch;
+  }
 });
