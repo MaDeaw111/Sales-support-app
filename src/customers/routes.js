@@ -53,14 +53,14 @@ export function createCustomerHandler({ repo, resolveUser }) {
       }
       
       const body = await readJson(request);
-      if (!body || !body.name || !body.code) {
-        return json({ status: 'ERROR', message: 'Name and code are required.' }, 400);
-      }
+      const name = String(body?.name || '').trim();
+      const code = String(body?.code || '').trim();
       
-      const name = String(body.name).trim();
-      const code = String(body.code).trim();
-      if (!name || !code) {
-        return json({ status: 'ERROR', message: 'Name and code are required.' }, 400);
+      if (!name) {
+        return json({ status: 'ERROR', message: 'Customer name is required.' }, 400);
+      }
+      if (!code) {
+        return json({ status: 'ERROR', message: 'Customer code is required.' }, 400);
       }
       
       let ownerId = body.ownerId || null;

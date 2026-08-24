@@ -194,16 +194,27 @@ test('customers route: invalid payload returns 400', async () => {
   const { db, wrappedDb } = await setupTestDb();
   await seedUserAndSession(db, 'USR-0001', 'Admin', 'admin@example.com', 'ADMIN', 'ALL', 'admin-token');
 
-  const payload = {
+  const payload1 = {
     name: 'No Code B.V.'
   };
 
-  const req = makeRequest('/api/customers', 'POST', payload, 'admin-token');
-  const res = await worker.fetch(req, { DB: wrappedDb });
-  assert.equal(res.status, 400);
-  const body = await res.json();
-  assert.equal(body.status, 'ERROR');
-  assert.match(body.message, /Name and code are required/i);
+  const req1 = makeRequest('/api/customers', 'POST', payload1, 'admin-token');
+  const res1 = await worker.fetch(req1, { DB: wrappedDb });
+  assert.equal(res1.status, 400);
+  const body1 = await res1.json();
+  assert.equal(body1.status, 'ERROR');
+  assert.match(body1.message, /Customer code is required/i);
+
+  const payload2 = {
+    code: 'C-NO-NAME'
+  };
+
+  const req2 = makeRequest('/api/customers', 'POST', payload2, 'admin-token');
+  const res2 = await worker.fetch(req2, { DB: wrappedDb });
+  assert.equal(res2.status, 400);
+  const body2 = await res2.json();
+  assert.equal(body2.status, 'ERROR');
+  assert.match(body2.message, /Customer name is required/i);
 });
 
 test('customers route: GET hidden customer returns 404 for EXTERNAL_SALES', async () => {
