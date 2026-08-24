@@ -413,3 +413,61 @@ test('customers route: POST and PUT invalid contacts object returns 400', async 
   const body2 = await res2.json();
   assert.match(body2.message, /contacts must be an array/i);
 });
+
+test('customer-owners route: unauthenticated GET returns 401', async () => {
+  const { db, wrappedDb } = await setupTestDb();
+  const req = makeRequest('/api/customer-owners', 'GET', null, null);
+  const res = await worker.fetch(req, { DB: wrappedDb });
+  assert.equal(res.status, 401);
+});
+
+test('customer-owners route: authenticated ADMIN returns 200 and filtered/sanitized owners', async () => {
+  const { db, wrappedDb } = await setupTestDb();
+  await seedUserAndSession(db, 'USR-0001', 'Admin User', 'admin@example.com', 'ADMIN', 'ALL', 'admin-token');
+  
+  // Seed various users
+  // 1. Active EXTERNAL_SALES
+  db.prepare(`
+    INSERT INTO users (user_id, full_name, email, role, customer_scope, status, password_hash, password_salt)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  `).run('USR-0002', 'Active Sales 2', 'sales2@example.com', 'EXTERNAL_SALES', 'OWNED', 'ACTIVE', 'h', 's');
+
+  // 2. Active EXTERNAL_SALES (to check ordering by full_name)
+  db.prepare(`
+    INSERT INTO users (user_id, full_name, email, role, customer_scope, status, password_hash, password_salt)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  `).run('USR-0003', 'Active Sales 1', 'sales1@example.com', 'EXTERNAL_SALES', 'OWNED', 'ACTIVE', 'h', 's');
+
+  // 3. Inactive EXTERNAL_SALES
+  db.prepare(`
+    INSERT INTO users (user_id, full_name, email, role, customer_scope, status, password_hash, password_salt)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  `).run('USR-0004', 'Inactive Sales', 'sales_in@example.com', 'EXTERNAL_SALES', 'OWNED', 'INACTIVE', 'h', 's');
+
+  // 4. Active MANAGER (should be excluded)
+  db.prepare(`
+    INSERT INTO users (user_id, full_name, email, role, customer_scope, status, password_hash, password_salt)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  `).run('USR-0005', 'Manager User', 'manager@example.com', 'MANAGER', 'ALL', 'ACTIVE', 'h', 's');
+
+  const req = makeRequest('/api/customer-owners', 'GET', null, 'admin-token');
+  const res = await worker.fetch(req, { DB: wrappedDb });
+  assert.equal(res.status, 200);
+  const body = await res.json();
+  assert.equal(body.status, 'SUCCESS');
+  assert.ok(body.data);
+  const owners = body.data.owners;
+  
+  assert.equal(owners.length, 2);
+  assert.equal(owners[0].id, 'USR-0003');
+  assert.equal(owners[0].name, 'Active Sales 1');
+  assert.equal(owners[1].id, 'USR-0002');
+  assert.equal(owners[1].name, 'Active Sales 2');
+
+  for (const owner of owners) {
+    assert.equal(owner.password_hash, undefined);
+    assert.equal(owner.password_salt, undefined);
+    assert.equal(owner.password_iterations, undefined);
+  }
+});
+

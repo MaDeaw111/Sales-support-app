@@ -422,3 +422,100 @@ test('renderDashboard - Active Customers counts only ACTIVE_CUSTOMER status', ()
     delete globalThis.renderRecentActivity;
   }
 });
+
+test('loadCustomerOwnersFromApi successful load replaces state.customerOwners', async () => {
+  const code = extractFunction('loadCustomerOwnersFromApi()');
+  
+  const mockState = { customerOwners: [] };
+  let renderViewCalled = false;
+  
+  globalThis.state = mockState;
+  globalThis.renderView = () => { renderViewCalled = true; };
+  globalThis.fetch = async (url) => {
+    assert.equal(url, '/api/customer-owners');
+    return {
+      ok: true,
+      async json() {
+        return {
+          status: 'SUCCESS',
+          data: {
+            owners: [{ id: 'USR-0002', name: 'Sales 1' }]
+          }
+        };
+      }
+    };
+  };
+
+  try {
+    const fn = new Function(`return (${code.trim()});`)();
+    await fn();
+    
+    assert.equal(renderViewCalled, true);
+    assert.equal(mockState.customerOwners.length, 1);
+    assert.equal(mockState.customerOwners[0].id, 'USR-0002');
+  } finally {
+    delete globalThis.state;
+    delete globalThis.renderView;
+    delete globalThis.fetch;
+  }
+});
+
+test('loadCustomerOwnersFromApi failed/malformed response preserves previous owner state', async () => {
+  const code = extractFunction('loadCustomerOwnersFromApi()');
+  
+  const mockState = { customerOwners: [{ id: 'prev' }] };
+  let renderViewCalled = false;
+  
+  globalThis.state = mockState;
+  globalThis.renderView = () => { renderViewCalled = true; };
+  
+  globalThis.fetch = async (url) => {
+    return { ok: false };
+  };
+
+  try {
+    const fn = new Function(`return (${code.trim()});`)();
+    await fn();
+    assert.equal(renderViewCalled, false);
+    assert.equal(mockState.customerOwners.length, 1);
+    assert.equal(mockState.customerOwners[0].id, 'prev');
+  } finally {
+    delete globalThis.fetch;
+  }
+
+  globalThis.fetch = async (url) => {
+    return {
+      ok: true,
+      async json() {
+        return { status: 'SUCCESS', data: {} };
+      }
+    };
+  };
+
+  try {
+    const fn = new Function(`return (${code.trim()});`)();
+    await fn();
+    assert.equal(renderViewCalled, false);
+    assert.equal(mockState.customerOwners.length, 1);
+    assert.equal(mockState.customerOwners[0].id, 'prev');
+  } finally {
+    delete globalThis.state;
+    delete globalThis.renderView;
+    delete globalThis.fetch;
+  }
+});
+
+test('Add Customer and Edit Customer dropdown generation and preservation', () => {
+  const openAddBlock = extractFunction('openAddCustomerModal()');
+  const openEditBlock = extractFunction('openEditCustomer(id)');
+
+  assert.doesNotMatch(openAddBlock, /state\.users\.filter/);
+  assert.doesNotMatch(openEditBlock, /state\.users\.filter/);
+
+  assert.match(openAddBlock, /state\.customerOwners/);
+
+  assert.match(openAddBlock, /-- ไม่ระบุ \/ Unassigned --/);
+  
+  assert.match(openEditBlock, /Legacy\/Unavailable/);
+});
+
