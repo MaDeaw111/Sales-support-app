@@ -298,6 +298,20 @@
             }
         }
 
+        async function loadExternalSalesFromApi() {
+            try {
+                const res = await fetch('/api/external-sales');
+                if (!res.ok) return;
+                const body = await res.json();
+                if (body && body.status === 'SUCCESS' && body.data && Array.isArray(body.data.externalSales)) {
+                    state.externalSales = body.data.externalSales;
+                    renderView();
+                }
+            } catch (err) {
+                console.error('Failed to load external sales:', err);
+            }
+        }
+
         function startAuthenticatedApp() {
             showAuthenticatedShell(true);
             state.selectedCustomerId = null;
@@ -312,6 +326,7 @@
             }
             loadCustomersFromApi();
             loadCustomerOwnersFromApi();
+            loadExternalSalesFromApi();
         }
 
         function openChangePasswordModal(forced = false) {
@@ -397,6 +412,7 @@
             pricingTab: 'STANDARD',
             managerDashboardFilters: { year: '2026', month: 'ALL', salesOwnerId: 'ALL', customerId: 'ALL', productId: 'ALL' },
             customerOwners: [],
+            externalSales: [],
             
             users: [
                 { id: 'USR-0001', name: 'Chiradet Chermchabok', email: 'chiradet_c@wcat-thai.com', role: 'SALES_SUPPORT', defaultCurrency: '-', status: 'ACTIVE', customerScope: 'ALL_ASSIGNED' },
@@ -1601,8 +1617,7 @@
 
 
         function getExternalSalesManagementRows() {
-            return (state.users || [])
-                .filter(u => u.role === 'EXTERNAL_SALES')
+            return (state.externalSales || [])
                 .map(u => ({
                     ...u,
                     assignedCustomers: (state.customers || []).filter(c => c.ownerId === u.id)
@@ -1655,7 +1670,7 @@
         function openAddExternalSalesModal() {
             if (!canManageExternalSales()) { alert('Only Sales Support or Admin can add External Sales.'); return; }
             const customerRows = (state.customers || []).map(c => {
-                const currentOwner = (state.users || []).find(u => u.id === c.ownerId);
+                const currentOwner = (state.externalSales || []).find(u => u.id === c.ownerId) || (state.users || []).find(u => u.id === c.ownerId);
                 const ownerNote = c.ownerId ? ` · currently ${currentOwner?.name || c.ownerId}` : '';
                 return `<label class="flex items-start gap-2 p-2.5 rounded-lg border border-slate-200 hover:bg-slate-50"><input type="checkbox" class="external-sales-new-customer mt-0.5" value="${c.id}"><span><span class="font-bold text-slate-800">${c.name}</span><span class="block text-[9px] text-slate-400">${c.code || c.id}${ownerNote}</span></span></label>`;
             }).join('');
@@ -1666,7 +1681,7 @@
                         <label class="text-xs font-bold text-slate-600">Name<input id="externalSalesNewName" class="mt-1 w-full border rounded-lg px-3 py-2 font-normal"></label>
                         <label class="text-xs font-bold text-slate-600">Email<input id="externalSalesNewEmail" type="email" class="mt-1 w-full border rounded-lg px-3 py-2 font-normal"></label>
                         <label class="text-xs font-bold text-slate-600">Status<select id="externalSalesNewStatus" class="mt-1 w-full border rounded-lg px-3 py-2 font-normal"><option value="ACTIVE" selected>ACTIVE</option><option value="INACTIVE">INACTIVE</option></select></label>
-                        <label class="text-xs font-bold text-slate-600">Default Commission Rate (USD / MT)<input id="externalSalesNewCommissionRate" type="number" min="0" step="0.01" value="0" class="mt-1 w-full border rounded-lg px-3 py-2 font-normal"></label>
+                        <label class="text-xs font-bold text-slate-600">Default Commission Rate (USD / MT) <span class="text-slate-400 font-normal">(Prototype only)</span><input id="externalSalesNewCommissionRate" type="number" min="0" step="0.01" value="0" disabled class="mt-1 w-full border border-slate-200 bg-slate-100 text-slate-500 rounded-lg px-3 py-2 font-normal cursor-not-allowed"></label>
                     </div>
                     <div><div class="text-xs font-black text-slate-700 mb-2">Customers Assigned</div><div class="grid sm:grid-cols-2 gap-2 max-h-64 overflow-y-auto">${customerRows || '<div class="text-xs text-slate-400">No customers available.</div>'}</div><p class="text-[10px] text-amber-700 mt-2">Selecting a customer already owned by another External Sales will reassign that customer.</p></div>
                     <div id="externalSalesNewError" class="hidden rounded-lg border border-rose-200 bg-rose-50 p-3 text-xs font-bold text-rose-700"></div>
@@ -1674,60 +1689,72 @@
                 </div>`);
         }
 
-        function saveNewExternalSales() {
+        async function saveNewExternalSales() {
             if (!canManageExternalSales()) { alert('Only Sales Support or Admin can add External Sales.'); return; }
             const fullName = document.getElementById('externalSalesNewName')?.value.trim() || '';
             const email = document.getElementById('externalSalesNewEmail')?.value.trim() || '';
             const status = document.getElementById('externalSalesNewStatus')?.value || 'ACTIVE';
-            const rate = Number(document.getElementById('externalSalesNewCommissionRate')?.value || 0);
             const assignedCustomerIds = Array.from(document.querySelectorAll('.external-sales-new-customer:checked')).map(x => x.value);
             const errorEl = document.getElementById('externalSalesNewError');
             const fail = msg => { if (errorEl) { errorEl.textContent = msg; errorEl.classList.remove('hidden'); } };
             if (!fullName || !email) return fail('Name and Email are required.');
-            if (!Number.isFinite(rate) || rate < 0) return fail('Commission Rate must be 0 or greater.');
-            if (typeof google === 'undefined' || !google.script?.run) return fail('Create is available only in the deployed Apps Script Web App.');
+            
             const btn = document.getElementById('externalSalesCreateButton');
             if (btn) { btn.disabled = true; btn.textContent = 'Creating...'; }
-            google.script.run
-                .withSuccessHandler(res => {
-                    if (btn) { btn.disabled = false; btn.textContent = 'Create External Sales'; }
-                    if (!res || res.status !== 'SUCCESS') return fail(res?.message || 'Unable to create External Sales.');
-                    const data = res.data || {};
-                    state.users.push({
-                        id:data.user_id,
-                        name:data.full_name || fullName,
-                        email:data.email || email,
-                        role:'EXTERNAL_SALES',
-                        status:data.status || status,
-                        defaultCurrency:'USD',
-                        customerScope:'OWN_CUSTOMERS',
-                        defaultCommissionRateUsdMt:Number(data.default_commission_rate_usd_mt ?? rate)
-                    });
-                    const selected = new Set(data.assigned_customer_ids || assignedCustomerIds);
-                    (state.customers || []).forEach(c => { if (selected.has(c.id)) c.ownerId = data.user_id; });
-                    openModal(`
-                        <div class="space-y-4">
-                            <div><div class="text-[10px] font-black uppercase tracking-wider text-emerald-600">Account Created</div><h3 class="text-lg font-black text-slate-900">External Sales login is ready</h3><p class="text-xs text-slate-500 mt-1">Send this temporary login information to the External Sales user.</p></div>
-                            <div class="rounded-xl border border-slate-200 bg-slate-50 p-4 space-y-3 text-xs">
-                                <div><div class="text-slate-400">Name</div><div class="font-black text-slate-900">${data.full_name || fullName}</div></div>
-                                <div><div class="text-slate-400">Email</div><div id="externalSalesCreatedEmail" class="font-mono font-bold text-slate-900">${data.email || email}</div></div>
-                                <div><div class="text-slate-400">Temporary Password</div><div id="externalSalesCreatedPassword" class="font-mono font-black text-blue-700 break-all">${data.temporary_password || ''}</div></div>
-                            </div>
-                            <div class="rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800">The user must change this password on first login.</div>
-                            <div class="flex justify-end gap-2"><button onclick="copyExternalSalesLoginInfo()" class="ui-btn ui-btn-secondary">Copy Login Info</button><button onclick="closeModal(); renderExternalSalesManagement(document.getElementById('mainContent'));" class="ui-btn ui-btn-primary">Done</button></div>
-                        </div>`);
-                })
-                .withFailureHandler(err => {
-                    if (btn) { btn.disabled = false; btn.textContent = 'Create External Sales'; }
-                    fail(err?.message || 'Unable to create External Sales.');
-                })
-                .createExternalSalesAccount(getStoredSessionToken(), {
-                    full_name:fullName,
-                    email,
-                    status,
-                    default_commission_rate_usd_mt:rate,
-                    assigned_customer_ids:assignedCustomerIds
+
+            try {
+                const res = await fetch('/api/external-sales', {
+                    method: 'POST',
+                    headers: { 'content-type': 'application/json' },
+                    body: JSON.stringify({
+                        name: fullName,
+                        email,
+                        status,
+                        customerIds: assignedCustomerIds
+                    })
                 });
+                
+                if (btn) { btn.disabled = false; btn.textContent = 'Create External Sales'; }
+                
+                const body = await res.json();
+                if (!res.ok || body.status !== 'SUCCESS') {
+                    return fail(body.message || 'Unable to create External Sales.');
+                }
+                
+                const data = body.data || {};
+                const newUser = data.externalSales || {};
+                
+                state.externalSales.push({
+                    id: newUser.id,
+                    name: newUser.name,
+                    email: newUser.email,
+                    role: 'EXTERNAL_SALES',
+                    status: newUser.status,
+                    customerIds: newUser.customerIds || []
+                });
+                
+                const selected = new Set(newUser.customerIds || assignedCustomerIds);
+                (state.customers || []).forEach(c => {
+                    if (selected.has(c.id)) c.ownerId = newUser.id;
+                });
+                
+                await loadCustomerOwnersFromApi();
+                
+                openModal(`
+                    <div class="space-y-4">
+                        <div><div class="text-[10px] font-black uppercase tracking-wider text-emerald-600">Account Created</div><h3 class="text-lg font-black text-slate-900">External Sales login is ready</h3><p class="text-xs text-slate-500 mt-1">Send this temporary login information to the External Sales user.</p></div>
+                        <div class="rounded-xl border border-slate-200 bg-slate-50 p-4 space-y-3 text-xs">
+                            <div><div class="text-slate-400">Name</div><div class="font-black text-slate-900">${newUser.name || fullName}</div></div>
+                            <div><div class="text-slate-400">Email</div><div id="externalSalesCreatedEmail" class="font-mono font-bold text-slate-900">${newUser.email || email}</div></div>
+                            <div><div class="text-slate-400">Temporary Password</div><div id="externalSalesCreatedPassword" class="font-mono font-black text-blue-700 break-all">${data.tempPassword || ''}</div></div>
+                        </div>
+                        <div class="rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800">The user must change this password on first login.</div>
+                        <div class="flex justify-end gap-2"><button onclick="copyExternalSalesLoginInfo()" class="ui-btn ui-btn-secondary">Copy Login Info</button><button onclick="closeModal(); renderExternalSalesManagement(document.getElementById('mainContent'));" class="ui-btn ui-btn-primary">Done</button></div>
+                    </div>`);
+            } catch (err) {
+                if (btn) { btn.disabled = false; btn.textContent = 'Create External Sales'; }
+                fail('Connection error: ' + err.message);
+            }
         }
 
         function copyExternalSalesLoginInfo() {
@@ -1740,11 +1767,11 @@
 
         function openExternalSalesModal(userId) {
             if (!canManageExternalSales()) { alert('Only Sales Support or Admin can edit External Sales.'); return; }
-            const user = (state.users || []).find(u => u.id === userId && u.role === 'EXTERNAL_SALES');
+            const user = (state.externalSales || []).find(u => u.id === userId);
             if (!user) { alert('External Sales user not found.'); return; }
             const assigned = new Set((state.customers || []).filter(c => c.ownerId === userId).map(c => c.id));
             const customerRows = (state.customers || []).map(c => {
-                const currentOwner = (state.users || []).find(u => u.id === c.ownerId);
+                const currentOwner = (state.externalSales || []).find(u => u.id === c.ownerId) || (state.users || []).find(u => u.id === c.ownerId);
                 const ownerNote = c.ownerId && c.ownerId !== userId ? ` · currently ${currentOwner?.name || c.ownerId}` : '';
                 return `<label class="flex items-start gap-2 p-2.5 rounded-lg border border-slate-200 hover:bg-slate-50"><input type="checkbox" class="external-sales-customer mt-0.5" value="${c.id}" ${assigned.has(c.id) ? 'checked' : ''}><span><span class="font-bold text-slate-800">${c.name}</span><span class="block text-[9px] text-slate-400">${c.code || c.id}${ownerNote}</span></span></label>`;
             }).join('');
@@ -1755,7 +1782,7 @@
                         <label class="text-xs font-bold text-slate-600">Name<input id="externalSalesName" value="${user.name || ''}" class="mt-1 w-full border rounded-lg px-3 py-2 font-normal"></label>
                         <label class="text-xs font-bold text-slate-600">Email<input id="externalSalesEmail" type="email" value="${user.email || ''}" class="mt-1 w-full border rounded-lg px-3 py-2 font-normal"></label>
                         <label class="text-xs font-bold text-slate-600">Status<select id="externalSalesStatus" class="mt-1 w-full border rounded-lg px-3 py-2 font-normal"><option value="ACTIVE" ${user.status !== 'INACTIVE' ? 'selected' : ''}>ACTIVE</option><option value="INACTIVE" ${user.status === 'INACTIVE' ? 'selected' : ''}>INACTIVE</option></select></label>
-                        <label class="text-xs font-bold text-slate-600">Default Commission Rate (USD / MT)<input id="externalSalesCommissionRate" type="number" min="0" step="0.01" value="${Number(user.defaultCommissionRateUsdMt || 0)}" class="mt-1 w-full border rounded-lg px-3 py-2 font-normal"></label>
+                        <label class="text-xs font-bold text-slate-600">Default Commission Rate (USD / MT) <span class="text-slate-400 font-normal">(Prototype only)</span><input id="externalSalesCommissionRate" type="number" min="0" step="0.01" value="${Number(user.defaultCommissionRateUsdMt || 0)}" disabled class="mt-1 w-full border border-slate-200 bg-slate-100 text-slate-500 rounded-lg px-3 py-2 font-normal cursor-not-allowed"></label>
                     </div>
                     <div><div class="text-xs font-black text-slate-700 mb-2">Customers Assigned</div><div class="grid sm:grid-cols-2 gap-2 max-h-64 overflow-y-auto">${customerRows || '<div class="text-xs text-slate-400">No customers available.</div>'}</div><p class="text-[10px] text-amber-700 mt-2">Selecting a customer currently owned by another External Sales will reassign that customer.</p></div>
                     <div id="externalSalesSaveError" class="hidden rounded-lg border border-rose-200 bg-rose-50 p-3 text-xs font-bold text-rose-700"></div>
@@ -1763,54 +1790,63 @@
                 </div>`);
         }
 
-        function saveExternalSalesProfile(userId) {
+        async function saveExternalSalesProfile(userId) {
             if (!canManageExternalSales()) { alert('Only Sales Support or Admin can edit External Sales.'); return; }
-            const user = (state.users || []).find(u => u.id === userId && u.role === 'EXTERNAL_SALES');
+            const user = (state.externalSales || []).find(u => u.id === userId);
             if (!user) return;
             const fullName = document.getElementById('externalSalesName')?.value.trim() || '';
             const email = document.getElementById('externalSalesEmail')?.value.trim() || '';
             const status = document.getElementById('externalSalesStatus')?.value || 'ACTIVE';
-            const rate = Number(document.getElementById('externalSalesCommissionRate')?.value || 0);
             const assignedCustomerIds = Array.from(document.querySelectorAll('.external-sales-customer:checked')).map(x => x.value);
             const errorEl = document.getElementById('externalSalesSaveError');
             const fail = msg => { if (errorEl) { errorEl.textContent = msg; errorEl.classList.remove('hidden'); } };
             if (!fullName || !email) return fail('Name and Email are required.');
-            if (!Number.isFinite(rate) || rate < 0) return fail('Commission Rate must be 0 or greater.');
-            if (typeof google === 'undefined' || !google.script?.run) return fail('Save is available only in the deployed Apps Script Web App.');
+            
             const btn = document.getElementById('externalSalesSaveButton');
             if (btn) { btn.disabled = true; btn.textContent = 'Saving...'; }
-            google.script.run
-                .withSuccessHandler(res => {
-                    if (btn) { btn.disabled = false; btn.textContent = 'Save External Sales'; }
-                    if (!res || res.status !== 'SUCCESS') return fail(res?.message || 'Unable to update External Sales.');
-                    const data = res.data || {};
-                    Object.assign(user, {
-                        name:data.full_name || fullName,
-                        email:data.email || email,
-                        status:data.status || status,
-                        customerScope:data.customer_scope || 'OWN_CUSTOMERS',
-                        defaultCommissionRateUsdMt:Number(data.default_commission_rate_usd_mt ?? rate)
-                    });
-                    const selected = new Set(data.assigned_customer_ids || assignedCustomerIds);
-                    (state.customers || []).forEach(c => {
-                        if (selected.has(c.id)) c.ownerId = userId;
-                        else if (c.ownerId === userId) c.ownerId = '';
-                    });
-                    closeModal();
-                    renderExternalSalesManagement(document.getElementById('mainContent'));
-                })
-                .withFailureHandler(err => {
-                    if (btn) { btn.disabled = false; btn.textContent = 'Save External Sales'; }
-                    fail(err?.message || 'Unable to update External Sales.');
-                })
-                .updateExternalSalesProfile(getStoredSessionToken(), {
-                    user_id:userId,
-                    full_name:fullName,
-                    email,
-                    status,
-                    default_commission_rate_usd_mt:rate,
-                    assigned_customer_ids:assignedCustomerIds
+
+            try {
+                const res = await fetch(`/api/external-sales/${userId}`, {
+                    method: 'PUT',
+                    headers: { 'content-type': 'application/json' },
+                    body: JSON.stringify({
+                        name: fullName,
+                        email,
+                        status,
+                        customerIds: assignedCustomerIds
+                    })
                 });
+
+                if (btn) { btn.disabled = false; btn.textContent = 'Save External Sales'; }
+
+                const body = await res.json();
+                if (!res.ok || body.status !== 'SUCCESS') {
+                    return fail(body.message || 'Unable to update External Sales.');
+                }
+
+                const updatedUser = body.data?.externalSales || {};
+                
+                Object.assign(user, {
+                    name: updatedUser.name || fullName,
+                    email: updatedUser.email || email,
+                    status: updatedUser.status || status,
+                    customerIds: updatedUser.customerIds || []
+                });
+
+                const selected = new Set(updatedUser.customerIds || assignedCustomerIds);
+                (state.customers || []).forEach(c => {
+                    if (selected.has(c.id)) c.ownerId = userId;
+                    else if (c.ownerId === userId) c.ownerId = '';
+                });
+
+                await loadCustomerOwnersFromApi();
+
+                closeModal();
+                renderExternalSalesManagement(document.getElementById('mainContent'));
+            } catch (err) {
+                if (btn) { btn.disabled = false; btn.textContent = 'Save External Sales'; }
+                fail('Connection error: ' + err.message);
+            }
         }
 
         function renderUsers(container) {
