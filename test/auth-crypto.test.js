@@ -9,7 +9,7 @@ import {
 
 test('PBKDF2 password verifier accepts correct password and rejects wrong password', async () => {
   const record = await hashPassword('CorrectHorseBatteryStaple!');
-  assert.equal(record.iterations, 210000);
+  assert.equal(record.iterations, 100000);
   assert.equal(await verifyPassword('CorrectHorseBatteryStaple!', record), true);
   assert.equal(await verifyPassword('wrong-password', record), false);
 });

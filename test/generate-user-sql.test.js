@@ -20,7 +20,7 @@ test('generate-user-sql outputs a safe D1 insert without plaintext password', as
   assert.match(stdout, /INSERT INTO users/i);
   assert.match(stdout, /USR-0001/);
   assert.match(stdout, /admin@example\.com/);
-  assert.match(stdout, /210000/);
+  assert.match(stdout, /100000/);
   assert.match(stdout, /must_change_password/i);
   assert.doesNotMatch(stdout, new RegExp(password.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
 });

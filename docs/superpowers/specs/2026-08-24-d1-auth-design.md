@@ -12,7 +12,7 @@ The browser submits authentication requests to same-origin Worker routes. The Wo
 
 ### `users`
 
-Stores user identity, RBAC role, account status, password verifier fields, and the forced-password-change flag. Passwords use PBKDF2-SHA-256 with a per-user random salt and 210,000 iterations.
+Stores user identity, RBAC role, account status, password verifier fields, and the forced-password-change flag. Passwords use PBKDF2-SHA-256 with a per-user random salt and 100,000 iterations.
 
 Required roles remain: `ADMIN`, `MANAGER`, `SALES_SUPPORT`, `EXTERNAL_SALES`, `EXPORT`, `PRODUCTION_WAREHOUSE`.
 

@@ -1,5 +1,5 @@
 const encoder = new TextEncoder();
-const PBKDF2_ITERATIONS = 210000;
+const PBKDF2_ITERATIONS = 100000;
 const SALT_BYTES = 16;
 const HASH_BYTES = 32;
 const SESSION_TOKEN_BYTES = 32;
