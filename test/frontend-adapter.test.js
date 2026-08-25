@@ -902,4 +902,16 @@ test('Users management UI and action logic uses state.adminUsers and D1 endpoint
   assert.match(resetUserPasswordBlock, /confirm\(/);
 });
 
+test('userScopeForRole maps roles to correct D1 customer scopes', () => {
+  const scopeFn = extractFunction('userScopeForRole');
+  const fn = new Function(`return (${scopeFn.trim()});`)();
+  
+  assert.equal(fn('ADMIN'), 'ALL');
+  assert.equal(fn('MANAGER'), 'ALL');
+  assert.equal(fn('SALES_SUPPORT'), 'ALL');
+  assert.equal(fn('EXTERNAL_SALES'), 'OWN_CUSTOMERS');
+  assert.equal(fn('EXPORT'), 'NONE');
+  assert.equal(fn('PRODUCTION_WAREHOUSE'), 'NONE');
+});
+
 

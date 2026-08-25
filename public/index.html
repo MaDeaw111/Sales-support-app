@@ -431,14 +431,14 @@
             adminUsers: [],
             
             users: [
-                { id: 'USR-0001', name: 'Chiradet Chermchabok', email: 'chiradet_c@wcat-thai.com', role: 'SALES_SUPPORT', defaultCurrency: '-', status: 'ACTIVE', customerScope: 'ALL_ASSIGNED' },
-                { id: 'USR-0002', name: 'Sarah Jenkins', email: 'sarah@wcat.com', role: 'SALES_SUPPORT', defaultCurrency: '-', status: 'ACTIVE', customerScope: 'ALL_ASSIGNED' },
+                { id: 'USR-0001', name: 'Chiradet Chermchabok', email: 'chiradet_c@wcat-thai.com', role: 'SALES_SUPPORT', defaultCurrency: '-', status: 'ACTIVE', customerScope: 'ALL' },
+                { id: 'USR-0002', name: 'Sarah Jenkins', email: 'sarah@wcat.com', role: 'SALES_SUPPORT', defaultCurrency: '-', status: 'ACTIVE', customerScope: 'ALL' },
                 { id: 'USR-0003', name: 'Somchai Warehouse', email: 'somchai@wcat.com', role: 'PRODUCTION_WAREHOUSE', defaultCurrency: '-', status: 'ACTIVE', customerScope: 'NONE' },
                 { id: 'USR-0004', name: 'Managing Director', email: 'wcat@wcat-thai.com', role: 'MANAGER', defaultCurrency: '-', status: 'ACTIVE', customerScope: 'ALL' },
                 { id: 'USR-0005', name: 'AL Sommerer', email: 'alsommerer@outlook.com', role: 'EXTERNAL_SALES', defaultCurrency: 'USD', status: 'ACTIVE', customerScope: 'OWN_CUSTOMERS', defaultCommissionRateUsdMt: 0 },
                 { id: 'USR-0006', name: 'Sira TTPagro', email: 'sira.p@ttpagro.com', role: 'EXTERNAL_SALES', defaultCurrency: 'USD', status: 'ACTIVE', customerScope: 'OWN_CUSTOMERS', defaultCommissionRateUsdMt: 0 },
                 { id: 'USR-0007', name: 'System Admin', email: 'admin@wcat-thai.com', role: 'ADMIN', defaultCurrency: '-', status: 'ACTIVE', customerScope: 'ALL' },
-                { id: 'USR-0008', name: 'Export Operations', email: 'export@wcat-thai.com', role: 'EXPORT', defaultCurrency: '-', status: 'ACTIVE', customerScope: 'EXPORT_ALL' }
+                { id: 'USR-0008', name: 'Export Operations', email: 'export@wcat-thai.com', role: 'EXPORT', defaultCurrency: '-', status: 'ACTIVE', customerScope: 'NONE' }
             ],
             customers: [
                 { 
@@ -1870,10 +1870,10 @@
 
         function userScopeForRole(role) {
             if (role === 'EXTERNAL_SALES') return 'OWN_CUSTOMERS';
-            if (role === 'EXPORT') return 'EXPORT_ALL';
+            if (role === 'EXPORT') return 'NONE';
             if (role === 'PRODUCTION_WAREHOUSE') return 'NONE';
-            if (role === 'ADMIN' || role === 'MANAGER') return 'ALL';
-            return 'ALL_ASSIGNED';
+            if (role === 'ADMIN' || role === 'MANAGER' || role === 'SALES_SUPPORT') return 'ALL';
+            return 'NONE';
         }
         function openUserModal(userId = '') {
             if (!canManageUsers()) { alert('Only Admin can manage users.'); return; }

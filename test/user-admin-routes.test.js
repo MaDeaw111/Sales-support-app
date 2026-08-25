@@ -377,3 +377,50 @@ test('Security regression test: verifyPassword matches exact structure generated
   const verified = await verifyPassword(tempPassword, pwdRecord);
   assert.equal(verified, true);
 });
+
+test('POST and PUT user: verify creating and editing multiple roles with correct customer scopes', async () => {
+  const { db, wrappedDb } = await setupTestDb();
+  await seedUserAndSession(db, 'USR-0001', 'Zack Admin', 'admin@example.com', 'ADMIN', 'ALL', 'admin-token');
+
+  const testCases = [
+    { role: 'SALES_SUPPORT', scope: 'ALL' },
+    { role: 'EXTERNAL_SALES', scope: 'OWN_CUSTOMERS' },
+    { role: 'EXPORT', scope: 'NONE' },
+    { role: 'PRODUCTION_WAREHOUSE', scope: 'NONE' }
+  ];
+
+  for (let i = 0; i < testCases.length; i++) {
+    const { role, scope } = testCases[i];
+    const email = `user${i}@example.com`;
+
+    // 1. Create User
+    const createReq = makeRequest('/api/users', 'POST', {
+      name: `User ${role}`,
+      email,
+      role,
+      status: 'ACTIVE',
+      customerScope: scope
+    }, 'admin-token');
+    
+    const createRes = await worker.fetch(createReq, { DB: wrappedDb });
+    assert.equal(createRes.status, 200, `Failed to create user with role ${role} and scope ${scope}`);
+    const createBody = await createRes.json();
+    assert.equal(createBody.status, 'SUCCESS');
+    const newUserId = createBody.data.user.id;
+
+    // 2. Edit User
+    const editReq = makeRequest(`/api/users/${newUserId}`, 'PUT', {
+      name: `User ${role} Updated`,
+      email,
+      role,
+      status: 'ACTIVE',
+      customerScope: scope
+    }, 'admin-token');
+    
+    const editRes = await worker.fetch(editReq, { DB: wrappedDb });
+    assert.equal(editRes.status, 200, `Failed to edit user with role ${role} and scope ${scope}`);
+    const editBody = await editRes.json();
+    assert.equal(editBody.status, 'SUCCESS');
+    assert.equal(editBody.data.user.name, `User ${role} Updated`);
+  }
+});
