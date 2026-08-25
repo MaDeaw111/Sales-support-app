@@ -815,4 +815,91 @@ test('External Sales Front-end RBAC and Users Fallback check', () => {
   assert.match(saveNewBlock, /loadCustomerOwnersFromApi/);
 });
 
+test('loadUsersFromApi success replaces state.adminUsers', async () => {
+  const code = extractFunction('loadUsersFromApi()');
+  
+  const mockState = { adminUsers: [] };
+  let renderViewCalled = false;
+  
+  globalThis.state = mockState;
+  globalThis.renderView = () => { renderViewCalled = true; };
+  globalThis.fetch = async (url) => {
+    assert.equal(url, '/api/users');
+    return {
+      ok: true,
+      async json() {
+        return {
+          status: 'SUCCESS',
+          data: {
+            users: [{ id: 'api-u1', name: 'API User 1' }]
+          }
+        };
+      }
+    };
+  };
+
+  try {
+    const fn = new Function(`return (${code.trim()});`)();
+    await fn();
+    
+    assert.equal(renderViewCalled, true);
+    assert.equal(mockState.adminUsers.length, 1);
+    assert.equal(mockState.adminUsers[0].id, 'api-u1');
+  } finally {
+    delete globalThis.state;
+    delete globalThis.renderView;
+    delete globalThis.fetch;
+  }
+});
+
+test('loadUsersFromApi failure preserves state.adminUsers', async () => {
+  const code = extractFunction('loadUsersFromApi()');
+  
+  const mockState = { adminUsers: [{ id: 'prev' }] };
+  let renderViewCalled = false;
+  
+  globalThis.state = mockState;
+  globalThis.renderView = () => { renderViewCalled = true; };
+  globalThis.fetch = async (url) => {
+    return { ok: false };
+  };
+
+  try {
+    const fn = new Function(`return (${code.trim()});`)();
+    await fn();
+    
+    assert.equal(renderViewCalled, false);
+    assert.equal(mockState.adminUsers.length, 1);
+    assert.equal(mockState.adminUsers[0].id, 'prev');
+  } finally {
+    delete globalThis.state;
+    delete globalThis.renderView;
+    delete globalThis.fetch;
+  }
+});
+
+test('Users management UI and action logic uses state.adminUsers and D1 endpoints', () => {
+  const renderUsersBlock = extractFunction('renderUsers');
+  const openUserModalBlock = extractFunction('openUserModal');
+  const saveUserBlock = extractFunction('saveUser');
+  const resetUserPasswordBlock = extractFunction('resetUserPasswordFromUI');
+
+  // Verify renderUsers uses state.adminUsers instead of state.users
+  assert.doesNotMatch(renderUsersBlock, /state\.users/);
+  assert.match(renderUsersBlock, /state\.adminUsers/);
+
+  // Verify openUserModal lookup uses state.adminUsers instead of state.users
+  assert.doesNotMatch(openUserModalBlock, /state\.users/);
+  assert.match(openUserModalBlock, /state\.adminUsers/);
+
+  // Verify saveUser does not fallback to google.script.run
+  assert.doesNotMatch(saveUserBlock, /google\.script\.run/);
+  assert.match(saveUserBlock, /fetch\([`'"]\/api\/users/);
+
+  // Verify resetUserPasswordFromUI does not fallback to google.script.run
+  assert.doesNotMatch(resetUserPasswordBlock, /google\.script\.run/);
+  assert.match(resetUserPasswordBlock, /fetch\([`'"]\/api\/users\/.*?\/reset-password/);
+  assert.match(resetUserPasswordBlock, /confirm\(/);
+});
+
 
