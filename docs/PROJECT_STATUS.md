@@ -262,7 +262,14 @@ The manual temporary-password recovery exposed a production administration gap: 
 
 ### Phase 5C — User Administration & Password Reset D1
 
-**Status:** CODE COMPLETE / NOT MERGED
+**Status:** COMPLETE / MERGED / DEPLOYMENT PENDING
+
+- Merged via PR #5
+- Merge commit: `07478f989676777119320190f978f833b62136ca`
+- 90 tests passed before merge
+- Customer scope compatibility fix completed
+- No migration required
+- Production deployment still pending confirmation
 
 Implemented:
 - D1-backed User list (`GET /api/users`) and User detail (`GET /api/users/:id`).
@@ -279,13 +286,28 @@ Implemented:
 
 ## STOPPED HERE — 2026-08-25
 
-Phase 5C implementation is code complete on branch `feature/user-admin-d1` and ready for code review.
+Phase 5C has been merged to main.
+
+Current State:
+- PR #5 is merged.
+- main merge commit is `07478f989676777119320190f978f833b62136ca`.
+- Phase 5C code is merged.
+- Production deployment is still pending confirmation.
 
 ---
 
-# 4. NEXT STEP — Phase 5D — Product / Spec D1 Migration
+# 4. NEXT STEP — Phase 5C Production Deployment & Smoke Test
 
-Prepare the next phase for migrating product and specification master data to Cloudflare D1.
+Next Action:
+- Deploy the latest main branch containing Phase 5C to the production Cloudflare Worker: `wcat-sales-support`.
+- Verify production D1 database binding `DB -> wcat-sales-db`.
+- Perform the Phase 5C Production Smoke Test:
+  - Test Users & Role Management page access.
+  - Test Add User: create internal user, verify temporary password and copy login info dialog.
+  - Test Edit User: update profile properties, verify status and scope changes persist.
+  - Test Reset Password: trigger Admin password reset, verify old password fails, verify new temporary password works and must change password flow is triggered.
+  - Verify that password reset invalidates all existing sessions of the target user.
+  - Update `PROJECT_STATUS.md` after smoke test is verified.
 
 ---
 
@@ -370,6 +392,5 @@ bounded scope
 
 # 8. Quick Resume Note
 
-> Phase 5B is already merged and deployed. Do not rebuild it.  
-> Next action: production smoke test by creating Sira TTPagro through External Sales and assigning MEELUNIE B.V.  
-> After the smoke test, update this file before starting the next migration phase.
+> Phase 5C is merged via PR #5.
+> Next action: deploy main to production and perform Phase 5C smoke test (Users & Role Management, Add/Edit, Admin Reset Password).
