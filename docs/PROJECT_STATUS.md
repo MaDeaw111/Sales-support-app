@@ -150,8 +150,7 @@ PR #3 merge commit:
 
 ### Phase 5B — External Sales D1 Integration
 
-**Status:** CODE COMPLETE / MERGED / DEPLOYED  
-**Production smoke test still pending**
+**Status:** COMPLETE / MERGED / DEPLOYED / PRODUCTION VERIFIED
 
 Implemented backend:
 
@@ -247,74 +246,45 @@ Merge pull request #4 — migrate External Sales management to D1
 
 # 3. CURRENT CHECKPOINT
 
-## STOPPED HERE — 2026-08-24
+## CLOSED — 2026-08-25
 
-Phase 5B is merged and deployed.
+Phase 5B is merged, deployed, and production-smoke-tested.
 
-**Sira TTPagro has NOT been created in production D1 yet.**
+### Production Smoke Test Results:
+- Sira TTPagro was created successfully through the External Sales production UI.
+- Sira persisted after refresh.
+- MEELUNIE B.V. remained assigned after refresh.
+- Customer Owner dropdown showed Sira.
+- Detailed Customer Edit saved successfully with Sira as Owner.
+- No "Owner user does not exist" error.
+- No Apps Script-only External Sales save error.
+- Sira authentication was tested successfully.
+- **Note:** Temporary-password reset required a manual D1 recovery during the smoke test.
+- Final Sira user_id: `USR-0002`
+- `must_change_password` flow remains enabled for temporary credentials.
 
-This is intentional.
-
-Do not manually INSERT Sira with SQL before the smoke test.
+### Production Administration Gap:
+The manual temporary-password recovery exposed a production administration gap: there is currently no Admin UI/API flow to reset another user's password safely. This is the reason Phase 5C (User Administration / Password Reset D1) is next.
 
 ---
 
-# 4. NEXT STEP — Phase 5B Production Smoke Test
+# 4. NEXT STEP — Phase 5C — User Administration / Password Reset D1
 
-Open production WCAT Sales Support.
-
-Go to:
-
-```text
-External Sales
-→ Add External Sales
-```
-
-Create:
-
-```text
-Name:   Sira TTPagro
-Email:  sira.p@ttpagro.com
-Status: ACTIVE
-```
-
-Assign:
-
-```text
-MEELUNIE B.V.
-```
-
-Then click:
-
-```text
-Create External Sales
-```
-
-Expected:
-
-1. Sira is created in D1 `users`
-2. Temporary password is displayed once
-3. Refresh → Sira still exists
-4. MEELUNIE remains assigned after refresh
-5. Customer / CRM → Owner dropdown shows `Sira TTPagro`
-6. Detailed Customer Edit can save with Sira as Owner
-7. Refresh does not lose the Owner
-8. No `Owner user does not exist`
-9. No Apps Script-only External Sales save error
+Implement Phase 5C to migrate Users/Roles administration to D1 and support safe password resets by Admins.
 
 ---
 
 # 5. Smoke Test Checklist
 
-- [ ] Sira created through production UI
-- [ ] Temporary password captured
-- [ ] Sira remains after refresh
-- [ ] MEELUNIE remains assigned after refresh
-- [ ] Customer Owner dropdown shows Sira
-- [ ] Detailed Customer Edit saves with Sira
-- [ ] Refresh keeps Owner assignment
-- [ ] No Owner validation error
-- [ ] No Apps Script save error
+- [x] Sira created through production UI
+- [x] Temporary password captured
+- [x] Sira remains after refresh
+- [x] MEELUNIE remains assigned after refresh
+- [x] Customer Owner dropdown shows Sira
+- [x] Detailed Customer Edit saves with Sira
+- [x] Refresh keeps Owner assignment
+- [x] No Owner validation error
+- [x] No Apps Script save error
 
 ---
 
