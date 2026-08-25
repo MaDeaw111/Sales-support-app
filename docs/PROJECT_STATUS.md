@@ -242,35 +242,50 @@ Version ID: 91735047
 Merge pull request #4 — migrate External Sales management to D1
 ```
 
+Production smoke test results:
+- Sira TTPagro created successfully through External Sales production UI
+- Sira persisted after refresh
+- MEELUNIE B.V. remained assigned after refresh
+- Customer Owner dropdown showed Sira
+- Detailed Customer Edit saved successfully with Sira as Owner
+- No "Owner user does not exist" error
+- No Apps Script-only External Sales save error
+- Sira authentication was tested successfully
+- Temporary-password reset required a manual D1 recovery during the smoke test
+- Final Sira user_id: USR-0002
+- must_change_password flow remains enabled for temporary credentials
+
+Important note:
+The manual temporary-password recovery exposed a production administration gap: there is currently no Admin UI/API flow to reset another user's password safely. This is the reason Phase 5C is next.
+
+---
+
+### Phase 5C — User Administration & Password Reset D1
+
+**Status:** CODE COMPLETE / NOT MERGED
+
+Implemented:
+- D1-backed User list (`GET /api/users`) and User detail (`GET /api/users/:id`).
+- Internal User Creation (`POST /api/users`) with secure temporary password generation.
+- User Profile Editing (`PUT /api/users/:id`).
+- Admin Password Reset endpoint (`POST /api/users/:id/reset-password`) with session invalidation.
+- UI migrated away from mockup `state.users` to D1-backed `state.adminUsers`.
+- Self-lockout protection checks implemented in the repository/routes.
+- Security regression tests implemented.
+
 ---
 
 # 3. CURRENT CHECKPOINT
 
-## CLOSED — 2026-08-25
+## STOPPED HERE — 2026-08-25
 
-Phase 5B is merged, deployed, and production-smoke-tested.
-
-### Production Smoke Test Results:
-- Sira TTPagro was created successfully through the External Sales production UI.
-- Sira persisted after refresh.
-- MEELUNIE B.V. remained assigned after refresh.
-- Customer Owner dropdown showed Sira.
-- Detailed Customer Edit saved successfully with Sira as Owner.
-- No "Owner user does not exist" error.
-- No Apps Script-only External Sales save error.
-- Sira authentication was tested successfully.
-- **Note:** Temporary-password reset required a manual D1 recovery during the smoke test.
-- Final Sira user_id: `USR-0002`
-- `must_change_password` flow remains enabled for temporary credentials.
-
-### Production Administration Gap:
-The manual temporary-password recovery exposed a production administration gap: there is currently no Admin UI/API flow to reset another user's password safely. This is the reason Phase 5C (User Administration / Password Reset D1) is next.
+Phase 5C implementation is code complete on branch `feature/user-admin-d1` and ready for code review.
 
 ---
 
-# 4. NEXT STEP — Phase 5C — User Administration / Password Reset D1
+# 4. NEXT STEP — Phase 5D — Product / Spec D1 Migration
 
-Implement Phase 5C to migrate Users/Roles administration to D1 and support safe password resets by Admins.
+Prepare the next phase for migrating product and specification master data to Cloudflare D1.
 
 ---
 
