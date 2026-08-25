@@ -38,6 +38,12 @@ export default {
       return createExternalSalesHandlerFromEnv(env)(request);
     }
 
+    if (url.pathname === '/api/users' || url.pathname.startsWith('/api/users/')) {
+      if (!env.DB) return jsonResponse({ status: 'ERROR', message: 'D1 DB binding is not configured.' }, 503);
+      const { createUserHandlerFromEnv } = await import('./users/routes.js');
+      return createUserHandlerFromEnv(env)(request);
+    }
+
     if (url.pathname === '/api/gateway') {
       return jsonResponse({
         status: 'ERROR',
