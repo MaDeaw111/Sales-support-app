@@ -314,6 +314,92 @@ export function createProductRepository(db) {
       }
 
       return this.findProductById(id);
+    },
+
+    async listParameters() {
+      const { results } = await db.prepare(`
+        SELECT parameter_id, parameter_code, parameter_name, data_type, default_unit, status, sort_order
+        FROM spec_parameters
+        ORDER BY sort_order ASC, parameter_name COLLATE NOCASE ASC
+      `).all();
+
+      return (results || []).map(r => ({
+        id: r.parameter_id,
+        code: r.parameter_code,
+        name: r.parameter_name,
+        dataType: r.data_type,
+        defaultUnit: r.default_unit,
+        status: r.status,
+        sortOrder: Number(r.sort_order)
+      }));
+    },
+
+    async findParameterById(id) {
+      const r = await db.prepare(`
+        SELECT parameter_id, parameter_code, parameter_name, data_type, default_unit, status, sort_order
+        FROM spec_parameters
+        WHERE parameter_id = ?
+        LIMIT 1
+      `).bind(id).first();
+
+      if (!r) return null;
+
+      return {
+        id: r.parameter_id,
+        code: r.parameter_code,
+        name: r.parameter_name,
+        dataType: r.data_type,
+        defaultUnit: r.default_unit,
+        status: r.status,
+        sortOrder: Number(r.sort_order)
+      };
+    },
+
+    async createParameter(dto) {
+      if (!dto.code || !dto.name || !dto.dataType || !dto.status) {
+        throw new Error('Parameter code, name, data type, and status are required.');
+      }
+      if (dto.dataType !== 'NUMBER' && dto.dataType !== 'TEXT') {
+        throw new Error('Invalid parameter data type.');
+      }
+      if (dto.status !== 'ACTIVE' && dto.status !== 'INACTIVE' && dto.status !== 'ARCHIVED') {
+        throw new Error('Invalid parameter status.');
+      }
+
+      const paramId = await nextId(db, 'spec_parameters', 'parameter_id', 'PAR');
+      try {
+        await db.prepare(`
+          INSERT INTO spec_parameters (parameter_id, parameter_code, parameter_name, data_type, default_unit, status, sort_order)
+          VALUES (?, ?, ?, ?, ?, ?, ?)
+        `).bind(paramId, dto.code.trim().toUpperCase(), dto.name.trim(), dto.dataType, dto.defaultUnit || '', dto.status, dto.sortOrder || 0).run();
+      } catch (err) {
+        wrapUniqueError(err, 'Parameter code already exists.');
+      }
+
+      return this.findParameterById(paramId);
+    },
+
+    async updateParameter(id, dto) {
+      const existing = await this.findParameterById(id);
+      if (!existing) throw new Error('Parameter not found.');
+
+      if (!dto.name || !dto.dataType || !dto.status) {
+        throw new Error('Parameter name, data type, and status are required.');
+      }
+      if (dto.dataType !== 'NUMBER' && dto.dataType !== 'TEXT') {
+        throw new Error('Invalid parameter data type.');
+      }
+      if (dto.status !== 'ACTIVE' && dto.status !== 'INACTIVE' && dto.status !== 'ARCHIVED') {
+        throw new Error('Invalid parameter status.');
+      }
+
+      await db.prepare(`
+        UPDATE spec_parameters
+        SET parameter_name = ?, data_type = ?, default_unit = ?, status = ?, sort_order = ?, updated_at = CURRENT_TIMESTAMP
+        WHERE parameter_id = ?
+      `).bind(dto.name.trim(), dto.dataType, dto.defaultUnit || '', dto.status, dto.sortOrder || 0, id).run();
+
+      return this.findParameterById(id);
     }
   };
 }

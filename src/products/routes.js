@@ -57,6 +57,57 @@ export function createProductHandler({ repo, resolveUser }) {
       }
     }
 
+    // GET /api/spec-parameters
+    if (path === '/api/spec-parameters' && method === 'GET') {
+      const parameters = await repo.listParameters();
+      return json({ status: 'SUCCESS', data: { parameters } });
+    }
+
+    // POST /api/spec-parameters
+    if (path === '/api/spec-parameters' && method === 'POST') {
+      if (!isAdmin && !isManager) {
+        return json({ status: 'ERROR', message: 'Permission denied.' }, 403);
+      }
+      const body = await readJson(request);
+      if (!body || typeof body !== 'object' || Array.isArray(body)) {
+        return json({ status: 'ERROR', message: 'Invalid request body.' }, 400);
+      }
+      try {
+        const parameter = await repo.createParameter(body);
+        return json({ status: 'SUCCESS', data: { parameter } });
+      } catch (err) {
+        if (err.code === 'UNIQUE') {
+          return json({ status: 'ERROR', message: err.message }, 409);
+        }
+        return json({ status: 'ERROR', message: err.message }, 400);
+      }
+    }
+
+    // PUT /api/spec-parameters/:id
+    const paramMatch = path.match(/^\/api\/spec-parameters\/([^/]+)$/);
+    if (paramMatch && method === 'PUT') {
+      if (!isAdmin && !isManager) {
+        return json({ status: 'ERROR', message: 'Permission denied.' }, 403);
+      }
+      const paramId = paramMatch[1];
+      const body = await readJson(request);
+      if (!body || typeof body !== 'object' || Array.isArray(body)) {
+        return json({ status: 'ERROR', message: 'Invalid request body.' }, 400);
+      }
+      try {
+        const parameter = await repo.updateParameter(paramId, body);
+        return json({ status: 'SUCCESS', data: { parameter } });
+      } catch (err) {
+        if (err.message && err.message.includes('not found')) {
+          return json({ status: 'ERROR', message: 'Parameter not found.' }, 404);
+        }
+        if (err.code === 'UNIQUE') {
+          return json({ status: 'ERROR', message: err.message }, 409);
+        }
+        return json({ status: 'ERROR', message: err.message }, 400);
+      }
+    }
+
     // Detail/Update matching /api/products/:id
     const productMatch = path.match(/^\/api\/products\/([^/]+)$/);
     if (productMatch) {
