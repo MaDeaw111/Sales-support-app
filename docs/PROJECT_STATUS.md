@@ -262,14 +262,28 @@ The manual temporary-password recovery exposed a production administration gap: 
 
 ### Phase 5C — User Administration & Password Reset D1
 
-**Status:** COMPLETE / MERGED / DEPLOYMENT PENDING
+**Status:** COMPLETE / MERGED / DEPLOYED / PRODUCTION VERIFIED
 
 - Merged via PR #5
 - Merge commit: `07478f989676777119320190f978f833b62136ca`
 - 90 tests passed before merge
 - Customer scope compatibility fix completed
 - No migration required
-- Production deployment still pending confirmation
+- Deployed to production (Worker: `wcat-sales-support`, Version ID: `fba4f0a7-7dc8-488e-aa30-ef5e40283ed8`, D1 binding `DB -> wcat-sales-db`, no migration performed, no manual D1 mutation performed)
+- Production smoke test verified successfully:
+  - Users / Roles page loaded successfully from D1
+  - Add User succeeded
+  - Customer Scope mapping displayed correctly
+  - Temporary password was generated and displayed once
+  - Newly created user could log in
+  - `must_change_password` flow forced password change
+  - Edit User persisted successfully
+  - Admin Reset Password succeeded
+  - Old password no longer worked after reset
+  - New temporary password worked
+  - Forced password change triggered again after reset
+  - Session invalidation behavior verified (all active sessions signed out on password reset)
+  - No manual SQL password recovery was required
 
 Implemented:
 - D1-backed User list (`GET /api/users`) and User detail (`GET /api/users/:id`).
@@ -284,44 +298,48 @@ Implemented:
 
 # 3. CURRENT CHECKPOINT
 
-## STOPPED HERE — 2026-08-25
+## STOPPED HERE — 2026-08-26
 
-Phase 5C has been merged to main.
-
-Current State:
-- PR #5 is merged.
-- main merge commit is `07478f989676777119320190f978f833b62136ca`.
-- Phase 5C code is merged.
-- Production deployment is still pending confirmation.
+Phase 5C is fully closed.
+Production deployment version `fba4f0a7-7dc8-488e-aa30-ef5e40283ed8` is fully verified.
 
 ---
 
-# 4. NEXT STEP — Phase 5C Production Deployment & Smoke Test
+# 4. NEXT STEP — Phase 5D — Product / Spec D1 Migration
 
 Next Action:
-- Deploy the latest main branch containing Phase 5C to the production Cloudflare Worker: `wcat-sales-support`.
-- Verify production D1 database binding `DB -> wcat-sales-db`.
-- Perform the Phase 5C Production Smoke Test:
-  - Test Users & Role Management page access.
-  - Test Add User: create internal user, verify temporary password and copy login info dialog.
-  - Test Edit User: update profile properties, verify status and scope changes persist.
-  - Test Reset Password: trigger Admin password reset, verify old password fails, verify new temporary password works and must change password flow is triggered.
-  - Verify that password reset invalidates all existing sessions of the target user.
-  - Update `PROJECT_STATUS.md` after smoke test is verified.
+- Prepare Phase 5D: D1-backed Product Master Data and Standard Spec migration.
+
+Preparation Note:
+Phase 5D should cover:
+- Product master data
+- Standard Product Spec
+- separation from Actual COA / Lab Result
+- D1-backed Product / Spec API
+- frontend Product / Spec page migrated away from mock data
+- preserve existing product codes where practical
+- no Pricing / PO implementation in this phase
 
 ---
 
 # 5. Smoke Test Checklist
 
-- [x] Sira created through production UI
-- [x] Temporary password captured
-- [x] Sira remains after refresh
-- [x] MEELUNIE remains assigned after refresh
-- [x] Customer Owner dropdown shows Sira
-- [x] Detailed Customer Edit saves with Sira
-- [x] Refresh keeps Owner assignment
-- [x] No Owner validation error
-- [x] No Apps Script save error
+- [x] Sira created through production UI (Phase 5B)
+- [x] Temporary password captured (Phase 5B)
+- [x] Sira remains after refresh (Phase 5B)
+- [x] MEELUNIE remains assigned after refresh (Phase 5B)
+- [x] Customer Owner dropdown shows Sira (Phase 5B)
+- [x] Detailed Customer Edit saves with Sira (Phase 5B)
+- [x] Refresh keeps Owner assignment (Phase 5B)
+- [x] No Owner validation error (Phase 5B)
+- [x] No Apps Script save error (Phase 5B)
+- [x] Users / Roles page loads from D1 (Phase 5C)
+- [x] Add User succeeds with temporary password generated (Phase 5C)
+- [x] Customer Scope preview displays correctly (Phase 5C)
+- [x] New user can login and change password (Phase 5C)
+- [x] Edit User updates details and persists (Phase 5C)
+- [x] Reset Password invalidates active sessions (Phase 5C)
+- [x] Reset password generates new temporary password and forces password change on login (Phase 5C)
 
 ---
 
@@ -392,5 +410,5 @@ bounded scope
 
 # 8. Quick Resume Note
 
-> Phase 5C is merged via PR #5.
-> Next action: deploy main to production and perform Phase 5C smoke test (Users & Role Management, Add/Edit, Admin Reset Password).
+> Phase 5C is fully closed and production verified.
+> Next Action: Start Phase 5D — Product / Spec D1 Migration (DO NOT start implementation yet).
