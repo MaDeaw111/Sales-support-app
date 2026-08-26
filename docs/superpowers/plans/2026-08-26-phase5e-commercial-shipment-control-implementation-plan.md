@@ -94,19 +94,36 @@ We will create and modify the following files:
     * `shipment_expenses`
 * **Schema Specifications & Database Constraints:**
   * `pos`: `po_id` PRIMARY KEY, `customer_id` NOT NULL REFERENCES `customers(customer_id)`, `product_id` NOT NULL REFERENCES `products(product_id)`, `incoterm` TEXT CHECK(incoterm IN ('FOB', 'CFR', 'CIF')) NOT NULL, `destination_port` TEXT.
-  * `shipments`: `shipment_id` PRIMARY KEY, `po_id` NOT NULL REFERENCES `pos(po_id)`, `freight_quote_id` REFERENCES `freight_quotes(quote_id)`.
+  * `shipments`: `shipment_id` PRIMARY KEY, `po_id` NOT NULL REFERENCES `pos(po_id)`, `freight_quote_id` REFERENCES `freight_quotes(quote_id)`, `is_one_container` INTEGER CHECK(is_one_container IN (0, 1)) DEFAULT 1.
   * `expense_categories`: `category_id` PRIMARY KEY, `category_code` TEXT UNIQUE NOT NULL, `category_name` TEXT NOT NULL, `category_group` TEXT CHECK(category_group IN ('OCEAN_FREIGHT', 'SHIPPING_LOCAL', 'TRANSPORT', 'DOCUMENT', 'INSURANCE', 'OTHER')) NOT NULL, `status` TEXT CHECK(status IN ('ACTIVE', 'INACTIVE')) DEFAULT 'ACTIVE'.
-  * `manager_price_notes`: `note_id` PRIMARY KEY, `sales_user_id` TEXT REFERENCES `users(user_id)`, `customer_id` TEXT REFERENCES `customers(customer_id)`, `product_id` TEXT REFERENCES `products(product_id)`, `incoterm` TEXT CHECK(incoterm IN ('FOB', 'CFR', 'CIF')) NOT NULL, `destination_port` TEXT, `offer_price_usd_per_mt` REAL CHECK(offer_price_usd_per_mt > 0) NOT NULL, `note` TEXT, `created_by_manager_id` TEXT NOT NULL REFERENCES `users(user_id)`, `created_at` TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP.
-  * `freight_quotes`: `quote_id` PRIMARY KEY, `origin_port` TEXT NOT NULL, `destination_port` TEXT NOT NULL, `container_size` TEXT NOT NULL, `shipping_line_or_forwarder` TEXT NOT NULL, `quoted_freight_usd_per_container` REAL CHECK(quoted_freight_usd_per_container > 0) NOT NULL, `valid_until` TEXT, `remark` TEXT, `created_by` TEXT NOT NULL, `created_at` TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP.
+  * `manager_price_notes`: `note_id` PRIMARY KEY, `sales_user_id` TEXT NOT NULL REFERENCES `users(user_id)`, `customer_id` TEXT NOT NULL REFERENCES `customers(customer_id)`, `product_id` TEXT NOT NULL REFERENCES `products(product_id)`, `incoterm` TEXT CHECK(incoterm IN ('FOB', 'CFR', 'CIF')) NOT NULL, `destination_port` TEXT, `offer_price_usd_per_mt` REAL CHECK(offer_price_usd_per_mt > 0) NOT NULL, `note` TEXT, `created_by_manager_id` TEXT NOT NULL REFERENCES `users(user_id)`, `created_at` TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, CHECK (incoterm = 'FOB' OR (incoterm IN ('CFR','CIF') AND destination_port IS NOT NULL AND trim(destination_port) <> '')).
+  * `freight_quotes`: `quote_id` PRIMARY KEY, `origin_port` TEXT NOT NULL CHECK(trim(origin_port) <> ''), `destination_port` TEXT NOT NULL CHECK(trim(destination_port) <> ''), `container_size` TEXT NOT NULL CHECK(trim(container_size) <> ''), `shipping_line_or_forwarder` TEXT NOT NULL CHECK(trim(shipping_line_or_forwarder) <> ''), `quoted_freight_usd_per_container` REAL CHECK(quoted_freight_usd_per_container > 0) NOT NULL, `valid_until` TEXT, `remark` TEXT, `created_by` TEXT NOT NULL REFERENCES `users(user_id)`, `created_at` TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP.
   * `shipment_document_links`: `link_id` PRIMARY KEY, `shipment_id` NOT NULL REFERENCES `shipments(shipment_id) ON DELETE CASCADE`, `document_type` TEXT CHECK(document_type IN ('PO', 'DI', 'BOOKING', 'STUFFING_REPORT', 'ALL_SHIP_DOC', 'IR', 'LC')) NOT NULL, `title` TEXT NOT NULL, `drive_url` TEXT CHECK(drive_url LIKE 'http://%' OR drive_url LIKE 'https://%') NOT NULL, `reference_no` TEXT, `remark` TEXT, `created_by` TEXT, `created_at` TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, `updated_at` TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP.
-  * `shipment_expenses`: `expense_id` PRIMARY KEY, `shipment_id` NOT NULL REFERENCES `shipments(shipment_id) ON DELETE CASCADE`, `expense_category_id` NOT NULL REFERENCES `expense_categories(category_id)`, `amount` REAL CHECK(amount > 0) NOT NULL, `currency` TEXT CHECK(currency IN ('THB', 'USD')) NOT NULL, `fx_used` REAL CHECK(fx_used > 0), `amount_thb` REAL CHECK(amount_thb > 0) NOT NULL, `reference_no` TEXT, `shipment_document_link_id` REFERENCES `shipment_document_links(link_id) ON DELETE SET NULL`, `remark` TEXT, `created_by` TEXT, `created_at` TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, `updated_by` TEXT, `updated_at` TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP.
+  * `shipment_expenses`: `expense_id` PRIMARY KEY, `shipment_id` NOT NULL REFERENCES `shipments(shipment_id) ON DELETE CASCADE`, `expense_category_id` NOT NULL REFERENCES `expense_categories(category_id)`, `amount` REAL CHECK(amount > 0) NOT NULL, `currency` TEXT CHECK(currency IN ('THB', 'USD')) NOT NULL, `fx_used` REAL CHECK(fx_used > 0), `amount_thb` REAL CHECK(amount_thb > 0) NOT NULL, `reference_no` TEXT, `shipment_document_link_id` REFERENCES `shipment_document_links(link_id) ON DELETE SET NULL`, `remark` TEXT, `created_by` TEXT, `created_at` TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, `updated_by` TEXT, `updated_at` TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, CHECK ((currency = 'THB' AND fx_used IS NULL) OR (currency = 'USD' AND fx_used IS NOT NULL AND fx_used > 0)).
 * **TDD Process Steps:**
   * [ ] **Step 1:** Write a failing test in `test/commercial-migration.test.js` checking that the tables and constraints (e.g. rejecting `quoted_freight_usd_per_container = 0`) behave as defined.
     ```javascript
     test('D1 constraints enforced', async () => {
       const { db } = await setupTestDb();
+      // USD expense with NULL FX must fail
       assert.throws(() => {
-        db.prepare("INSERT INTO freight_quotes (quote_id, quoted_freight_usd_per_container) VALUES ('Q1', 0)").run();
+        db.prepare("INSERT INTO shipment_expenses (expense_id, shipment_id, expense_category_id, amount, currency, fx_used, amount_thb) VALUES ('E1', 'S1', 'C1', 100, 'USD', NULL, 3500)").run();
+      }, /constraint failed/);
+      // THB expense with FX must fail
+      assert.throws(() => {
+        db.prepare("INSERT INTO shipment_expenses (expense_id, shipment_id, expense_category_id, amount, currency, fx_used, amount_thb) VALUES ('E2', 'S1', 'C1', 100, 'THB', 35, 100)").run();
+      }, /constraint failed/);
+      // CFR Price Note without destination port must fail
+      assert.throws(() => {
+        db.prepare("INSERT INTO manager_price_notes (note_id, sales_user_id, customer_id, product_id, incoterm, destination_port, offer_price_usd_per_mt, created_by_manager_id) VALUES ('N1', 'U1', 'C1', 'P1', 'CFR', NULL, 300, 'U2')").run();
+      }, /constraint failed/);
+      // Price Note missing relationship ids must fail
+      assert.throws(() => {
+        db.prepare("INSERT INTO manager_price_notes (note_id, sales_user_id, customer_id, product_id, incoterm, offer_price_usd_per_mt, created_by_manager_id) VALUES ('N2', NULL, 'C1', 'P1', 'FOB', 300, 'U2')").run();
+      }, /NOT NULL constraint failed/);
+      // Zero/negative offer price must fail
+      assert.throws(() => {
+        db.prepare("INSERT INTO manager_price_notes (note_id, sales_user_id, customer_id, product_id, incoterm, offer_price_usd_per_mt, created_by_manager_id) VALUES ('N3', 'U1', 'C1', 'P1', 'FOB', 0, 'U2')").run();
       }, /constraint failed/);
     });
     ```
@@ -243,16 +260,32 @@ We will create and modify the following files:
   * Create `test/freight-variance.test.js`
 * **Interfaces:**
   * Repository:
-    * `getShipmentFreightVariance(shipmentId) => Promise<{ quotedFreight: number, actualFreightSum: number, variance: number }>`
+    * `getShipmentFreightVariance(shipmentId) => Promise<{ quotedFreight: number | null, actualFreightSum: number | null, variance: number | null }>`
   * Variance Sign Convention: `Freight Variance = Quoted Freight - Actual Freight`
-  * Variance Calculation Rule: Sum all expenses for the shipment where the category belongs to the `OCEAN_FREIGHT` group. Compare this total USD value to the associated `quoted_freight_usd_per_container` referenced in the shipment. Ignore FX values (comparison is USD-only).
+  * Variance Calculation Rule:
+    * Look up the `shipments` table row. Verify `is_one_container === 1`.
+    * If `is_one_container === 1`, sum all USD expenses for the shipment where the category group is `OCEAN_FREIGHT` (`Actual Freight`), retrieve the referenced `freight_quotes.quoted_freight_usd_per_container` (`Quoted Freight`), and compute `Freight Variance = Quoted Freight - Actual Freight`.
+    * If `is_one_container !== 1` (0 or null), do not calculate. Return `{ quotedFreight: null, actualFreightSum: null, variance: null }` (rendered as unavailable in UI).
 * **TDD Process Steps:**
-  * [ ] **Step 1:** Write a failing test in `test/freight-variance.test.js` seeding a shipment with a $1,500 quote and two actual ocean freight expenses of $700 and $900. Assert the returned variance is `-100` (unfavorable).
-  * [ ] **Step 2:** Run `node --test test/freight-variance.test.js` and verify failure.
-  * [ ] **Step 3:** Implement aggregation and comparison logic in the repository.
+  * [ ] **Step 1:** Write a failing test in `test/freight-variance.test.js` asserting that:
+    1. A one-container shipment (`is_one_container = 1`) with $1,500 quote and actuals $700 + $900 returns a variance of `-100`.
+    2. A multi-container shipment (`is_one_container = 0`) returns `null` for all three keys (`quotedFreight`, `actualFreightSum`, `variance`).
+    ```javascript
+    test('Freight variance on one-container vs multi-container', async () => {
+      const repo = new ShipmentRepository(db);
+      // Case 1: One-container shipment
+      const res1 = await repo.getShipmentFreightVariance('SHIP-ONE');
+      assert.equal(res1.variance, -100);
+      // Case 2: Multi-container shipment
+      const res2 = await repo.getShipmentFreightVariance('SHIP-MULTI');
+      assert.equal(res2.variance, null);
+      assert.equal(res2.quotedFreight, null);
+    });
+    ```
+  * [ ] **Step 3:** Implement aggregation, container-count check, and comparison logic in the repository.
   * [ ] **Step 4:** Run targeted test and confirm success.
   * [ ] **Step 5:** Run all regressions.
-  * [ ] **Step 6:** Commit: `git commit -m "feat: Task 7 - implement USD-to-USD Ocean Freight variance comparison"`
+  * [ ] **Step 6:** Commit: `git commit -m "feat: Task 7 - implement one-container Ocean Freight variance comparison"`
 
 ### [ ] Task 8 — API Route Wiring
 * **Files:**
@@ -374,16 +407,15 @@ We will create and modify the following files:
 
 ### Production Smoke Test (UI & API)
 * Verify auth login page is accessible and healthy.
-* Create a test Product Category (`TEST_TAPIOCA`) and Product Form (`TEST_PELLET`).
-* Create a temporary test Product (`TEST-P5E-001`).
-* Create a test Manager Price Note and verify persistence.
-* Create a test Freight Quote.
-* Create a minimal test PO and Shipment anchor record.
+* Reuse existing active Product (`PRD-001`) and Customer (`CUST-001`) as references for read-only association. Do not create new product categories, forms, or specifications.
+* Create a temporary test Manager Price Note and verify persistence.
+* Create a temporary test Freight Quote.
+* Create a minimal test PO and one-container Shipment anchor record.
 * Create standard shipment expenses (USD converting to THB, THB straight copying) and check totals.
 * Add multiple Drive document links.
 * Check Ocean Freight variance calculation on the Overview panel.
 * Verify existing CRM/External Sales modules are healthy.
-* **Cleanup:** Deactivate test product, archive test specs, and remove test session records from remote database.
+* **Cleanup:** Delete the temporary Phase 5E test records created during the smoke test (from `manager_price_notes`, `freight_quotes`, `shipment_expenses`, `shipment_document_links`, `shipments`, and `pos`). Do not delete or archive main master data.
 
 ### Close Phase 5E
 * Update `docs/PROJECT_STATUS.md` Phase 5E status to: `COMPLETE / MERGED / DEPLOYED / PRODUCTION VERIFIED`
