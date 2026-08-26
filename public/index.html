@@ -272,7 +272,13 @@
 
         async function loadPriceNotesFromApi() {
             try {
-                const res = await fetch('/api/manager-price-notes');
+                const filters = state.priceNotesFilters || {};
+                const params = new URLSearchParams();
+                if (filters.salesUserId) params.set('salesUserId', filters.salesUserId);
+                if (filters.customerId) params.set('customerId', filters.customerId);
+                if (filters.productId) params.set('productId', filters.productId);
+
+                const res = await fetch('/api/manager-price-notes?' + params.toString());
                 if (!res.ok) return;
                 const body = await res.json();
                 if (body && body.status === 'SUCCESS' && body.data && Array.isArray(body.data.priceNotes)) {
@@ -975,6 +981,10 @@
             const main = document.getElementById('mainContent');
             renderPricing(main);
             lucide.createIcons();
+            if (tab === 'PRICE_NOTES') {
+                loadPriceNotesFromApi();
+                loadUsersFromApi();
+            }
         }
 
         function canManagePricing() {
@@ -1032,6 +1042,110 @@
             state.pricingTab = 'SPECIAL'; closeModal(); renderPricing(document.getElementById('mainContent'));
         }
 
+        function openAddPriceNoteModal() {
+            const salesUsers = (state.adminUsers || []).filter(u => u.role === 'EXTERNAL_SALES');
+            const salesOptions = salesUsers.map(u => `<option value="${u.user_id || u.id}">${u.full_name}</option>`).join('');
+            const customerOptions = getScopedCustomers().map(c => `<option value="${c.id}">${c.name}</option>`).join('');
+            const productOptions = (state.products || []).map(p => `<option value="${p.id}">${p.shortName}</option>`).join('');
+
+            openModal(`
+                <div class="space-y-4">
+                    <div class="flex justify-between items-start">
+                        <div>
+                            <h3 class="text-lg font-bold text-slate-900">Add Manager Price Note</h3>
+                            <p class="text-xs text-slate-500">Provide binding price note for sales guidance.</p>
+                        </div>
+                        <button onclick="closeModal()" class="text-slate-400 text-xl">&times;</button>
+                    </div>
+                    <div class="grid grid-cols-2 gap-3">
+                        <div>
+                            <label class="text-xs font-bold text-slate-600">Sales User</label>
+                            <select id="pnSalesUser" class="mt-1 w-full border rounded-lg px-3 py-2 text-sm">${salesOptions}</select>
+                        </div>
+                        <div>
+                            <label class="text-xs font-bold text-slate-600">Customer</label>
+                            <select id="pnCustomer" class="mt-1 w-full border rounded-lg px-3 py-2 text-sm">${customerOptions}</select>
+                        </div>
+                    </div>
+                    <div>
+                        <label class="text-xs font-bold text-slate-600">Product</label>
+                        <select id="pnProduct" class="mt-1 w-full border rounded-lg px-3 py-2 text-sm">${productOptions}</select>
+                    </div>
+                    <div class="grid grid-cols-2 gap-3">
+                        <div>
+                            <label class="text-xs font-bold text-slate-600">Incoterm</label>
+                            <select id="pnIncoterm" onchange="togglePnPortField(this.value)" class="mt-1 w-full border rounded-lg px-3 py-2 text-sm">
+                                <option value="FOB">FOB</option>
+                                <option value="CFR">CFR</option>
+                                <option value="CIF">CIF</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label class="text-xs font-bold text-slate-600">Destination Port</label>
+                            <input id="pnPort" type="text" disabled class="mt-1 w-full border rounded-lg px-3 py-2 text-sm bg-slate-100">
+                        </div>
+                    </div>
+                    <div>
+                        <label class="text-xs font-bold text-slate-600">Offer Price (USD / MT)</label>
+                        <input id="pnPrice" type="number" step="0.01" class="mt-1 w-full border rounded-lg px-3 py-2 text-sm">
+                    </div>
+                    <div>
+                        <label class="text-xs font-bold text-slate-600">Note</label>
+                        <textarea id="pnNote" class="mt-1 w-full border rounded-lg px-3 py-2 text-sm" rows="3"></textarea>
+                    </div>
+                    <div class="flex justify-end gap-2">
+                        <button onclick="closeModal()" class="px-4 py-2 rounded-lg border text-xs font-bold">Cancel</button>
+                        <button onclick="submitPriceNote()" class="px-4 py-2 rounded-lg bg-blue-600 text-white text-xs font-bold">Add Note</button>
+                    </div>
+                </div>
+            `);
+        }
+
+        function togglePnPortField(incoterm) {
+            const port = document.getElementById('pnPort');
+            if (incoterm === 'FOB') {
+                port.value = '';
+                port.disabled = true;
+                port.classList.add('bg-slate-100');
+            } else {
+                port.disabled = false;
+                port.classList.remove('bg-slate-100');
+            }
+        }
+
+        async function submitPriceNote() {
+            const salesUserId = document.getElementById('pnSalesUser').value;
+            const customerId = document.getElementById('pnCustomer').value;
+            const productId = document.getElementById('pnProduct').value;
+            const incoterm = document.getElementById('pnIncoterm').value;
+            const destinationPort = document.getElementById('pnPort').value;
+            const offerPriceUsdPerMt = Number(document.getElementById('pnPrice').value || 0);
+            const note = document.getElementById('pnNote').value;
+
+            if (offerPriceUsdPerMt <= 0) return alert('Offer price must be greater than zero.');
+            if (['CFR', 'CIF'].includes(incoterm) && (!destinationPort || !destinationPort.trim())) {
+                return alert('Destination port is required for CFR and CIF.');
+            }
+
+            try {
+                const saved = await savePriceNoteToApi({
+                    salesUserId,
+                    customerId,
+                    productId,
+                    incoterm,
+                    destinationPort,
+                    offerPriceUsdPerMt,
+                    note
+                });
+                state.priceNotes = state.priceNotes || [];
+                state.priceNotes.unshift(saved);
+                closeModal();
+                renderPricing(document.getElementById('mainContent'));
+            } catch (err) {
+                alert('Error saving price note: ' + err.message);
+            }
+        }
+
         function reviewSpecialPrice(priceId, decision) {
             if (!canManagePricing()) return alert('Only Manager or Admin can approve/reject Special Price.');
             const rec = (state.specialPrices || []).find(x => x.id === priceId);
@@ -1052,33 +1166,129 @@
             const manager = canManagePricing();
             const productMap = Object.fromEntries((state.products || []).map(p => [p.id, p]));
             const customerMap = Object.fromEntries(getScopedCustomers().map(c => [c.id, c]));
+            const userMap = Object.fromEntries((state.adminUsers || []).map(u => [u.user_id || u.id, u]));
+
             const standardRows = (state.standardPrices || []).map(x => {
                 const p = productMap[x.productId];
                 return `<tr class="hover:bg-slate-50"><td class="p-3 font-mono text-blue-600 font-bold">${x.id}</td><td class="p-3"><div class="font-bold text-slate-900">${p?.shortName || x.productId}</div><div class="text-[10px] text-slate-500">${p?.name || ''}</div></td><td class="p-3 text-right font-black text-emerald-700">USD ${Number(x.fobUsdPerMt || 0).toFixed(2)}</td><td class="p-3 text-center">${x.effectiveDate || '-'}</td><td class="p-3 text-center">${x.validUntil || '-'}</td><td class="p-3 text-center">${pricingStatusBadge(x.status)}</td><td class="p-3 text-right">${manager ? `<button onclick="openEditStandardPrice('${x.id}')" class="px-2.5 py-1.5 rounded-lg bg-amber-100 text-amber-700 font-bold text-[10px]">Edit Standard Price</button>` : '<span class="text-[10px] text-slate-400">View only</span>'}</td></tr>`;
             }).join('');
+
             const allowedCustomerIds = new Set(getScopedCustomers().map(c => c.id));
             const specialRows = (state.specialPrices || []).filter(x => state.currentUser.role !== 'EXTERNAL_SALES' || allowedCustomerIds.has(x.customerId)).map(x => {
                 const p = productMap[x.productId], c = customerMap[x.customerId];
                 const actions = manager && String(x.approvalStatus).toUpperCase() === 'PENDING' ? `<div class="flex justify-end gap-1"><button onclick="reviewSpecialPrice('${x.id}','APPROVE')" class="px-2.5 py-1.5 rounded-lg bg-emerald-600 text-white font-bold text-[10px]">Approve</button><button onclick="reviewSpecialPrice('${x.id}','REJECT')" class="px-2.5 py-1.5 rounded-lg bg-red-100 text-red-700 font-bold text-[10px]">Reject</button></div>` : '<span class="text-[10px] text-slate-400">-</span>';
                 return `<tr class="hover:bg-slate-50"><td class="p-3 font-mono text-blue-600 font-bold">${x.id}</td><td class="p-3 font-bold text-slate-900">${c?.name || x.customerId}</td><td class="p-3"><div class="font-bold text-slate-900">${p?.shortName || x.productId}</div><div class="text-[10px] text-slate-500">Std at request: USD ${Number(x.stdFobAtRequest || 0).toFixed(2)}</div></td><td class="p-3 text-right font-black text-emerald-700">USD ${Number(x.approvedPriceUsd || 0).toFixed(2)}</td><td class="p-3 text-right">${Number(x.expectedQtyMt || 0).toFixed(3)} MT</td><td class="p-3 text-center">${x.validUntil || '-'}</td><td class="p-3 text-center">${pricingStatusBadge(x.approvalStatus)}</td><td class="p-3 text-right">${actions}</td></tr>`;
             }).join('');
+
+            const priceNoteRows = (state.priceNotes || []).map(x => {
+                const p = productMap[x.product_id];
+                const c = customerMap[x.customer_id];
+                const salesUser = userMap[x.sales_user_id] || { full_name: x.sales_user_id };
+                const creator = userMap[x.created_by_manager_id] || { full_name: x.created_by_manager_id };
+                const portText = x.incoterm === 'FOB' ? 'FOB' : `${x.incoterm} (${x.destination_port || '-'})`;
+                const dateText = x.created_at ? new Date(x.created_at).toLocaleString() : '-';
+                return `<tr class="hover:bg-slate-50">
+                    <td class="p-3 font-mono text-blue-600 font-bold">${x.id}</td>
+                    <td class="p-3">
+                        <div class="font-bold text-slate-900">${salesUser.full_name || ''}</div>
+                        <div class="text-[10px] text-slate-500">${salesUser.email || ''}</div>
+                    </td>
+                    <td class="p-3 font-bold text-slate-900">${c?.name || x.customer_id}</td>
+                    <td class="p-3 font-bold text-slate-900">${p?.shortName || x.product_id}</td>
+                    <td class="p-3 text-center font-bold text-slate-700">${portText}</td>
+                    <td class="p-3 text-right font-black text-emerald-700">USD ${Number(x.offer_price_usd_per_mt || 0).toFixed(2)}</td>
+                    <td class="p-3 text-slate-600">${x.note || '-'}</td>
+                    <td class="p-3 text-xs text-slate-500">${creator.full_name || x.created_by_manager_id}</td>
+                    <td class="p-3 text-center text-slate-500 text-[10px]">${dateText}</td>
+                </tr>`;
+            }).join('');
+
+            let actionBtn = '';
+            if (tab === 'PRICE_NOTES') {
+                if (manager) {
+                    actionBtn = `<button onclick="openAddPriceNoteModal()" class="px-3 py-2 rounded-lg bg-blue-600 text-white text-xs font-bold">Add Price Note</button>`;
+                }
+            } else {
+                actionBtn = `<button onclick="openRequestSpecialPrice()" class="px-3 py-2 rounded-lg bg-blue-600 text-white text-xs font-bold">Request Special Price</button>`;
+            }
+
+            const salesUsers = (state.adminUsers || []).filter(u => u.role === 'EXTERNAL_SALES');
+            const salesOptions = `<option value="">All Sales Users</option>` + salesUsers.map(u => `<option value="${u.user_id || u.id}" ${state.priceNotesFilters?.salesUserId === (u.user_id || u.id) ? 'selected' : ''}>${u.full_name}</option>`).join('');
+            const customerOptions = `<option value="">All Customers</option>` + getScopedCustomers().map(c => `<option value="${c.id}" ${state.priceNotesFilters?.customerId === c.id ? 'selected' : ''}>${c.name}</option>`).join('');
+            const productOptions = `<option value="">All Products</option>` + (state.products || []).map(p => `<option value="${p.id}" ${state.priceNotesFilters?.productId === p.id ? 'selected' : ''}>${p.shortName}</option>`).join('');
+
             container.innerHTML = `
                 <div class="space-y-5">
                     <div class="flex items-center justify-between gap-4">
                         <div><h2 class="text-xl font-bold text-slate-900">Pricing</h2><p class="text-xs text-slate-500 mt-1">Standard FOB + approved customer special price used as PO selling-price suggestion.</p></div>
-                        <div class="flex items-center gap-3"><button onclick="openRequestSpecialPrice()" class="px-3 py-2 rounded-lg bg-blue-600 text-white text-xs font-bold">Request Special Price</button><div class="text-right"><div class="text-[10px] uppercase text-slate-400 font-bold">Pricing permission</div><div class="text-xs font-bold ${manager ? 'text-emerald-700' : 'text-slate-600'}">${manager ? 'Manager/Admin · Edit & Approve' : 'Sales · View & Request'}</div></div></div>
+                        <div class="flex items-center gap-3">${actionBtn}<div class="text-right"><div class="text-[10px] uppercase text-slate-400 font-bold">Pricing permission</div><div class="text-xs font-bold ${manager ? 'text-emerald-700' : 'text-slate-600'}">${manager ? 'Manager/Admin · Edit & Approve' : 'Sales · View & Request'}</div></div></div>
                     </div>
                     <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
                         <div class="flex border-b border-slate-200 bg-slate-50 p-2 gap-2">
                             <button onclick="setPricingTab('STANDARD')" class="px-4 py-2 rounded-lg text-xs font-bold ${tab === 'STANDARD' ? 'bg-blue-600 text-white' : 'bg-white text-slate-600 border border-slate-200'}">Standard Prices</button>
                             <button onclick="setPricingTab('SPECIAL')" class="px-4 py-2 rounded-lg text-xs font-bold ${tab === 'SPECIAL' ? 'bg-blue-600 text-white' : 'bg-white text-slate-600 border border-slate-200'}">Special Prices</button>
+                            <button onclick="setPricingTab('PRICE_NOTES')" class="px-4 py-2 rounded-lg text-xs font-bold ${tab === 'PRICE_NOTES' ? 'bg-blue-600 text-white' : 'bg-white text-slate-600 border border-slate-200'}">Manager Price Notes</button>
                         </div>
-                        ${tab === 'STANDARD' ? `
+                        
+                        ${tab === 'PRICE_NOTES' ? `
+                        <div class="p-3 border-b border-slate-200 bg-slate-50 flex flex-wrap gap-3 items-center">
+                            <div class="text-xs font-bold text-slate-700">Filters:</div>
+                            <div>
+                                <select onchange="applyPriceNotesFilter('salesUserId', this.value)" class="border rounded-lg px-2 py-1 text-xs bg-white">
+                                    ${salesOptions}
+                                </select>
+                            </div>
+                            <div>
+                                <select onchange="applyPriceNotesFilter('customerId', this.value)" class="border rounded-lg px-2 py-1 text-xs bg-white">
+                                    ${customerOptions}
+                                </select>
+                            </div>
+                            <div>
+                                <select onchange="applyPriceNotesFilter('productId', this.value)" class="border rounded-lg px-2 py-1 text-xs bg-white">
+                                    ${productOptions}
+                                </select>
+                            </div>
+                            <button onclick="clearPriceNotesFilters()" class="text-xs text-blue-600 font-bold hover:underline">Clear</button>
+                        </div>
+                        <table class="ui-table w-full text-left text-xs">
+                            <thead class="bg-slate-100 text-slate-600 uppercase text-[10px] font-bold">
+                                <tr>
+                                    <th class="p-3">Note ID</th>
+                                    <th class="p-3">Sales User</th>
+                                    <th class="p-3">Customer</th>
+                                    <th class="p-3">Product</th>
+                                    <th class="p-3 text-center">Incoterm</th>
+                                    <th class="p-3 text-right">Offer Price USD/MT</th>
+                                    <th class="p-3">Note</th>
+                                    <th class="p-3">Created By</th>
+                                    <th class="p-3 text-center">Created At</th>
+                                </tr>
+                            </thead>
+                            <tbody class="divide-y divide-slate-200">
+                                ${priceNoteRows || '<tr><td colspan="9" class="p-6 text-center text-slate-400">No Price Notes</td></tr>'}
+                            </tbody>
+                        </table>
+                        ` : tab === 'STANDARD' ? `
                         <table class="ui-table w-full text-left text-xs"><thead class="bg-slate-100 text-slate-600 uppercase text-[10px] font-bold"><tr><th class="p-3">Price ID</th><th class="p-3">Product</th><th class="p-3 text-right">Standard FOB / MT</th><th class="p-3 text-center">Effective</th><th class="p-3 text-center">Valid Until</th><th class="p-3 text-center">Status</th><th class="p-3 text-right">Action</th></tr></thead><tbody class="divide-y divide-slate-200">${standardRows || '<tr><td colspan="7" class="p-6 text-center text-slate-400">No Standard Price</td></tr>'}</tbody></table>` : `
                         <table class="ui-table w-full text-left text-xs"><thead class="bg-slate-100 text-slate-600 uppercase text-[10px] font-bold"><tr><th class="p-3">SPR ID</th><th class="p-3">Customer</th><th class="p-3">Product</th><th class="p-3 text-right">Requested / Approved Price</th><th class="p-3 text-right">Expected Qty</th><th class="p-3 text-center">Valid Until</th><th class="p-3 text-center">Approval</th><th class="p-3 text-right">Action</th></tr></thead><tbody class="divide-y divide-slate-200">${specialRows || '<tr><td colspan="8" class="p-6 text-center text-slate-400">No Special Price</td></tr>'}</tbody></table>`}
                     </div>
                     <div class="rounded-xl border border-blue-200 bg-blue-50/50 p-4 text-xs text-blue-900"><strong>Permission rule:</strong> Sales Support / External Sales can view prices and submit Special Price requests. Only Manager and Admin can edit Standard Price or Approve/Reject Special Price. Backend authorization will be enforced again when the Apps Script layer is connected.</div>
                 </div>`;
+        }
+
+        function applyPriceNotesFilter(key, value) {
+            state.priceNotesFilters = state.priceNotesFilters || {};
+            if (value) {
+                state.priceNotesFilters[key] = value;
+            } else {
+                delete state.priceNotesFilters[key];
+            }
+            loadPriceNotesFromApi();
+        }
+
+        function clearPriceNotesFilters() {
+            state.priceNotesFilters = {};
+            loadPriceNotesFromApi();
         }
 
         function renderDashboardCard(label, value, icon='circle-dot', tone='slate') {
