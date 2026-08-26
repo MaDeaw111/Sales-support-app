@@ -270,6 +270,134 @@
             }
         }
 
+        async function loadPriceNotesFromApi() {
+            try {
+                const res = await fetch('/api/manager-price-notes');
+                if (!res.ok) return;
+                const body = await res.json();
+                if (body && body.status === 'SUCCESS' && body.data && Array.isArray(body.data.priceNotes)) {
+                    state.priceNotes = body.data.priceNotes;
+                    renderView();
+                }
+            } catch (err) {
+                console.error('Failed to load price notes:', err);
+            }
+        }
+
+        async function savePriceNoteToApi(payload) {
+            const res = await fetch('/api/manager-price-notes', {
+                method: 'POST',
+                headers: { 'content-type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
+            if (!res.ok) {
+                const errBody = await res.json();
+                throw new Error(errBody.message || 'Failed to save price note');
+            }
+            const body = await res.json();
+            return body.data.priceNote;
+        }
+
+        async function loadFreightQuotesFromApi() {
+            try {
+                const res = await fetch('/api/freight-quotes');
+                if (!res.ok) return;
+                const body = await res.json();
+                if (body && body.status === 'SUCCESS' && body.data && Array.isArray(body.data.freightQuotes)) {
+                    state.freightQuotes = body.data.freightQuotes;
+                    renderView();
+                }
+            } catch (err) {
+                console.error('Failed to load freight quotes:', err);
+            }
+        }
+
+        async function saveFreightQuoteToApi(payload) {
+            const res = await fetch('/api/freight-quotes', {
+                method: 'POST',
+                headers: { 'content-type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
+            if (!res.ok) {
+                const errBody = await res.json();
+                throw new Error(errBody.message || 'Failed to save freight quote');
+            }
+            const body = await res.json();
+            return body.data.freightQuote;
+        }
+
+        async function loadShipmentExpensesFromApi(shipmentId) {
+            try {
+                const res = await fetch(`/api/shipments/${shipmentId}/expenses`);
+                if (!res.ok) return;
+                const body = await res.json();
+                if (body && body.status === 'SUCCESS' && body.data) {
+                    state.shipmentExpenses = body.data.expenses || [];
+                    state.totalActualExportCostThb = body.data.totalActualExportCostThb || 0;
+                    state.freightVariance = body.data.freightVariance || null;
+                    renderView();
+                }
+            } catch (err) {
+                console.error('Failed to load shipment expenses:', err);
+            }
+        }
+
+        async function saveShipmentExpenseToApi(shipmentId, payload) {
+            const res = await fetch(`/api/shipments/${shipmentId}/expenses`, {
+                method: 'POST',
+                headers: { 'content-type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
+            if (!res.ok) {
+                const errBody = await res.json();
+                throw new Error(errBody.message || 'Failed to save shipment expense');
+            }
+            const body = await res.json();
+            return body.data.expense;
+        }
+
+        async function loadShipmentDocumentLinksFromApi(shipmentId) {
+            try {
+                const res = await fetch(`/api/shipments/${shipmentId}/documents`);
+                if (!res.ok) return;
+                const body = await res.json();
+                if (body && body.status === 'SUCCESS' && body.data && Array.isArray(body.data.documentLinks)) {
+                    state.shipmentDocumentLinks = body.data.documentLinks;
+                    renderView();
+                }
+            } catch (err) {
+                console.error('Failed to load shipment document links:', err);
+            }
+        }
+
+        async function saveShipmentDocumentLinkToApi(shipmentId, payload) {
+            const res = await fetch(`/api/shipments/${shipmentId}/documents`, {
+                method: 'POST',
+                headers: { 'content-type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
+            if (!res.ok) {
+                const errBody = await res.json();
+                throw new Error(errBody.message || 'Failed to save shipment document link');
+            }
+            const body = await res.json();
+            return body.data.documentLink;
+        }
+
+        async function loadExpenseCategoriesFromApi() {
+            try {
+                const res = await fetch('/api/expense-categories');
+                if (!res.ok) return;
+                const body = await res.json();
+                if (body && body.status === 'SUCCESS' && body.data && Array.isArray(body.data.categories)) {
+                    state.expenseCategories = body.data.categories;
+                    renderView();
+                }
+            } catch (err) {
+                console.error('Failed to load expense categories:', err);
+            }
+        }
+
         async function loadCustomersFromApi() {
             try {
                 const res = await fetch('/api/customers');
