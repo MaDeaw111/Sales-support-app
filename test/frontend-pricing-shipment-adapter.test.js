@@ -247,3 +247,72 @@ test('loadExpenseCategoriesFromApi successful load replaces state.expenseCategor
     delete globalThis.fetch;
   }
 });
+
+test('ensureShipmentAnchorToApi calls POST /api/shipments/:id/ensure', async () => {
+  const code = extractFunction('ensureShipmentAnchorToApi(shipmentId, payload)');
+  globalThis.fetch = async (url, options) => {
+    assert.equal(url, '/api/shipments/SH1/ensure');
+    assert.equal(options.method, 'POST');
+    return {
+      ok: true,
+      async json() {
+        return { status: 'SUCCESS', data: { shipment: { shipment_id: 'SH1' } } };
+      }
+    };
+  };
+  try {
+    const fn = new Function(`return (${code.trim()});`)();
+    const result = await fn('SH1', { poId: 'PO1' });
+    assert.equal(result.shipment_id, 'SH1');
+  } finally {
+    delete globalThis.fetch;
+  }
+});
+
+test('updateShipmentToApi calls PUT /api/shipments/:id', async () => {
+  const code = extractFunction('updateShipmentToApi(shipmentId, payload)');
+  globalThis.fetch = async (url, options) => {
+    assert.equal(url, '/api/shipments/SH1');
+    assert.equal(options.method, 'PUT');
+    return {
+      ok: true,
+      async json() {
+        return { status: 'SUCCESS', data: { shipment: { shipment_id: 'SH1', is_one_container: 1 } } };
+      }
+    };
+  };
+  try {
+    const fn = new Function(`return (${code.trim()});`)();
+    const result = await fn('SH1', { isOneContainer: 1 });
+    assert.equal(result.is_one_container, 1);
+  } finally {
+    delete globalThis.fetch;
+  }
+});
+
+test('loadShipmentDetailFromApi calls GET /api/shipments/:id', async () => {
+  const code = extractFunction('loadShipmentDetailFromApi(shipmentId)');
+  const mockState = { currentShipment: null };
+  let renderViewCalled = false;
+  globalThis.state = mockState;
+  globalThis.renderView = () => { renderViewCalled = true; };
+  globalThis.fetch = async (url) => {
+    assert.equal(url, '/api/shipments/SH1');
+    return {
+      ok: true,
+      async json() {
+        return { status: 'SUCCESS', data: { shipment: { shipment_id: 'SH1' } } };
+      }
+    };
+  };
+  try {
+    const fn = new Function(`return (${code.trim()});`)();
+    const result = await fn('SH1');
+    assert.equal(renderViewCalled, true);
+    assert.equal(mockState.currentShipment.shipment_id, 'SH1');
+  } finally {
+    delete globalThis.state;
+    delete globalThis.renderView;
+    delete globalThis.fetch;
+  }
+});

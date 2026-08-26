@@ -193,6 +193,57 @@ export function createShipmentRepository(db) {
         actualFreightSum,
         variance
       };
+    },
+
+    async ensureShipmentAnchor(shipmentId, poId, customerId, productId, isOneContainer = 1) {
+      const ship = await db.prepare(`SELECT * FROM shipments WHERE shipment_id = ?`).bind(shipmentId).first();
+      if (ship) {
+        // Return existing shipment along with po info
+        return ship;
+      }
+
+      const po = await db.prepare(`SELECT * FROM pos WHERE po_id = ?`).bind(poId).first();
+      if (!po) {
+        await db.prepare(`
+          INSERT INTO pos (po_id, customer_id, product_id, status)
+          VALUES (?, ?, ?, 'ACTIVE')
+        `).bind(poId, customerId, productId).run();
+      }
+
+      await db.prepare(`
+        INSERT INTO shipments (shipment_id, po_id, is_one_container)
+        VALUES (?, ?, ?)
+      `).bind(shipmentId, poId, isOneContainer).run();
+
+      return await db.prepare(`SELECT * FROM shipments WHERE shipment_id = ?`).bind(shipmentId).first();
+    },
+
+    async updateShipment(shipmentId, dto) {
+      const sets = [];
+      const params = [];
+      if (dto.freightQuoteId !== undefined) {
+        sets.push('freight_quote_id = ?');
+        params.push(dto.freightQuoteId || null);
+      }
+      if (dto.isOneContainer !== undefined) {
+        sets.push('is_one_container = ?');
+        params.push(dto.isOneContainer);
+      }
+
+      if (sets.length > 0) {
+        params.push(shipmentId);
+        await db.prepare(`
+          UPDATE shipments
+          SET ${sets.join(', ')}
+          WHERE shipment_id = ?
+        `).bind(...params).run();
+      }
+
+      return await db.prepare(`SELECT * FROM shipments WHERE shipment_id = ?`).bind(shipmentId).first();
+    },
+
+    async getShipment(shipmentId) {
+      return await db.prepare(`SELECT * FROM shipments WHERE shipment_id = ?`).bind(shipmentId).first();
     }
   };
 }

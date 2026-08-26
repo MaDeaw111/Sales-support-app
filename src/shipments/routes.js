@@ -94,6 +94,56 @@ export function createShipmentHandler({ repo, resolveUser, db }) {
       return json({ status: 'SUCCESS', data: { expenses, totalActualExportCostThb, freightVariance } });
     }
 
+    // POST /api/shipments/:id/ensure
+    const ensureMatch = path.match(/^\/api\/shipments\/([^/]+)\/ensure$/);
+    if (ensureMatch && method === 'POST') {
+      const shipmentId = ensureMatch[1];
+      const body = await readJson(request);
+      if (!body || typeof body !== 'object' || Array.isArray(body)) {
+        return json({ status: 'ERROR', message: 'Invalid request body.' }, 400);
+      }
+      try {
+        const shipment = await activeRepo.ensureShipmentAnchor(
+          shipmentId,
+          body.poId,
+          body.customerId,
+          body.productId,
+          body.isOneContainer === 0 ? 0 : 1
+        );
+        return json({ status: 'SUCCESS', data: { shipment } });
+      } catch (err) {
+        return json({ status: 'ERROR', message: err.message }, 400);
+      }
+    }
+
+    // PUT /api/shipments/:id
+    const putMatch = path.match(/^\/api\/shipments\/([^/]+)$/);
+    if (putMatch && method === 'PUT') {
+      const shipmentId = putMatch[1];
+      const body = await readJson(request);
+      if (!body || typeof body !== 'object' || Array.isArray(body)) {
+        return json({ status: 'ERROR', message: 'Invalid request body.' }, 400);
+      }
+      try {
+        const shipment = await activeRepo.updateShipment(shipmentId, body);
+        return json({ status: 'SUCCESS', data: { shipment } });
+      } catch (err) {
+        return json({ status: 'ERROR', message: err.message }, 400);
+      }
+    }
+
+    // GET /api/shipments/:id
+    const getMatch = path.match(/^\/api\/shipments\/([^/]+)$/);
+    if (getMatch && method === 'GET') {
+      const shipmentId = getMatch[1];
+      try {
+        const shipment = await activeRepo.getShipment(shipmentId);
+        return json({ status: 'SUCCESS', data: { shipment } });
+      } catch (err) {
+        return json({ status: 'ERROR', message: err.message }, 400);
+      }
+    }
+
     return json({ status: 'ERROR', message: 'Not found.' }, 404);
   };
 }
