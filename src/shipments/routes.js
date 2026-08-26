@@ -84,7 +84,8 @@ export function createShipmentHandler({ repo, resolveUser, db }) {
       const shipmentId = expGetMatch[1];
       const expenses = await activeRepo.listShipmentExpenses(shipmentId);
       const totalActualExportCostThb = await activeRepo.getShipmentTotalActualExportCostThb(shipmentId);
-      return json({ status: 'SUCCESS', data: { expenses, totalActualExportCostThb } });
+      const freightVariance = await activeRepo.getShipmentFreightVariance(shipmentId);
+      return json({ status: 'SUCCESS', data: { expenses, totalActualExportCostThb, freightVariance } });
     }
 
     return json({ status: 'ERROR', message: 'Not found.' }, 404);

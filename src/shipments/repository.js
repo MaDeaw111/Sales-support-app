@@ -155,6 +155,44 @@ export function createShipmentRepository(db) {
       `).bind(shipmentId).first();
 
       return row?.total || 0;
+    },
+
+    async getShipmentFreightVariance(shipmentId) {
+      const shipment = await db.prepare(`
+        SELECT s.shipment_id, s.is_one_container, q.quoted_freight_usd_per_container
+        FROM shipments s
+        LEFT JOIN freight_quotes q ON s.freight_quote_id = q.quote_id
+        WHERE s.shipment_id = ?
+        LIMIT 1
+      `).bind(shipmentId).first();
+
+      if (!shipment || shipment.is_one_container !== 1) {
+        return { quotedFreight: null, actualFreightSum: null, variance: null };
+      }
+
+      const actualRow = await db.prepare(`
+        SELECT SUM(e.amount) AS total
+        FROM shipment_expenses e
+        JOIN expense_categories c ON e.expense_category_id = c.category_id
+        WHERE e.shipment_id = ?
+          AND c.category_group = 'OCEAN_FREIGHT'
+          AND e.currency = 'USD'
+      `).bind(shipmentId).first();
+
+      const quotedFreight = shipment.quoted_freight_usd_per_container;
+      const actualFreightSum = actualRow?.total || 0;
+
+      if (quotedFreight === null || quotedFreight === undefined) {
+        return { quotedFreight: null, actualFreightSum, variance: null };
+      }
+
+      const variance = quotedFreight - actualFreightSum;
+
+      return {
+        quotedFreight,
+        actualFreightSum,
+        variance
+      };
     }
   };
 }
