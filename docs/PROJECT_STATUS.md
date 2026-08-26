@@ -330,22 +330,47 @@ Production smoke test results verified:
 - Customer Spec override editor and merged effective spec verified
 - Existing legacy modules (Auth, Customer, External Sales, User Admin) remain healthy and active.
 
+### Phase 5E — Commercial & Shipment Control
+
+**Status:** COMPLETE / MERGED / DEPLOYMENT PENDING
+
+Implemented backend:
+- D1 schema migration (`migrations/0004_commercial_shipment_control.sql`) defining pos, shipments, freight quotes, expense categories, price notes, shipment document links, and shipment expenses.
+- Implemented price notes and shipments repositories.
+- Protected shipment routes with RBAC (ADMIN, MANAGER, SALES_SUPPORT, EXPORT).
+- Enforced sales/customer CRM ownership on price note creation.
+- Implemented date filter queries on price notes.
+
+Implemented frontend:
+- Tabbed panels inside Shipment details (Overview, Costs, Documents).
+- Salesperson selection customer dropdown dynamic filtering.
+- Date from and Date to inputs on Price Notes.
+
+All 151 unit, integration, route, and regression tests pass cleanly.
+
+PR #7 merge commit:
+```text
+98b5167e3df1fb3ecf1246b96e5fa324fc28f641
+```
+
 ---
 
 # 3. CURRENT CHECKPOINT
 
 ## STOPPED HERE — 2026-08-26
 
-Phase 5D is fully closed and verified in production.
+Phase 5E is fully merged into main. Deployment and production migrations are pending.
 Next Action:
-- Prepare Phase 5E (Pricing) spec and implementation plans.
+- Deploy migrations/0004_commercial_shipment_control.sql to production D1 database.
+- Deploy Worker code to production wcat-sales-support.
+- Execute Phase 5E production smoke testing.
 
 ---
 
-# 4. NEXT STEP — Phase 5E — Pricing
+# 4. NEXT STEP — Phase 5F — PO/Shipping Integration
 
 Next Action:
-- Prepare Phase 5E pricing spec and plans.
+- Prepare Phase 5F PO/Shipping spec and plans.
 
 ---
 
