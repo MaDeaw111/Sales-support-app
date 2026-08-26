@@ -63,6 +63,46 @@ export function createShipmentRepository(db) {
       } catch (err) {
         wrapUniqueError(err, 'Expense Category code must be unique.');
       }
+    },
+
+    async addShipmentDocumentLink(dto, creatorId) {
+      if (!dto.shipmentId || !dto.documentType || !dto.title || !dto.driveUrl) {
+        throw new Error('shipmentId, documentType, title, and driveUrl are required.');
+      }
+      if (!dto.driveUrl.startsWith('http://') && !dto.driveUrl.startsWith('https://')) {
+        throw new Error('Drive URL must start with http:// or https://');
+      }
+
+      const id = dto.id || await nextId(db, 'shipment_document_links', 'link_id', 'DOC');
+      const now = new Date().toISOString();
+
+      try {
+        await db.prepare(`
+          INSERT INTO shipment_document_links (link_id, shipment_id, document_type, title, drive_url, reference_no, remark, created_by, created_at, updated_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `).bind(id, dto.shipmentId, dto.documentType, dto.title, dto.driveUrl, dto.referenceNo || null, dto.remark || null, creatorId, now, now).run();
+
+        const row = await db.prepare(`
+          SELECT link_id, shipment_id, document_type, title, drive_url, reference_no, remark, created_by, created_at, updated_at
+          FROM shipment_document_links
+          WHERE link_id = ?
+        `).bind(id).first();
+
+        return row;
+      } catch (err) {
+        throw err;
+      }
+    },
+
+    async listShipmentDocumentLinks(shipmentId) {
+      const { results } = await db.prepare(`
+        SELECT link_id, shipment_id, document_type, title, drive_url, reference_no, remark, created_by, created_at, updated_at
+        FROM shipment_document_links
+        WHERE shipment_id = ?
+        ORDER BY created_at ASC
+      `).bind(shipmentId).all();
+
+      return results || [];
     }
   };
 }
