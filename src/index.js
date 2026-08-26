@@ -44,6 +44,18 @@ export default {
       return createUserHandlerFromEnv(env)(request);
     }
 
+    if (
+      url.pathname === '/api/products' || url.pathname.startsWith('/api/products/') ||
+      url.pathname === '/api/spec-parameters' || url.pathname.startsWith('/api/spec-parameters/') ||
+      url.pathname === '/api/standard-specs' || url.pathname.startsWith('/api/standard-specs/') ||
+      url.pathname === '/api/customer-specs' || url.pathname.startsWith('/api/customer-specs/') ||
+      (url.pathname.startsWith('/api/customers/') && url.pathname.endsWith('/specs'))
+    ) {
+      if (!env.DB) return jsonResponse({ status: 'ERROR', message: 'D1 DB binding is not configured.' }, 503);
+      const { createProductHandlerFromEnv } = await import('./products/routes.js');
+      return createProductHandlerFromEnv(env)(request);
+    }
+
     if (url.pathname === '/api/gateway') {
       return jsonResponse({
         status: 'ERROR',
