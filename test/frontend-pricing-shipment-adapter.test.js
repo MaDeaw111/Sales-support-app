@@ -316,3 +316,38 @@ test('loadShipmentDetailFromApi calls GET /api/shipments/:id', async () => {
     delete globalThis.fetch;
   }
 });
+
+test('filterPnCustomerDropdown filters pnCustomer select element based on selected salesperson', () => {
+  const code = extractFunction('filterPnCustomerDropdown(salesUserId)');
+  const mockState = {
+    customers: [
+      { id: 'C1', name: 'Cust 1', ownerId: 'S1' },
+      { id: 'C2', name: 'Cust 2', ownerId: 'S2' }
+    ]
+  };
+  globalThis.state = mockState;
+  globalThis.getScopedCustomers = () => mockState.customers;
+
+  const select = {
+    value: 'C1',
+    innerHTML: '',
+  };
+  globalThis.document = {
+    getElementById: (id) => {
+      if (id === 'pnCustomer') return select;
+      return null;
+    }
+  };
+
+  try {
+    const fn = new Function(`return (${code.trim()});`)();
+    fn('S2');
+    assert.match(select.innerHTML, /Cust 2/);
+    assert.ok(!select.innerHTML.includes('Cust 1'));
+    assert.equal(select.value, 'C2');
+  } finally {
+    delete globalThis.state;
+    delete globalThis.getScopedCustomers;
+    delete globalThis.document;
+  }
+});

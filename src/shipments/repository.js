@@ -195,7 +195,14 @@ export function createShipmentRepository(db) {
       };
     },
 
-    async ensureShipmentAnchor(shipmentId, poId, customerId, productId, isOneContainer = 1) {
+    async ensureShipmentAnchor(shipmentId, poId, customerId, productId, incoterm, destinationPort, isOneContainer = 1) {
+      if (!['FOB', 'CFR', 'CIF'].includes(incoterm)) {
+        throw new Error('Incoterm must be FOB, CFR, or CIF.');
+      }
+      if (['CFR', 'CIF'].includes(incoterm) && (!destinationPort || !destinationPort.trim())) {
+        throw new Error('Destination port is required for CFR and CIF.');
+      }
+
       const ship = await db.prepare(`SELECT * FROM shipments WHERE shipment_id = ?`).bind(shipmentId).first();
       if (ship) {
         // Return existing shipment along with po info
@@ -205,9 +212,9 @@ export function createShipmentRepository(db) {
       const po = await db.prepare(`SELECT * FROM pos WHERE po_id = ?`).bind(poId).first();
       if (!po) {
         await db.prepare(`
-          INSERT INTO pos (po_id, customer_id, product_id, status)
-          VALUES (?, ?, ?, 'ACTIVE')
-        `).bind(poId, customerId, productId).run();
+          INSERT INTO pos (po_id, customer_id, product_id, incoterm, destination_port, status)
+          VALUES (?, ?, ?, ?, ?, 'ACTIVE')
+        `).bind(poId, customerId, productId, incoterm, destinationPort || null).run();
       }
 
       await db.prepare(`

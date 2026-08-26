@@ -38,8 +38,10 @@ export function createPriceNoteHandler({ repo, resolveUser, db }) {
       const salesUserId = url.searchParams.get('salesUserId');
       const customerId = url.searchParams.get('customerId');
       const productId = url.searchParams.get('productId');
+      const dateFrom = url.searchParams.get('dateFrom');
+      const dateTo = url.searchParams.get('dateTo');
 
-      const priceNotes = await activeRepo.listPriceNotes({ salesUserId, customerId, productId });
+      const priceNotes = await activeRepo.listPriceNotes({ salesUserId, customerId, productId, dateFrom, dateTo }, caller);
       return json({ status: 'SUCCESS', data: { priceNotes } });
     }
 

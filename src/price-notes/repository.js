@@ -32,6 +32,24 @@ export function createPriceNoteRepository(db) {
         throw new Error('Destination port is required for CFR and CIF.');
       }
 
+      // 1. Verify salesUserId is a valid Sales/External Sales user
+      const salesUser = await db.prepare(`SELECT role FROM users WHERE user_id = ?`).bind(dto.salesUserId).first();
+      if (!salesUser) {
+        throw new Error('Sales user not found.');
+      }
+      if (salesUser.role !== 'EXTERNAL_SALES') {
+        throw new Error('User is not a salesperson.');
+      }
+
+      // 2. Verify customerId exists and belongs to that salesperson
+      const customer = await db.prepare(`SELECT owner_user_id FROM customers WHERE customer_id = ?`).bind(dto.customerId).first();
+      if (!customer) {
+        throw new Error('Customer not found.');
+      }
+      if (customer.owner_user_id !== dto.salesUserId) {
+        throw new Error('Customer is not assigned to this salesperson.');
+      }
+
       const id = dto.id || await nextId(db, 'manager_price_notes', 'note_id', 'PN');
       const destinationPort = dto.incoterm === 'FOB' ? (dto.destinationPort || null) : dto.destinationPort;
 
@@ -64,13 +82,18 @@ export function createPriceNoteRepository(db) {
       }
     },
 
-    async listPriceNotes(filters = {}) {
+    async listPriceNotes(filters = {}, caller = {}) {
       let query = `
         SELECT note_id, sales_user_id, customer_id, product_id, incoterm, destination_port, offer_price_usd_per_mt, note, created_by_manager_id, created_at
         FROM manager_price_notes
         WHERE 1 = 1
       `;
       const params = [];
+
+      if (caller && caller.role === 'EXTERNAL_SALES') {
+        query += ` AND (sales_user_id = ? OR customer_id IN (SELECT customer_id FROM customers WHERE owner_user_id = ?))`;
+        params.push(caller.user_id, caller.user_id);
+      }
 
       if (filters.salesUserId) {
         query += ` AND sales_user_id = ?`;
@@ -83,6 +106,14 @@ export function createPriceNoteRepository(db) {
       if (filters.productId) {
         query += ` AND product_id = ?`;
         params.push(filters.productId);
+      }
+      if (filters.dateFrom) {
+        query += ` AND date(created_at) >= date(?)`;
+        params.push(filters.dateFrom);
+      }
+      if (filters.dateTo) {
+        query += ` AND date(created_at) <= date(?)`;
+        params.push(filters.dateTo);
       }
 
       query += ` ORDER BY created_at DESC`;

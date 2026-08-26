@@ -277,6 +277,8 @@
                 if (filters.salesUserId) params.set('salesUserId', filters.salesUserId);
                 if (filters.customerId) params.set('customerId', filters.customerId);
                 if (filters.productId) params.set('productId', filters.productId);
+                if (filters.dateFrom) params.set('dateFrom', filters.dateFrom);
+                if (filters.dateTo) params.set('dateTo', filters.dateTo);
 
                 const res = await fetch('/api/manager-price-notes?' + params.toString());
                 if (!res.ok) return;
@@ -1089,10 +1091,26 @@
             state.pricingTab = 'SPECIAL'; closeModal(); renderPricing(document.getElementById('mainContent'));
         }
 
+        function filterPnCustomerDropdown(salesUserId) {
+            const customerSelect = document.getElementById('pnCustomer');
+            if (!customerSelect) return;
+            const currentSelected = customerSelect.value;
+            const filtered = getScopedCustomers().filter(c => c.ownerId === salesUserId);
+            customerSelect.innerHTML = filtered.map(c => `<option value="${c.id}">${c.name}</option>`).join('') || '<option value="">-- No Customers Owned --</option>';
+            if (!filtered.some(c => c.id === currentSelected)) {
+                customerSelect.value = filtered[0]?.id || '';
+            } else {
+                customerSelect.value = currentSelected;
+            }
+        }
+
         function openAddPriceNoteModal() {
             const salesUsers = (state.adminUsers || []).filter(u => u.role === 'EXTERNAL_SALES');
             const salesOptions = salesUsers.map(u => `<option value="${u.user_id || u.id}">${u.full_name}</option>`).join('');
-            const customerOptions = getScopedCustomers().map(c => `<option value="${c.id}">${c.name}</option>`).join('');
+            const firstSalesUser = salesUsers[0];
+            const firstSalesUserId = firstSalesUser ? (firstSalesUser.user_id || firstSalesUser.id) : '';
+            const filteredCustomers = getScopedCustomers().filter(c => c.ownerId === firstSalesUserId);
+            const customerOptions = filteredCustomers.map(c => `<option value="${c.id}">${c.name}</option>`).join('') || '<option value="">-- No Customers Owned --</option>';
             const productOptions = (state.products || []).map(p => `<option value="${p.id}">${p.shortName}</option>`).join('');
 
             openModal(`
@@ -1107,7 +1125,7 @@
                     <div class="grid grid-cols-2 gap-3">
                         <div>
                             <label class="text-xs font-bold text-slate-600">Sales User</label>
-                            <select id="pnSalesUser" class="mt-1 w-full border rounded-lg px-3 py-2 text-sm">${salesOptions}</select>
+                            <select id="pnSalesUser" onchange="filterPnCustomerDropdown(this.value)" class="mt-1 w-full border rounded-lg px-3 py-2 text-sm">${salesOptions}</select>
                         </div>
                         <div>
                             <label class="text-xs font-bold text-slate-600">Customer</label>
@@ -1478,11 +1496,11 @@
                             <select id="docType" class="mt-1 w-full border rounded-lg px-2 py-1.5 text-xs bg-white">
                                 <option value="PO">PO</option>
                                 <option value="DI">DI</option>
-                                <option value="Booking">Booking</option>
-                                <option value="Stuffing Report">Stuffing Report</option>
-                                <option value="All Ship Doc">All Ship Doc</option>
-                                <option value="IR">IR (Inspection Report)</option>
-                                <option value="LC">LC (Letter of Credit)</option>
+                                <option value="BOOKING">Booking</option>
+                                <option value="STUFFING_REPORT">Stuffing Report</option>
+                                <option value="ALL_SHIP_DOC">All Ship Doc</option>
+                                <option value="IR">IR</option>
+                                <option value="LC">LC</option>
                             </select>
                         </div>
                         <div class="grid grid-cols-2 gap-3">
@@ -1534,6 +1552,74 @@
                 });
                 await loadShipmentDocumentLinksFromApi(shipmentId);
                 openManageDocumentLinksModal(shipmentId); // Refresh modal content
+            } catch (err) {
+                alert('Error saving document link: ' + err.message);
+            }
+        }
+
+        function setShipmentDetailTab(tab) {
+            state.shipmentDetailTab = tab;
+            renderView();
+        }
+
+        function toggleTabExpenseFxField(currency) {
+            const fxInput = document.getElementById('tabExpenseFx');
+            if (!fxInput) return;
+            if (currency === 'THB') {
+                fxInput.value = '';
+                fxInput.disabled = true;
+                fxInput.classList.add('bg-slate-100');
+            } else {
+                fxInput.disabled = false;
+                fxInput.classList.remove('bg-slate-100');
+            }
+        }
+
+        async function submitTabExpense(shipmentId) {
+            const categoryId = document.getElementById('tabExpenseCat').value;
+            const currency = document.getElementById('tabExpenseCurr').value;
+            const amount = parseFloat(document.getElementById('tabExpenseAmt').value || 0);
+            const fxUsed = currency === 'USD' ? parseFloat(document.getElementById('tabExpenseFx').value || 0) : null;
+            const referenceNo = document.getElementById('tabExpenseRef').value || '';
+            const remark = document.getElementById('tabExpenseRemark').value || '';
+
+            if (amount <= 0) return alert('Amount must be greater than zero.');
+            if (currency === 'USD' && (!fxUsed || fxUsed <= 0)) return alert('FX rate is required for USD expenses.');
+
+            try {
+                await saveShipmentExpenseToApi(shipmentId, {
+                    expenseCategoryId: categoryId,
+                    amount,
+                    currency,
+                    fxUsed,
+                    referenceNo,
+                    remark
+                });
+                await loadShipmentDetailFromApi(shipmentId);
+            } catch (err) {
+                alert('Error saving expense: ' + err.message);
+            }
+        }
+
+        async function submitTabDoc(shipmentId) {
+            const documentType = document.getElementById('tabDocType').value;
+            const title = document.getElementById('tabDocTitle').value || '';
+            const driveUrl = document.getElementById('tabDocUrl').value || '';
+            const referenceNo = document.getElementById('tabDocRef').value || '';
+
+            if (!title.trim()) return alert('Link Title is required.');
+            if (!driveUrl.trim() || (!driveUrl.startsWith('http://') && !driveUrl.startsWith('https://'))) {
+                return alert('Valid Google Drive URL is required.');
+            }
+
+            try {
+                await saveShipmentDocumentLinkToApi(shipmentId, {
+                    documentType,
+                    title,
+                    driveUrl,
+                    referenceNo
+                });
+                await loadShipmentDetailFromApi(shipmentId);
             } catch (err) {
                 alert('Error saving document link: ' + err.message);
             }
@@ -1662,6 +1748,14 @@
                                 <select onchange="applyPriceNotesFilter('productId', this.value)" class="border rounded-lg px-2 py-1 text-xs bg-white">
                                     ${productOptions}
                                 </select>
+                            </div>
+                            <div class="flex items-center gap-1">
+                                <span class="text-[10px] text-slate-500 font-bold">From:</span>
+                                <input type="date" value="${(state.priceNotesFilters || {}).dateFrom || ''}" onchange="applyPriceNotesFilter('dateFrom', this.value)" class="border rounded-lg px-2 py-0.5 text-xs bg-white">
+                            </div>
+                            <div class="flex items-center gap-1">
+                                <span class="text-[10px] text-slate-500 font-bold">To:</span>
+                                <input type="date" value="${(state.priceNotesFilters || {}).dateTo || ''}" onchange="applyPriceNotesFilter('dateTo', this.value)" class="border rounded-lg px-2 py-0.5 text-xs bg-white">
                             </div>
                             <button onclick="clearPriceNotesFilters()" class="text-xs text-blue-600 font-bold hover:underline">Clear</button>
                         </div>
@@ -5109,46 +5203,200 @@
                             <div class="bg-white rounded-xl border border-slate-200 shadow-sm p-5 space-y-4">
                                 <h3 class="text-sm font-bold text-slate-900 border-b pb-2 flex items-center gap-1.5"><i data-lucide="scale" class="w-4 h-4 text-blue-600"></i> Commercial & Shipment Control</h3>
                                 
-                                <!-- One Container Toggle -->
-                                <div class="flex items-center justify-between text-xs bg-slate-50 p-2 rounded-lg">
-                                    <span class="text-slate-600 font-medium">Is One Container Shipment?</span>
-                                    <input type="checkbox" id="shIsOneContainer" 
-                                        ${(state.currentShipment && state.currentShipment.is_one_container === 1) ? 'checked' : ''} 
-                                        onchange="updateShipmentOneContainer('${di.id}', this.checked)"
-                                        class="w-4 h-4 text-blue-600 border-slate-300 rounded focus:ring-blue-500">
+                                <!-- Tabs Header -->
+                                <div class="flex border-b text-xs gap-2">
+                                    <button onclick="setShipmentDetailTab('OVERVIEW')" class="py-2 px-3 font-bold border-b-2 ${(!state.shipmentDetailTab || state.shipmentDetailTab === 'OVERVIEW') ? 'border-blue-600 text-blue-600' : 'border-transparent text-slate-500 hover:text-slate-800'}">Overview</button>
+                                    <button onclick="setShipmentDetailTab('COSTS')" class="py-2 px-3 font-bold border-b-2 ${state.shipmentDetailTab === 'COSTS' ? 'border-blue-600 text-blue-600' : 'border-transparent text-slate-500 hover:text-slate-800'}">Costs</button>
+                                    <button onclick="setShipmentDetailTab('DOCUMENTS')" class="py-2 px-3 font-bold border-b-2 ${state.shipmentDetailTab === 'DOCUMENTS' ? 'border-blue-600 text-blue-600' : 'border-transparent text-slate-500 hover:text-slate-800'}">Documents</button>
                                 </div>
 
-                                <!-- Freight Quote Selection -->
-                                <div class="space-y-1">
-                                    <label class="text-[10px] uppercase font-bold text-slate-400">Link Freight Quote</label>
-                                    <select onchange="updateShipmentFreightQuote('${di.id}', this.value)" class="w-full border rounded-lg px-2 py-1.5 text-xs bg-white">
-                                        <option value="">-- No Quote Linked --</option>
-                                        ${(state.freightQuotes || []).map(q => `<option value="${q.quote_id}" ${state.currentShipment && state.currentShipment.freight_quote_id === q.quote_id ? 'selected' : ''}>${q.origin_port} &rarr; ${q.destination_port} (${q.shipping_line_or_forwarder}) - USD ${q.quoted_freight_usd_per_container.toFixed(2)}</option>`).join('')}
-                                    </select>
-                                </div>
+                                <!-- Tab 1: Overview -->
+                                ${(!state.shipmentDetailTab || state.shipmentDetailTab === 'OVERVIEW') ? `
+                                <div class="space-y-4">
+                                    <!-- One Container Toggle -->
+                                    <div class="flex items-center justify-between text-xs bg-slate-50 p-2 rounded-lg">
+                                        <span class="text-slate-600 font-medium">Is One Container Shipment?</span>
+                                        <input type="checkbox" id="shIsOneContainer" 
+                                            ${(state.currentShipment && state.currentShipment.is_one_container === 1) ? 'checked' : ''} 
+                                            onchange="updateShipmentOneContainer('${di.id}', this.checked)"
+                                            class="w-4 h-4 text-blue-600 border-slate-300 rounded focus:ring-blue-500">
+                                    </div>
 
-                                <!-- Freight Variance Summary -->
-                                <div class="grid grid-cols-3 gap-2 bg-slate-50 p-2.5 rounded-lg text-center text-xs">
-                                    <div>
-                                        <div class="text-[8px] uppercase font-bold text-slate-400">Quoted</div>
-                                        <div class="font-bold text-slate-800">${state.freightVariance?.quotedFreight !== null && state.freightVariance?.quotedFreight !== undefined ? 'USD ' + state.freightVariance.quotedFreight.toFixed(2) : '-'}</div>
+                                    <!-- Freight Quote Selection -->
+                                    <div class="space-y-1">
+                                        <label class="text-[10px] uppercase font-bold text-slate-400">Link Freight Quote</label>
+                                        <select onchange="updateShipmentFreightQuote('${di.id}', this.value)" class="w-full border rounded-lg px-2 py-1.5 text-xs bg-white">
+                                            <option value="">-- No Quote Linked --</option>
+                                            ${(state.freightQuotes || []).map(q => `<option value="${q.quote_id}" ${state.currentShipment && state.currentShipment.freight_quote_id === q.quote_id ? 'selected' : ''}>${q.origin_port} &rarr; ${q.destination_port} (${q.shipping_line_or_forwarder}) - USD ${q.quoted_freight_usd_per_container.toFixed(2)}</option>`).join('')}
+                                        </select>
                                     </div>
-                                    <div>
-                                        <div class="text-[8px] uppercase font-bold text-slate-400">Actual</div>
-                                        <div class="font-bold text-slate-800">${state.freightVariance?.actualFreightSum !== null && state.freightVariance?.actualFreightSum !== undefined ? 'USD ' + state.freightVariance.actualFreightSum.toFixed(2) : 'USD 0.00'}</div>
-                                    </div>
-                                    <div>
-                                        <div class="text-[8px] uppercase font-bold text-slate-400">Variance</div>
-                                        <div class="font-black ${state.freightVariance?.variance < 0 ? 'text-red-600' : state.freightVariance?.variance > 0 ? 'text-emerald-600' : 'text-slate-600'}">${state.freightVariance?.variance !== null && state.freightVariance?.variance !== undefined ? 'USD ' + state.freightVariance.variance.toFixed(2) : 'N/A'}</div>
-                                    </div>
-                                </div>
 
-                                <!-- THB Actual Cost & Expense Management -->
-                                <div class="pt-2 border-t space-y-2">
-                                    <div class="flex justify-between items-center"><span class="text-xs text-slate-500 font-medium">Total Actual Cost:</span><strong class="text-sm font-black text-slate-900">THB ${Number(state.totalActualExportCostThb || 0).toLocaleString(undefined, {minimumFractionDigits: 2})}</strong></div>
-                                    <button onclick="openManageExpensesModal('${di.id}')" class="w-full text-center bg-blue-50 border border-blue-200 rounded-lg p-2 text-xs font-bold text-blue-700 hover:bg-blue-100 flex items-center justify-center gap-1"><i data-lucide="receipt" class="w-3.5 h-3.5"></i> Manage Expenses (${(state.shipmentExpenses || []).length})</button>
-                                    <button onclick="openManageDocumentLinksModal('${di.id}')" class="w-full text-center bg-purple-50 border border-purple-200 rounded-lg p-2 text-xs font-bold text-purple-700 hover:bg-purple-100 flex items-center justify-center gap-1"><i data-lucide="link" class="w-3.5 h-3.5"></i> Manage Document Links (${(state.shipmentDocumentLinks || []).length})</button>
+                                    <!-- Freight Variance Summary -->
+                                    <div class="grid grid-cols-3 gap-2 bg-slate-50 p-2.5 rounded-lg text-center text-xs">
+                                        <div>
+                                            <div class="text-[8px] uppercase font-bold text-slate-400">Quoted</div>
+                                            <div class="font-bold text-slate-800">${state.freightVariance?.quotedFreight !== null && state.freightVariance?.quotedFreight !== undefined ? 'USD ' + state.freightVariance.quotedFreight.toFixed(2) : '-'}</div>
+                                        </div>
+                                        <div>
+                                            <div class="text-[8px] uppercase font-bold text-slate-400">Actual</div>
+                                            <div class="font-bold text-slate-800">${state.freightVariance?.actualFreightSum !== null && state.freightVariance?.actualFreightSum !== undefined ? 'USD ' + state.freightVariance.actualFreightSum.toFixed(2) : 'USD 0.00'}</div>
+                                        </div>
+                                        <div>
+                                            <div class="text-[8px] uppercase font-bold text-slate-400">Variance</div>
+                                            <div class="font-black ${state.freightVariance?.variance < 0 ? 'text-red-600' : state.freightVariance?.variance > 0 ? 'text-emerald-600' : 'text-slate-600'}">${state.freightVariance?.variance !== null && state.freightVariance?.variance !== undefined ? 'USD ' + state.freightVariance.variance.toFixed(2) : 'N/A'}</div>
+                                        </div>
+                                    </div>
+
+                                    <!-- Total Actual Export Cost -->
+                                    <div class="pt-2 border-t flex justify-between items-center bg-slate-50 p-2.5 rounded-lg">
+                                        <span class="text-xs text-slate-500 font-medium">Total Actual Cost:</span>
+                                        <strong class="text-xs font-black text-slate-900">THB ${Number(state.totalActualExportCostThb || 0).toLocaleString(undefined, {minimumFractionDigits: 2})}</strong>
+                                    </div>
+
+                                    <!-- Document Presence Summary -->
+                                    <div class="text-xs space-y-1">
+                                        <div class="font-bold text-slate-700">Handover Document Status:</div>
+                                        <div class="grid grid-cols-2 gap-2 text-[10px] bg-slate-50 p-2 rounded-lg text-slate-600">
+                                            <div>PO: <strong class="${(state.shipmentDocumentLinks || []).some(x => x.document_type === 'PO') ? 'text-emerald-600' : 'text-slate-400'}">${(state.shipmentDocumentLinks || []).some(x => x.document_type === 'PO') ? 'UPLOADED' : 'PENDING'}</strong></div>
+                                            <div>DI: <strong class="${(state.shipmentDocumentLinks || []).some(x => x.document_type === 'DI') ? 'text-emerald-600' : 'text-slate-400'}">${(state.shipmentDocumentLinks || []).some(x => x.document_type === 'DI') ? 'UPLOADED' : 'PENDING'}</strong></div>
+                                            <div>Booking: <strong class="${(state.shipmentDocumentLinks || []).some(x => x.document_type === 'BOOKING') ? 'text-emerald-600' : 'text-slate-400'}">${(state.shipmentDocumentLinks || []).some(x => x.document_type === 'BOOKING') ? 'UPLOADED' : 'PENDING'}</strong></div>
+                                            <div>Stuffing Report: <strong class="${(state.shipmentDocumentLinks || []).some(x => x.document_type === 'STUFFING_REPORT') ? 'text-emerald-600' : 'text-slate-400'}">${(state.shipmentDocumentLinks || []).some(x => x.document_type === 'STUFFING_REPORT') ? 'UPLOADED' : 'PENDING'}</strong></div>
+                                            <div>All Ship Doc: <strong class="${(state.shipmentDocumentLinks || []).some(x => x.document_type === 'ALL_SHIP_DOC') ? 'text-emerald-600' : 'text-slate-400'}">${(state.shipmentDocumentLinks || []).some(x => x.document_type === 'ALL_SHIP_DOC') ? 'UPLOADED' : 'PENDING'}</strong></div>
+                                            <div>IR: <strong class="${(state.shipmentDocumentLinks || []).some(x => x.document_type === 'IR') ? 'text-emerald-600' : 'text-slate-400'}">${(state.shipmentDocumentLinks || []).some(x => x.document_type === 'IR') ? 'UPLOADED' : 'PENDING'}</strong></div>
+                                            <div>LC: <strong class="${(state.shipmentDocumentLinks || []).some(x => x.document_type === 'LC') ? 'text-emerald-600' : 'text-slate-400'}">${(state.shipmentDocumentLinks || []).some(x => x.document_type === 'LC') ? 'UPLOADED' : 'PENDING'}</strong></div>
+                                        </div>
+                                    </div>
                                 </div>
+                                ` : ''}
+
+                                <!-- Tab 2: Costs -->
+                                ${state.shipmentDetailTab === 'COSTS' ? `
+                                <div class="space-y-4">
+                                    <!-- Expense List -->
+                                    <div class="text-xs font-bold text-slate-700">Recorded Expenses:</div>
+                                    <div class="border rounded-lg overflow-hidden max-h-48 overflow-y-auto">
+                                        <table class="w-full text-left text-xs bg-white">
+                                            <thead class="bg-slate-50 text-slate-600 border-b">
+                                                <tr>
+                                                    <th class="p-2">Category</th>
+                                                    <th class="p-2 text-right">Amount</th>
+                                                    <th class="p-2 text-right">THB Equivalent</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody class="divide-y">
+                                                ${(state.shipmentExpenses || []).map(x => {
+                                                    const cat = (state.expenseCategories || []).find(c => c.id === x.expense_category_id);
+                                                    return `<tr>
+                                                        <td class="p-2 font-medium">${cat?.category_name || x.expense_category_id}</td>
+                                                        <td class="p-2 text-right">${x.currency} ${Number(x.amount).toFixed(2)}</td>
+                                                        <td class="p-2 text-right">THB ${Number(x.amount_thb).toFixed(2)}</td>
+                                                    </tr>`;
+                                                }).join('') || '<tr><td colspan="3" class="p-4 text-center text-slate-400">No expenses recorded yet.</td></tr>'}
+                                            </tbody>
+                                        </table>
+                                    </div>
+
+                                    <!-- Add Expense Form -->
+                                    <div class="border-t pt-3 space-y-3">
+                                        <div class="text-xs font-bold text-slate-900">Add New Expense</div>
+                                        <div class="grid grid-cols-2 gap-2">
+                                            <div>
+                                                <label class="text-[10px] font-bold text-slate-600">Category</label>
+                                                <select id="tabExpenseCat" class="mt-1 w-full border rounded-lg px-2 py-1 text-xs bg-white">
+                                                    ${(state.expenseCategories || []).map(c => `<option value="${c.id}">${c.category_name}</option>`).join('')}
+                                                </select>
+                                            </div>
+                                            <div>
+                                                <label class="text-[10px] font-bold text-slate-600">Currency</label>
+                                                <select id="tabExpenseCurr" onchange="toggleTabExpenseFxField(this.value)" class="mt-1 w-full border rounded-lg px-2 py-1 text-xs bg-white">
+                                                    <option value="THB">THB</option>
+                                                    <option value="USD">USD</option>
+                                                </select>
+                                            </div>
+                                        </div>
+                                        <div class="grid grid-cols-2 gap-2">
+                                            <div>
+                                                <label class="text-[10px] font-bold text-slate-600">Amount</label>
+                                                <input id="tabExpenseAmt" type="number" step="0.01" class="mt-1 w-full border rounded-lg px-2 py-1 text-xs">
+                                            </div>
+                                            <div>
+                                                <label class="text-[10px] font-bold text-slate-600">FX Rate (to THB)</label>
+                                                <input id="tabExpenseFx" type="number" step="0.0001" disabled class="mt-1 w-full border rounded-lg px-2 py-1 text-xs bg-slate-100">
+                                            </div>
+                                        </div>
+                                        <div class="grid grid-cols-2 gap-2">
+                                            <div>
+                                                <label class="text-[10px] font-bold text-slate-600">Ref No</label>
+                                                <input id="tabExpenseRef" type="text" class="mt-1 w-full border rounded-lg px-2 py-1 text-xs">
+                                            </div>
+                                            <div>
+                                                <label class="text-[10px] font-bold text-slate-600">Remark</label>
+                                                <input id="tabExpenseRemark" type="text" class="mt-1 w-full border rounded-lg px-2 py-1 text-xs">
+                                            </div>
+                                        </div>
+                                        <button onclick="submitTabExpense('${di.id}')" class="w-full text-center bg-blue-600 text-white rounded-lg p-2 text-xs font-bold hover:bg-blue-700">Save Expense</button>
+                                    </div>
+                                </div>
+                                ` : ''}
+
+                                <!-- Tab 3: Documents -->
+                                ${state.shipmentDetailTab === 'DOCUMENTS' ? `
+                                <div class="space-y-4">
+                                    <!-- Documents List by Type -->
+                                    <div class="space-y-2">
+                                        ${['PO', 'DI', 'BOOKING', 'STUFFING_REPORT', 'ALL_SHIP_DOC', 'IR', 'LC'].map(type => {
+                                            const links = (state.shipmentDocumentLinks || []).filter(x => x.document_type === type);
+                                            return `
+                                            <div class="rounded-lg border border-slate-200 p-2 bg-slate-50/50">
+                                                <div class="flex justify-between items-center text-xs">
+                                                    <span class="font-bold text-slate-800">${type}</span>
+                                                    <span class="text-[10px] text-slate-500 font-semibold">${links.length} Links</span>
+                                                </div>
+                                                <div class="mt-1 space-y-1">
+                                                    ${links.map(link => `
+                                                        <div class="flex items-center justify-between text-[11px] bg-white p-1 border rounded">
+                                                            <a href="${link.drive_url}" target="_blank" class="text-blue-600 font-medium hover:underline truncate max-w-[200px]">${link.title}</a>
+                                                            ${link.reference_no ? `<span class="text-slate-400 font-mono text-[9px]">${link.reference_no}</span>` : ''}
+                                                        </div>
+                                                    `).join('') || '<div class="text-[10px] text-slate-400 italic">No document links</div>'}
+                                                </div>
+                                            </div>`;
+                                        }).join('')}
+                                    </div>
+
+                                    <!-- Add Document Link Form -->
+                                    <div class="border-t pt-3 space-y-3">
+                                        <div class="text-xs font-bold text-slate-900">Add Supporting Document Link</div>
+                                        <div>
+                                            <label class="text-[10px] font-bold text-slate-600">Document Type</label>
+                                            <select id="tabDocType" class="mt-1 w-full border rounded-lg px-2 py-1 text-xs bg-white">
+                                                <option value="PO">PO</option>
+                                                <option value="DI">DI</option>
+                                                <option value="BOOKING">Booking</option>
+                                                <option value="STUFFING_REPORT">Stuffing Report</option>
+                                                <option value="ALL_SHIP_DOC">All Ship Doc</option>
+                                                <option value="IR">IR</option>
+                                                <option value="LC">LC</option>
+                                            </select>
+                                        </div>
+                                        <div class="grid grid-cols-2 gap-2">
+                                            <div>
+                                                <label class="text-[10px] font-bold text-slate-600">Link Title</label>
+                                                <input id="tabDocTitle" type="text" placeholder="e.g. Booking Confirmation" class="mt-1 w-full border rounded-lg px-2 py-1 text-xs">
+                                            </div>
+                                            <div>
+                                                <label class="text-[10px] font-bold text-slate-600">Google Drive URL</label>
+                                                <input id="tabDocUrl" type="url" placeholder="https://drive.google.com/..." class="mt-1 w-full border rounded-lg px-2 py-1 text-xs">
+                                            </div>
+                                        </div>
+                                        <div>
+                                            <label class="text-[10px] font-bold text-slate-600">Reference No</label>
+                                            <input id="tabDocRef" type="text" class="mt-1 w-full border rounded-lg px-2 py-1 text-xs">
+                                        </div>
+                                        <button onclick="submitTabDoc('${di.id}')" class="w-full text-center bg-blue-600 text-white rounded-lg p-2 text-xs font-bold hover:bg-blue-700">Save Document Link</button>
+                                    </div>
+                                </div>
+                                ` : ''}
                             </div>
                         </div>
                     </div>

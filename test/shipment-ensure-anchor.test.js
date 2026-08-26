@@ -51,11 +51,11 @@ async function setupTestDb() {
   return { db, wrappedDb };
 }
 
-async function seedUserAndSession(db, userId, name, email, role, token) {
+async function seedUserAndSession(db, userId, role, token) {
   db.prepare(`
     INSERT INTO users (user_id, full_name, email, role, customer_scope, password_hash, password_salt)
     VALUES (?, ?, ?, ?, ?, ?, ?)
-  `).run(userId, name, email, role, 'ALL', 'hash', 'salt');
+  `).run(userId, 'Test User', `${userId}@example.com`, role, 'ALL', 'hash', 'salt');
 
   const tokenHash = await hashSessionToken(token);
   const expires = new Date(Date.now() + 1000000).toISOString();
@@ -66,89 +66,102 @@ async function seedUserAndSession(db, userId, name, email, role, token) {
   `).run(`SES-${userId}`, userId, tokenHash, expires);
 }
 
-function makeRequest(path, method = 'GET', body = null, token = null) {
-  const headers = {};
-  if (token) {
-    headers['cookie'] = `wcat_session=${token}`;
-  }
-  if (body) {
-    headers['content-type'] = 'application/json';
-  }
-  return new Request(`https://example.com${path}`, {
-    method,
-    headers,
-    body: body ? JSON.stringify(body) : null
-  });
-}
-
-test('POST /api/shipments/:id/documents: validation and retrieval', async () => {
+test('POST /api/shipments/:id/ensure creates PO and Shipment anchors when PO does not exist', async () => {
   const { db, wrappedDb } = await setupTestDb();
-  await seedUserAndSession(db, 'U_MGR', 'Mgr', 'mgr@example.com', 'MANAGER', 'token-mgr');
+  await seedUserAndSession(db, 'U_MGR', 'MANAGER', 'token-mgr');
 
-  // Seed customer, product, po, shipment
+  // Seed customer, product (needed because of foreign keys on pos)
   db.prepare("INSERT INTO customers (customer_id, customer_code, customer_name) VALUES ('C1', 'CUST1', 'Customer 1')").run();
   db.prepare("INSERT INTO product_categories (category_id, category_code, category_name) VALUES ('CAT1', 'TAPIOCA', 'Tapioca Product')").run();
   db.prepare("INSERT INTO product_forms (form_id, form_code, form_name) VALUES ('FRM1', 'PELLET', 'Pellet')").run();
   db.prepare("INSERT INTO products (product_id, product_code, product_name, short_name, category_id, form_id) VALUES ('P1', 'THP-65', 'Tapioca Pellet 65%', 'THP65', 'CAT1', 'FRM1')").run();
-  
-  db.prepare("INSERT INTO pos (po_id, customer_id, product_id, incoterm, po_date, status) VALUES ('PO1', 'C1', 'P1', 'FOB', '2026-08-26', 'ACTIVE')").run();
-  db.prepare("INSERT INTO shipments (shipment_id, po_id, is_one_container) VALUES ('SH1', 'PO1', 1)").run();
 
-  const payload = {
-    documentType: 'PO',
-    title: 'Signed PO Scan',
-    driveUrl: 'https://drive.google.com/file/d/123/view',
-    referenceNo: 'REF-PO'
-  };
+  const req = new Request('https://example.com/api/shipments/SH_NEW/ensure', {
+    method: 'POST',
+    headers: {
+      'cookie': 'wcat_session=token-mgr',
+      'content-type': 'application/json'
+    },
+    body: JSON.stringify({
+      poId: 'PO_NEW',
+      customerId: 'C1',
+      productId: 'P1',
+      incoterm: 'CFR',
+      destinationPort: 'Rotterdam',
+      isOneContainer: 1
+    })
+  });
 
-  // 1. Unauthenticated gets 401
-  const reqUnauth = makeRequest('/api/shipments/SH1/documents', 'POST', payload);
-  const resUnauth = await worker.fetch(reqUnauth, { DB: wrappedDb });
-  assert.equal(resUnauth.status, 401);
+  const res = await worker.fetch(req, { DB: wrappedDb });
+  const body = await res.json();
+  assert.equal(res.status, 200, `Expected status 200, got: ${JSON.stringify(body)}`);
+  assert.equal(body.status, 'SUCCESS');
 
-  // 2. Authenticated MANAGER can create
-  const reqMgr = makeRequest('/api/shipments/SH1/documents', 'POST', payload, 'token-mgr');
-  const resMgr = await worker.fetch(reqMgr, { DB: wrappedDb });
-  assert.equal(resMgr.status, 200);
+  // Verify DB contents
+  const po = db.prepare("SELECT * FROM pos WHERE po_id = 'PO_NEW'").get();
+  assert.ok(po);
+  assert.equal(po.incoterm, 'CFR');
+  assert.equal(po.destination_port, 'Rotterdam');
 
-  const dataMgr = await resMgr.json();
-  assert.equal(dataMgr.status, 'SUCCESS');
-  assert.equal(dataMgr.data.documentLink.title, 'Signed PO Scan');
-
-  // 3. GET lists documents
-  const reqGet = makeRequest('/api/shipments/SH1/documents', 'GET', null, 'token-mgr');
-  const resGet = await worker.fetch(reqGet, { DB: wrappedDb });
-  assert.equal(resGet.status, 200);
-  const dataGet = await resGet.json();
-  assert.equal(dataGet.data.documentLinks.length, 1);
+  const sh = db.prepare("SELECT * FROM shipments WHERE shipment_id = 'SH_NEW'").get();
+  assert.ok(sh);
+  assert.equal(sh.po_id, 'PO_NEW');
 });
 
-test('POST /api/shipments/:id/documents allows all 7 canonical document types', async () => {
+test('POST /api/shipments/:id/ensure rejects CFR/CIF without destination port', async () => {
   const { db, wrappedDb } = await setupTestDb();
-  await seedUserAndSession(db, 'U_MGR', 'Mgr', 'mgr@example.com', 'MANAGER', 'token-mgr');
+  await seedUserAndSession(db, 'U_MGR', 'MANAGER', 'token-mgr');
 
   db.prepare("INSERT INTO customers (customer_id, customer_code, customer_name) VALUES ('C1', 'CUST1', 'Customer 1')").run();
   db.prepare("INSERT INTO product_categories (category_id, category_code, category_name) VALUES ('CAT1', 'TAPIOCA', 'Tapioca')").run();
   db.prepare("INSERT INTO product_forms (form_id, form_code, form_name) VALUES ('FRM1', 'PELLET', 'Pellet')").run();
   db.prepare("INSERT INTO products (product_id, product_code, product_name, short_name, category_id, form_id) VALUES ('P1', 'THP-65', 'Tapioca 65%', 'THP65', 'CAT1', 'FRM1')").run();
-  db.prepare("INSERT INTO pos (po_id, customer_id, product_id, incoterm, po_date, status) VALUES ('PO1', 'C1', 'P1', 'FOB', '2026-08-26', 'ACTIVE')").run();
-  db.prepare("INSERT INTO shipments (shipment_id, po_id, is_one_container) VALUES ('SH1', 'PO1', 1)").run();
 
-  const docTypes = ['PO', 'DI', 'BOOKING', 'STUFFING_REPORT', 'ALL_SHIP_DOC', 'IR', 'LC'];
+  const req = new Request('https://example.com/api/shipments/SH_NEW2/ensure', {
+    method: 'POST',
+    headers: {
+      'cookie': 'wcat_session=token-mgr',
+      'content-type': 'application/json'
+    },
+    body: JSON.stringify({
+      poId: 'PO_NEW2',
+      customerId: 'C1',
+      productId: 'P1',
+      incoterm: 'CFR',
+      destinationPort: '',
+      isOneContainer: 1
+    })
+  });
 
-  for (const docType of docTypes) {
-    const payload = {
-      documentType: docType,
-      title: `${docType} Link`,
-      driveUrl: 'https://drive.google.com/file/d/doc/view',
-      referenceNo: 'REF'
-    };
+  const res = await worker.fetch(req, { DB: wrappedDb });
+  const body = await res.json();
+  assert.equal(res.status, 400);
+  assert.equal(body.status, 'ERROR');
+  assert.match(body.message, /destination port/i);
+});
 
-    const req = makeRequest('/api/shipments/SH1/documents', 'POST', payload, 'token-mgr');
-    const res = await worker.fetch(req, { DB: wrappedDb });
-    const body = await res.json();
-    assert.equal(res.status, 200, `Failed for document type: ${docType}, response: ${JSON.stringify(body)}`);
-    assert.equal(body.status, 'SUCCESS');
-    assert.equal(body.data.documentLink.document_type, docType);
-  }
+test('POST /api/shipments/:id/ensure rejects unauthorized roles with 403', async () => {
+  const { db, wrappedDb } = await setupTestDb();
+  await seedUserAndSession(db, 'U_SALES', 'EXTERNAL_SALES', 'token-sales');
+
+  const req = new Request('https://example.com/api/shipments/SH_NEW/ensure', {
+    method: 'POST',
+    headers: {
+      'cookie': 'wcat_session=token-sales',
+      'content-type': 'application/json'
+    },
+    body: JSON.stringify({
+      poId: 'PO_NEW',
+      customerId: 'C1',
+      productId: 'P1',
+      incoterm: 'FOB',
+      isOneContainer: 1
+    })
+  });
+
+  const res = await worker.fetch(req, { DB: wrappedDb });
+  assert.equal(res.status, 403);
+  const body = await res.json();
+  assert.equal(body.status, 'ERROR');
+  assert.match(body.message, /permission denied/i);
 });

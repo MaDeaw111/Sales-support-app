@@ -36,9 +36,29 @@ export function createShipmentHandler({ repo, resolveUser, db }) {
       return json({ status: 'SUCCESS', data: { categories } });
     }
 
+    // POST /api/expense-categories
+    if (path === '/api/expense-categories' && method === 'POST') {
+      if (!['ADMIN', 'MANAGER'].includes(caller.role)) {
+        return json({ status: 'ERROR', message: 'Permission denied.' }, 403);
+      }
+      const body = await readJson(request);
+      if (!body || typeof body !== 'object' || Array.isArray(body)) {
+        return json({ status: 'ERROR', message: 'Invalid request body.' }, 400);
+      }
+      try {
+        const category = await activeRepo.createExpenseCategory(body);
+        return json({ status: 'SUCCESS', data: { category } });
+      } catch (err) {
+        return json({ status: 'ERROR', message: err.message }, 400);
+      }
+    }
+
     // POST /api/shipments/:id/documents
     const docPostMatch = path.match(/^\/api\/shipments\/([^/]+)\/documents$/);
     if (docPostMatch && method === 'POST') {
+      if (!['ADMIN', 'MANAGER', 'SALES_SUPPORT'].includes(caller.role)) {
+        return json({ status: 'ERROR', message: 'Permission denied.' }, 403);
+      }
       const shipmentId = docPostMatch[1];
       const body = await readJson(request);
       if (!body || typeof body !== 'object' || Array.isArray(body)) {
@@ -67,6 +87,9 @@ export function createShipmentHandler({ repo, resolveUser, db }) {
     // POST /api/shipments/:id/expenses
     const expPostMatch = path.match(/^\/api\/shipments\/([^/]+)\/expenses$/);
     if (expPostMatch && method === 'POST') {
+      if (!['ADMIN', 'MANAGER', 'SALES_SUPPORT'].includes(caller.role)) {
+        return json({ status: 'ERROR', message: 'Permission denied.' }, 403);
+      }
       const shipmentId = expPostMatch[1];
       const body = await readJson(request);
       if (!body || typeof body !== 'object' || Array.isArray(body)) {
@@ -97,6 +120,9 @@ export function createShipmentHandler({ repo, resolveUser, db }) {
     // POST /api/shipments/:id/ensure
     const ensureMatch = path.match(/^\/api\/shipments\/([^/]+)\/ensure$/);
     if (ensureMatch && method === 'POST') {
+      if (!['ADMIN', 'MANAGER', 'SALES_SUPPORT'].includes(caller.role)) {
+        return json({ status: 'ERROR', message: 'Permission denied.' }, 403);
+      }
       const shipmentId = ensureMatch[1];
       const body = await readJson(request);
       if (!body || typeof body !== 'object' || Array.isArray(body)) {
@@ -108,6 +134,8 @@ export function createShipmentHandler({ repo, resolveUser, db }) {
           body.poId,
           body.customerId,
           body.productId,
+          body.incoterm,
+          body.destinationPort,
           body.isOneContainer === 0 ? 0 : 1
         );
         return json({ status: 'SUCCESS', data: { shipment } });
@@ -119,6 +147,9 @@ export function createShipmentHandler({ repo, resolveUser, db }) {
     // PUT /api/shipments/:id
     const putMatch = path.match(/^\/api\/shipments\/([^/]+)$/);
     if (putMatch && method === 'PUT') {
+      if (!['ADMIN', 'MANAGER', 'SALES_SUPPORT'].includes(caller.role)) {
+        return json({ status: 'ERROR', message: 'Permission denied.' }, 403);
+      }
       const shipmentId = putMatch[1];
       const body = await readJson(request);
       if (!body || typeof body !== 'object' || Array.isArray(body)) {

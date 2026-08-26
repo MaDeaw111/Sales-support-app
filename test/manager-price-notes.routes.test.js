@@ -95,7 +95,8 @@ test('POST /api/manager-price-notes: MANAGER can create and SALES_SUPPORT is for
   await seedUserAndSession(db, 'U_SALES', 'Sales', 'sales@example.com', 'EXTERNAL_SALES', 'token-sales');
 
   // Seed references
-  db.prepare("INSERT INTO customers (customer_id, customer_code, customer_name) VALUES ('C1', 'CUST1', 'Customer 1')").run();
+  // Seed references
+  db.prepare("INSERT INTO customers (customer_id, customer_code, customer_name, owner_user_id) VALUES ('C1', 'CUST1', 'Customer 1', 'U_SALES')").run();
   db.prepare("INSERT INTO product_categories (category_id, category_code, category_name) VALUES ('CAT1', 'TAPIOCA', 'Tapioca Product')").run();
   db.prepare("INSERT INTO product_forms (form_id, form_code, form_name) VALUES ('FRM1', 'PELLET', 'Pellet')").run();
   db.prepare("INSERT INTO products (product_id, product_code, product_name, short_name, category_id, form_id) VALUES ('P1', 'THP-65', 'Tapioca Pellet 65%', 'THP65', 'CAT1', 'FRM1')").run();
@@ -129,4 +130,95 @@ test('POST /api/manager-price-notes: MANAGER can create and SALES_SUPPORT is for
   assert.equal(resGet.status, 200);
   const dataGet = await resGet.json();
   assert.equal(dataGet.data.priceNotes.length, 1);
+});
+
+test('POST /api/manager-price-notes validates salesperson role and customer assignment', async () => {
+  const { db, wrappedDb } = await setupTestDb();
+  await seedUserAndSession(db, 'U_MGR', 'Mgr', 'mgr@example.com', 'MANAGER', 'token-mgr');
+  await seedUserAndSession(db, 'U_SALES_A', 'Sales A', 'salesA@example.com', 'EXTERNAL_SALES', 'token-salesA');
+  await seedUserAndSession(db, 'U_SALES_B', 'Sales B', 'salesB@example.com', 'EXTERNAL_SALES', 'token-salesB');
+  await seedUserAndSession(db, 'U_NOT_SALES', 'Not Sales', 'notsales@example.com', 'EXPORT', 'token-export');
+
+  // Seed customers
+  db.prepare("INSERT INTO customers (customer_id, customer_code, customer_name, owner_user_id) VALUES ('C_A', 'CUSTA', 'Customer A', 'U_SALES_A')").run();
+  db.prepare("INSERT INTO customers (customer_id, customer_code, customer_name, owner_user_id) VALUES ('C_B', 'CUSTB', 'Customer B', 'U_SALES_B')").run();
+
+  db.prepare("INSERT INTO product_categories (category_id, category_code, category_name) VALUES ('CAT1', 'TAPIOCA', 'Tapioca Product')").run();
+  db.prepare("INSERT INTO product_forms (form_id, form_code, form_name) VALUES ('FRM1', 'PELLET', 'Pellet')").run();
+  db.prepare("INSERT INTO products (product_id, product_code, product_name, short_name, category_id, form_id) VALUES ('P1', 'THP-65', 'Tapioca Pellet 65%', 'THP65', 'CAT1', 'FRM1')").run();
+
+  // 1. Rejected if salesperson role is invalid
+  const reqInvalidRole = makeRequest('/api/manager-price-notes', 'POST', {
+    salesUserId: 'U_NOT_SALES',
+    customerId: 'C_A',
+    productId: 'P1',
+    incoterm: 'FOB',
+    offerPriceUsdPerMt: 350.0
+  }, 'token-mgr');
+  const resInvalidRole = await worker.fetch(reqInvalidRole, { DB: wrappedDb });
+  assert.equal(resInvalidRole.status, 400);
+  const bodyInvalidRole = await resInvalidRole.json();
+  assert.match(bodyInvalidRole.message, /not a salesperson/i);
+
+  // 2. Rejected if customer is not owned by the salesperson
+  const reqMismatch = makeRequest('/api/manager-price-notes', 'POST', {
+    salesUserId: 'U_SALES_A',
+    customerId: 'C_B', // owned by U_SALES_B
+    productId: 'P1',
+    incoterm: 'FOB',
+    offerPriceUsdPerMt: 350.0
+  }, 'token-mgr');
+  const resMismatch = await worker.fetch(reqMismatch, { DB: wrappedDb });
+  assert.equal(resMismatch.status, 400);
+  const bodyMismatch = await resMismatch.json();
+  assert.match(bodyMismatch.message, /not assigned to this salesperson/i);
+
+  // 3. Allowed if owner matches
+  const reqMatch = makeRequest('/api/manager-price-notes', 'POST', {
+    salesUserId: 'U_SALES_A',
+    customerId: 'C_A',
+    productId: 'P1',
+    incoterm: 'FOB',
+    offerPriceUsdPerMt: 350.0
+  }, 'token-mgr');
+  const resMatch = await worker.fetch(reqMatch, { DB: wrappedDb });
+  assert.equal(resMatch.status, 200);
+});
+
+test('GET /api/manager-price-notes enforces date filters and sales-user visibility', async () => {
+  const { db, wrappedDb } = await setupTestDb();
+  await seedUserAndSession(db, 'U_MGR', 'Mgr', 'mgr@example.com', 'MANAGER', 'token-mgr');
+  await seedUserAndSession(db, 'U_SALES_A', 'Sales A', 'salesA@example.com', 'EXTERNAL_SALES', 'token-salesA');
+  await seedUserAndSession(db, 'U_SALES_B', 'Sales B', 'salesB@example.com', 'EXTERNAL_SALES', 'token-salesB');
+
+  db.prepare("INSERT INTO customers (customer_id, customer_code, customer_name, owner_user_id) VALUES ('C_A', 'CUSTA', 'Customer A', 'U_SALES_A')").run();
+  db.prepare("INSERT INTO customers (customer_id, customer_code, customer_name, owner_user_id) VALUES ('C_B', 'CUSTB', 'Customer B', 'U_SALES_B')").run();
+
+  db.prepare("INSERT INTO product_categories (category_id, category_code, category_name) VALUES ('CAT1', 'TAPIOCA', 'Tapioca Product')").run();
+  db.prepare("INSERT INTO product_forms (form_id, form_code, form_name) VALUES ('FRM1', 'PELLET', 'Pellet')").run();
+  db.prepare("INSERT INTO products (product_id, product_code, product_name, short_name, category_id, form_id) VALUES ('P1', 'THP-65', 'Tapioca Pellet 65%', 'THP65', 'CAT1', 'FRM1')").run();
+
+  // Create notes with custom dates
+  db.prepare(`
+    INSERT INTO manager_price_notes (note_id, sales_user_id, customer_id, product_id, incoterm, offer_price_usd_per_mt, created_by_manager_id, created_at)
+    VALUES ('PN1', 'U_SALES_A', 'C_A', 'P1', 'FOB', 350.0, 'U_MGR', '2026-08-20 10:00:00')
+  `).run();
+  db.prepare(`
+    INSERT INTO manager_price_notes (note_id, sales_user_id, customer_id, product_id, incoterm, offer_price_usd_per_mt, created_by_manager_id, created_at)
+    VALUES ('PN2', 'U_SALES_B', 'C_B', 'P1', 'FOB', 360.0, 'U_MGR', '2026-08-25 10:00:00')
+  `).run();
+
+  // 1. Date range filter
+  const reqDate = makeRequest('/api/manager-price-notes?dateFrom=2026-08-24&dateTo=2026-08-26', 'GET', null, 'token-mgr');
+  const resDate = await worker.fetch(reqDate, { DB: wrappedDb });
+  const bodyDate = await resDate.json();
+  assert.equal(bodyDate.data.priceNotes.length, 1);
+  assert.equal(bodyDate.data.priceNotes[0].id, 'PN2');
+
+  // 2. Sales A visibility (should only see note for Customer A / Sales A)
+  const reqSalesA = makeRequest('/api/manager-price-notes', 'GET', null, 'token-salesA');
+  const resSalesA = await worker.fetch(reqSalesA, { DB: wrappedDb });
+  const bodySalesA = await resSalesA.json();
+  assert.equal(bodySalesA.data.priceNotes.length, 1);
+  assert.equal(bodySalesA.data.priceNotes[0].id, 'PN1');
 });
