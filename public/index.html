@@ -326,6 +326,62 @@
             }
         }
 
+        async function loadProductCategoriesFromApi() {
+            try {
+                const res = await fetch('/api/product-categories');
+                if (!res.ok) return;
+                const body = await res.json();
+                if (body && body.status === 'SUCCESS' && body.data && Array.isArray(body.data.categories)) {
+                    state.productCategories = body.data.categories;
+                    renderView();
+                }
+            } catch (err) {
+                console.error('Failed to load categories:', err);
+            }
+        }
+
+        async function loadProductFormsFromApi() {
+            try {
+                const res = await fetch('/api/product-forms');
+                if (!res.ok) return;
+                const body = await res.json();
+                if (body && body.status === 'SUCCESS' && body.data && Array.isArray(body.data.forms)) {
+                    state.productForms = body.data.forms;
+                    renderView();
+                }
+            } catch (err) {
+                console.error('Failed to load product forms:', err);
+            }
+        }
+
+        async function loadSpecParametersFromApi() {
+            try {
+                const res = await fetch('/api/spec-parameters');
+                if (!res.ok) return;
+                const body = await res.json();
+                if (body && body.status === 'SUCCESS' && body.data && Array.isArray(body.data.parameters)) {
+                    state.specParameters = body.data.parameters;
+                    renderView();
+                }
+            } catch (err) {
+                console.error('Failed to load spec parameters:', err);
+            }
+        }
+
+        async function loadProductsFromApi() {
+            try {
+                const res = await fetch('/api/products');
+                if (!res.ok) return;
+                const body = await res.json();
+                if (body && body.status === 'SUCCESS' && body.data && Array.isArray(body.data.products)) {
+                    state.products = body.data.products;
+                    renderView();
+                }
+            } catch (err) {
+                console.error('Failed to load products:', err);
+            }
+        }
+
         function startAuthenticatedApp() {
             showAuthenticatedShell(true);
             state.selectedCustomerId = null;
@@ -342,6 +398,10 @@
             loadCustomerOwnersFromApi();
             loadExternalSalesFromApi();
             loadUsersFromApi();
+            loadProductCategoriesFromApi();
+            loadProductFormsFromApi();
+            loadSpecParametersFromApi();
+            loadProductsFromApi();
         }
 
         function openChangePasswordModal(forced = false) {
@@ -465,20 +525,10 @@
                     customerTier: 'Tier A', productFocus: 'Sweet Potato Pellet', internalNotes: ''
                 }
             ],
-            products: [
-                { id: 'PRD-001', code: 'PROD-001', name: 'Tapioca Residue Pellet 45% Sand 4%', shortName: 'TRP_45_4', hsCode: '', starchMin: 45, moistureMax: 14, sandSilicaMax: 4, crudeFiberMax: 15.5, crudeProteinMin: null, crudeFatMax: null, ashMax: null },
-                { id: 'PRD-002', code: 'PROD-002', name: 'Organic Tapioca Residue Pellet 48% Sand 3%', shortName: 'OTRP_48_3', hsCode: '', starchMin: 48, moistureMax: 14, sandSilicaMax: 3, crudeFiberMax: 14.5, crudeProteinMin: null, crudeFatMax: null, ashMax: null },
-                { id: 'PRD-003', code: 'PROD-003', name: 'Tapioca Residue Pellet 60% Sand 3%', shortName: 'TRP_60_3', hsCode: '', starchMin: 60, moistureMax: 14, sandSilicaMax: 3, crudeFiberMax: null, crudeProteinMin: null, crudeFatMax: null, ashMax: null },
-                { id: 'PRD-004', code: 'PROD-004', name: 'Tapioca Residue Pellet 60% Sand 1%', shortName: 'TRP_60_1', hsCode: '', starchMin: 60, moistureMax: 14, sandSilicaMax: 1, crudeFiberMax: null, crudeProteinMin: null, crudeFatMax: null, ashMax: null },
-                { id: 'PRD-005', code: 'PROD-005', name: 'Tapioca Hard Pellet 65% Sand 4%', shortName: 'THP_65_4', hsCode: '', starchMin: 65, moistureMax: 14, sandSilicaMax: 4, crudeFiberMax: 5, crudeProteinMin: null, crudeFatMax: null, ashMax: null },
-                { id: 'PRD-006', code: 'PROD-006', name: 'Tapioca Hard Pellet 65% Sand 1%', shortName: 'THP_65_1', hsCode: '', starchMin: 65, moistureMax: 14, sandSilicaMax: 1, crudeFiberMax: 5, crudeProteinMin: null, crudeFatMax: null, ashMax: null },
-                { id: 'PRD-007', code: 'PROD-007', name: 'Tapioca Hard Pellet 68% Sand 3%', shortName: 'THP_68_3', hsCode: '', starchMin: 68, moistureMax: 14, sandSilicaMax: 3, crudeFiberMax: 5, crudeProteinMin: null, crudeFatMax: null, ashMax: null },
-                { id: 'PRD-008', code: 'PROD-008', name: 'Sweet Potato Pellet', shortName: 'SW_P', hsCode: '', starchMin: 55, moistureMax: 14, sandSilicaMax: 3, crudeFiberMax: 5, crudeProteinMin: 4, crudeFatMax: 2, ashMax: 5 },
-                { id: 'PRD-009', code: 'PROD-009', name: 'Pumpkin Pellet', shortName: 'PUM_P', hsCode: '', starchMin: 25, moistureMax: 14, sandSilicaMax: 2, crudeFiberMax: 10, crudeProteinMin: 12.5, crudeFatMax: null, ashMax: null },
-                { id: 'PRD-010', code: 'PROD-010', name: 'Sweet Potato Powder', shortName: 'SW_Pow', hsCode: '', starchMin: 55, moistureMax: 14, sandSilicaMax: 3, crudeFiberMax: 5, crudeProteinMin: 4, crudeFatMax: 2, ashMax: 5 },
-                { id: 'PRD-011', code: 'PROD-011', name: 'Tapioca Residue Powder 62.5%', shortName: 'TR_Pow_62.5_3', hsCode: '', starchMin: 62.5, moistureMax: 14, sandSilicaMax: 3, crudeFiberMax: null, crudeProteinMin: null, crudeFatMax: null, ashMax: null },
-                { id: 'PRD-012', code: 'PROD-012', name: 'Tapioca Residue Powder 60%', shortName: 'TR_Pow_60_3', hsCode: '', starchMin: 60, moistureMax: 14, sandSilicaMax: 3, crudeFiberMax: null, crudeProteinMin: null, crudeFatMax: null, ashMax: null }
-            ],
+            products: [],
+            productCategories: [],
+            productForms: [],
+            specParameters: [],
             // FRONTEND PROTOTYPE ONLY: sales price masters used to suggest PO selling price.
             standardPrices: [
                 { id: 'STD-2026-001', productId: 'PRD-001', fobUsdPerMt: 185, effectiveDate: '2026-08-01', validUntil: '2026-08-31', status: 'ACTIVE' },
@@ -747,6 +797,7 @@
             else if (state.currentView === 'users') renderUsers(main);
             else if (state.currentView === 'external_sales') renderExternalSalesManagement(main);
             else if (state.currentView === 'products') renderProducts(main);
+            else if (state.currentView === 'product_dashboard') renderProductDashboard(main);
             else if (state.currentView === 'pricing') renderPricing(main);
             else if (state.currentView === 'calendar') renderCalendar(main);
             else if (state.currentView === 'logistics_partners') renderLogisticsPartners(main);
@@ -2077,7 +2128,24 @@
 
         function viewCustomerDetail(id) {
             state.selectedCustomerId = id;
+            state.customerProductFilter = null;
+            loadCustomerSpecsForCustomer(id);
             renderView();
+        }
+
+        async function loadCustomerSpecsForCustomer(customerId) {
+            try {
+                const res = await fetch(`/api/customers/${customerId}/specs`);
+                if (res.ok) {
+                    const body = await res.json();
+                    if (body && body.status === 'SUCCESS') {
+                        state.currentCustomerSpecs = body.data.customerSpecs || [];
+                        renderView();
+                    }
+                }
+            } catch (err) {
+                console.error('Failed to load customer specs:', err);
+            }
         }
 
         // --- CUSTOMER DETAIL ---
@@ -2208,6 +2276,63 @@
                             <div class="bg-white rounded-xl border border-amber-200 p-4 shadow-sm"><div class="text-[10px] uppercase font-bold text-amber-600">Remaining</div><div class="text-lg font-black text-amber-700 mt-1">${formatMT(totalRemainingQty)}</div></div>
                             <div class="bg-white rounded-xl border border-blue-200 p-4 shadow-sm"><div class="text-[10px] uppercase font-bold text-blue-600">Open DI</div><div class="text-2xl font-black text-blue-700 mt-1">${openDI}</div><div class="text-[10px] text-slate-400">Active delivery plans</div></div>
                         </div>
+                    </div>
+
+                    <!-- Customer Specifications (สเปกเฉพาะลูกค้า) -->
+                    <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+                        <div class="p-4 bg-slate-50 border-b border-slate-200 flex items-center justify-between">
+                            <div>
+                                <h3 class="text-sm font-black text-slate-900">Customer Specs (ข้อกำหนดคุณภาพเฉพาะลูกค้า)</h3>
+                                <p class="text-[11px] text-slate-500">สเปกที่ปรับแต่งเพิ่มเติมโดยอ้างอิงจากสเปกมาตรฐาน</p>
+                            </div>
+                            ${['ADMIN', 'MANAGER', 'SALES_SUPPORT'].includes(state.currentUser.role) ? `
+                                <button onclick="openCreateCustomerSpecModal('${c.id}')" class="bg-blue-600 hover:bg-blue-700 text-white px-3 py-1.5 rounded-lg text-xs font-semibold shadow-sm flex items-center space-x-1">
+                                    <span>สร้างสเปกแบบร่าง</span>
+                                </button>
+                            ` : ''}
+                        </div>
+                        ${state.currentCustomerSpecs && state.currentCustomerSpecs.length > 0 ? `
+                            <table class="ui-table w-full text-left text-xs">
+                                <thead class="bg-slate-100 text-[10px] uppercase text-slate-500">
+                                    <tr>
+                                        <th class="p-3">สินค้า / เกรดการใช้งาน</th>
+                                        <th class="p-3">สเปกมาตรฐานอ้างอิง</th>
+                                        <th class="p-3 text-center">ฉบับปรับปรุง (Revision)</th>
+                                        <th class="p-3 text-center">สถานะ</th>
+                                        <th class="p-3">วันที่มีผลบังคับใช้</th>
+                                        <th class="p-3 text-right">การจัดการ</th>
+                                    </tr>
+                                </thead>
+                                <tbody class="divide-y divide-slate-200">
+                                    ${state.currentCustomerSpecs.map(spec => {
+                                        const p = (state.products || []).find(x => x.id === spec.productId) || {};
+                                        return `
+                                            <tr class="hover:bg-slate-50">
+                                                <td class="p-3">
+                                                    <span class="font-bold text-slate-900">${p.code || spec.productId}</span>
+                                                    <div class="text-[10px] text-slate-500">${p.name || ''} (${spec.application})</div>
+                                                </td>
+                                                <td class="p-3 font-mono text-[11px] text-slate-600">${spec.baseStandardSpecId}</td>
+                                                <td class="p-3 text-center font-semibold">Rev.${spec.revisionNo}</td>
+                                                <td class="p-3 text-center">
+                                                    <span class="px-2 py-0.5 rounded text-[10px] font-bold ${
+                                                        spec.status === 'ACTIVE' ? 'bg-emerald-100 text-emerald-800' :
+                                                        spec.status === 'DRAFT' ? 'bg-amber-100 text-amber-800' :
+                                                        'bg-slate-100 text-slate-600'
+                                                    }">${spec.status}</span>
+                                                </td>
+                                                <td class="p-3 text-slate-600">${spec.effectiveDate || '-'}</td>
+                                                <td class="p-3 text-right">
+                                                    <button onclick="viewCustomerSpecDetails('${spec.id}')" class="text-blue-600 font-bold hover:underline">ดูรายละเอียด</button>
+                                                </td>
+                                            </tr>
+                                        `;
+                                    }).join('')}
+                                </tbody>
+                            </table>
+                        ` : `
+                            <div class="p-8 text-center text-slate-400 text-xs">ยังไม่มีข้อมูลสเปกเฉพาะรายลูกค้านี้</div>
+                        `}
                     </div>
 
                     <!-- Product Breakdown -->
@@ -5275,37 +5400,1109 @@
 
         // --- PRODUCTS ---
         function renderProducts(container) {
+            const isAdminOrManager = ['ADMIN', 'MANAGER'].includes(state.currentUser.role);
             container.innerHTML = `
                 <div class="flex justify-between items-center mb-6">
                     <div>
-                        <h2 class="text-xl font-bold text-slate-900">สินค้า & สเปกที่อนุมัติ</h2>
-                        <p class="text-xs text-slate-500">รวมข้อมูลสินค้าและสเปกคุณภาพเคมีไว้ในตารางเดียว</p>
+                        <h2 class="text-xl font-bold text-slate-900">สินค้า & ข้อกำหนดคุณภาพ (Product & Spec Master)</h2>
+                        <p class="text-xs text-slate-500">จัดการข้อมูลรายละเอียดสินค้า ข้อมูลหมวดหมู่ รูปแบบ และเกณฑ์สเปกคุณภาพเคมี</p>
                     </div>
+                    ${isAdminOrManager ? `
+                        <button onclick="openAddProductModal()" class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-xs font-semibold shadow-sm flex items-center space-x-1">
+                            <i data-lucide="plus" class="w-4 h-4"></i><span>เพิ่มสินค้าใหม่</span>
+                        </button>
+                    ` : ''}
                 </div>
                 <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                    ${state.products.map(p => `
-                        <div class="bg-white rounded-xl border border-slate-200 shadow-sm p-4 space-y-3 hover:shadow-md transition-shadow flex flex-col justify-between">
-                            <div class="space-y-3">
-                                <div>
-                                    <span class="text-[10px] font-mono bg-blue-50 text-blue-700 font-bold px-2 py-0.5 rounded border border-blue-200">${p.code}</span>
-                                    <h3 class="text-sm font-bold text-slate-900 mt-1 leading-snug">${p.name}</h3>
-                                    <div class="text-[11px] text-slate-500 font-medium">Tag / Short Name: <span class="font-bold text-slate-700">${p.shortName}</span></div>
-                                </div>
-                                <div class="bg-slate-50 p-2.5 rounded-lg border border-slate-200/80 text-xs space-y-1">
-                                    <div class="font-bold text-blue-600 text-[11px] mb-1">เกณฑ์สเปกอนุมัติ (HS: ${p.hsCode})</div>
-                                    <div class="grid grid-cols-2 gap-x-2 gap-y-1 text-[11px] text-slate-600">
-                                        ${p.starchMin != null ? `<div>Starch: <span class="font-bold text-slate-900">Min ${p.starchMin}%</span></div>` : ''}
-                                        ${p.moistureMax != null ? `<div>Moisture: <span class="font-bold text-slate-900">Max ${p.moistureMax}%</span></div>` : ''}
-                                        ${p.sandSilicaMax != null ? `<div>Sand/Silica: <span class="font-bold text-slate-900">Max ${p.sandSilicaMax}%</span></div>` : ''}
-                                        ${p.crudeFiberMax != null ? `<div>Fiber: <span class="font-bold text-slate-900">Max ${p.crudeFiberMax}%</span></div>` : ''}
-                                        ${p.crudeProteinMin != null ? `<div>Protein: <span class="font-bold text-slate-900">Min ${p.crudeProteinMin}%</span></div>` : ''}
+                    ${state.products && state.products.length > 0 ? state.products.map(p => {
+                        const cat = (state.productCategories || []).find(c => c.id === p.categoryId) || {};
+                        const frm = (state.productForms || []).find(f => f.id === p.formId) || {};
+                        return `
+                            <div class="bg-white rounded-xl border border-slate-200 shadow-sm p-4 space-y-3 hover:shadow-md transition-shadow flex flex-col justify-between cursor-pointer" onclick="openProductDashboard('${p.id}')">
+                                <div class="space-y-3">
+                                    <div class="flex justify-between items-start">
+                                        <div>
+                                            <span class="text-[10px] font-mono bg-blue-50 text-blue-700 font-bold px-2 py-0.5 rounded border border-blue-200">${p.code}</span>
+                                            <h3 class="text-sm font-bold text-slate-900 mt-1 leading-snug hover:text-blue-600">${p.name}</h3>
+                                            <div class="text-[10px] text-slate-500 font-medium mt-0.5">Short Name: <span class="font-bold text-slate-700">${p.shortName}</span></div>
+                                        </div>
+                                        <div class="flex flex-col gap-1 items-end">
+                                            ${p.status === 'ACTIVE' ? '<span class="bg-emerald-100 text-emerald-800 text-[9px] font-bold px-1.5 py-0.5 rounded">ACTIVE</span>' : '<span class="bg-slate-100 text-slate-600 text-[9px] font-bold px-1.5 py-0.5 rounded">INACTIVE</span>'}
+                                        </div>
                                     </div>
+                                    <div class="bg-slate-50 p-2.5 rounded-lg border border-slate-200/80 text-[11px] space-y-1.5">
+                                        <div>หมวดหมู่: <strong class="text-slate-800">${cat.name || p.categoryId}</strong></div>
+                                        <div>รูปแบบสินค้า: <strong class="text-slate-800">${frm.name || p.formId}</strong></div>
+                                        <div>พิกัดศุลกากร (HS): <strong class="text-slate-800">${p.hsCode || '-'}</strong></div>
+                                        <div class="flex flex-wrap gap-1 mt-1.5">
+                                            ${(p.applications || []).map(app => `<span class="bg-slate-200 text-slate-700 text-[9px] px-1 rounded">${app}</span>`).join('')}
+                                        </div>
+                                    </div>
+                                </div>
+                                ${isAdminOrManager ? `
+                                    <div class="pt-2 border-t flex justify-end">
+                                        <button onclick="event.stopPropagation(); openAddProductModal('${p.id}')" class="text-xs font-bold text-blue-600 hover:underline">แก้ไขสินค้า</button>
+                                    </div>
+                                ` : ''}
+                            </div>
+                        `;
+                    }).join('') : `
+                        <div class="col-span-full bg-slate-50 rounded-xl border-2 border-dashed p-8 text-center text-slate-400 text-sm">
+                            ไม่พบข้อมูลสินค้าที่ลงทะเบียนไว้ในระบบ
+                        </div>
+                    `}
+                </div>
+            `;
+            lucide.createIcons();
+        }
+
+        function openProductDashboard(productId, activeApp = null) {
+            state.selectedProductId = productId;
+            const p = state.products.find(x => x.id === productId);
+            if (!p) return;
+            const app = activeApp || p.applications[0] || 'FEED_GRADE';
+            state.currentView = 'product_dashboard';
+            state.selectedProductApp = app;
+            loadStandardSpecsForProduct(productId, app);
+        }
+
+        async function loadStandardSpecsForProduct(productId, application) {
+            try {
+                const res = await fetch(`/api/products/${productId}/standard-specs?application=${application}`);
+                if (res.ok) {
+                    const body = await res.json();
+                    if (body && body.status === 'SUCCESS') {
+                        state.currentStandardSpecs = body.data.standardSpecs || [];
+                        renderView();
+                    }
+                }
+            } catch (err) {
+                console.error('Failed to load standard specs:', err);
+            }
+        }
+
+        function renderProductDashboard(container) {
+            const p = state.products.find(x => x.id === state.selectedProductId);
+            if (!p) { changeView('products'); return; }
+
+            const cat = (state.productCategories || []).find(c => c.id === p.categoryId) || {};
+            const frm = (state.productForms || []).find(f => f.id === p.formId) || {};
+            const activeApp = state.selectedProductApp || 'FEED_GRADE';
+            const standardSpecs = state.currentStandardSpecs || [];
+            
+            // Find active spec
+            const activeSpec = standardSpecs.find(s => s.status === 'ACTIVE');
+            const draftSpecs = standardSpecs.filter(s => s.status === 'DRAFT');
+            const archivedSpecs = standardSpecs.filter(s => s.status === 'ARCHIVED');
+
+            const isAllowedToEdit = ['ADMIN', 'MANAGER', 'SALES_SUPPORT'].includes(state.currentUser.role);
+            const isAdminOrManager = ['ADMIN', 'MANAGER'].includes(state.currentUser.role);
+
+            container.innerHTML = `
+                <div class="space-y-6">
+                    <div class="flex items-center justify-between">
+                        <button onclick="changeView('products')" class="flex items-center space-x-2 text-xs font-bold text-slate-600 hover:text-slate-900 bg-white px-3 py-2 rounded-lg border border-slate-200 shadow-sm">
+                            <i data-lucide="arrow-left" class="w-4 h-4"></i><span>กลับไปหน้ารายการสินค้า</span>
+                        </button>
+                        ${isAdminOrManager ? `
+                            <button onclick="openAddProductModal('${p.id}')" class="bg-amber-600 hover:bg-amber-700 text-white px-4 py-2 rounded-lg text-xs font-semibold flex items-center space-x-1.5 shadow-sm">
+                                <i data-lucide="edit-3" class="w-4 h-4"></i><span>แก้ไขรายละเอียดสินค้า</span>
+                            </button>
+                        ` : ''}
+                    </div>
+
+                    <!-- PRODUCT HEADER -->
+                    <div class="bg-white rounded-xl border border-slate-200 p-6 shadow-sm flex flex-col lg:flex-row justify-between lg:items-center gap-4">
+                        <div>
+                            <div class="flex items-center flex-wrap gap-2">
+                                <h1 class="text-2xl font-black text-slate-900">${p.name}</h1>
+                                <span class="bg-blue-50 text-blue-700 font-mono text-xs font-bold px-2.5 py-1 rounded border border-blue-200">${p.code}</span>
+                                <span class="px-2.5 py-1 rounded text-xs font-bold ${p.status === 'ACTIVE' ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-100 text-slate-600'}">${p.status}</span>
+                            </div>
+                            <p class="text-xs text-slate-500 mt-2">หมวดหมู่: <strong class="text-slate-700">${cat.name || p.categoryId}</strong> <span class="mx-2 text-slate-300">|</span> รูปแบบ: <strong class="text-slate-700">${frm.name || p.formId}</strong> <span class="mx-2 text-slate-300">|</span> พิกัด HS: <strong class="text-slate-700">${p.hsCode || '-'}</strong> <span class="mx-2 text-slate-300">|</span> หน่วยตั้งต้น: <strong class="text-slate-700">${p.defaultUnit || '-'}</strong></p>
+                        </div>
+                    </div>
+
+                    <!-- APPLICATION TABS -->
+                    <div class="border-b border-slate-200">
+                        <nav class="flex space-x-4">
+                            ${(p.applications || []).map(app => `
+                                <button onclick="openProductDashboard('${p.id}', '${app}')" class="pb-4 px-1 border-b-2 font-bold text-sm ${app === activeApp ? 'border-blue-600 text-blue-600' : 'border-transparent text-slate-500 hover:text-slate-700 hover:border-slate-300'}">
+                                    ${app}
+                                </button>
+                            `).join('')}
+                        </nav>
+                    </div>
+
+                    <!-- SPECS CONTENT FOR SELECTED APP -->
+                    <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                        <!-- Standard Spec Active Revision -->
+                        <div class="lg:col-span-2 space-y-6">
+                            <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+                                <div class="p-4 bg-slate-50 border-b border-slate-200 flex justify-between items-center">
+                                    <div>
+                                        <h3 class="text-sm font-black text-slate-900">เกณฑ์สเปกคุณภาพเคมีปัจจุบัน (Active Specification)</h3>
+                                        <p class="text-[11px] text-slate-500">สเปกมาตรฐานปัจจุบันสำหรับ ${activeApp}</p>
+                                    </div>
+                                    ${activeSpec ? `
+                                        <span class="bg-emerald-100 text-emerald-800 text-[10px] font-bold px-2 py-0.5 rounded border border-emerald-200">Rev.${activeSpec.revisionNo} ACTIVE</span>
+                                    ` : `
+                                        <span class="bg-amber-100 text-amber-800 text-[10px] font-bold px-2 py-0.5 rounded border border-amber-200">ไม่มีข้อมูล</span>
+                                    `}
+                                </div>
+                                <div class="p-4">
+                                    ${activeSpec && activeSpec.items.length > 0 ? `
+                                        <table class="ui-table w-full text-left text-xs">
+                                            <thead class="bg-slate-100 text-slate-600 uppercase text-[10px]">
+                                                <tr>
+                                                    <th class="p-2">พารามิเตอร์</th>
+                                                    <th class="p-2">เงื่อนไข / เกณฑ์</th>
+                                                    <th class="p-2">หน่วย</th>
+                                                    <th class="p-2">หมายเหตุ</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody class="divide-y">
+                                                ${activeSpec.items.map(item => `
+                                                    <tr>
+                                                        <td class="p-2 font-bold text-slate-800">${item.parameterName} (${item.parameterCode})</td>
+                                                        <td class="p-2">
+                                                            ${item.operator === 'MIN' ? `Min ${item.numericValue}` : ''}
+                                                            ${item.operator === 'MAX' ? `Max ${item.numericValue}` : ''}
+                                                            ${item.operator === 'EXACT' ? `Exact ${item.numericValue}` : ''}
+                                                            ${item.operator === 'RANGE' ? `${item.numericValue} - ${item.numericValueTo}` : ''}
+                                                            ${item.operator === 'TEXT' ? `${item.textValue}` : ''}
+                                                        </td>
+                                                        <td class="p-2 text-slate-600">${item.unit || '-'}</td>
+                                                        <td class="p-2 text-slate-500">${item.notes || '-'}</td>
+                                                    </tr>
+                                                `).join('')}
+                                            </tbody>
+                                        </table>
+                                        ${isAdminOrManager ? `
+                                            <div class="mt-4 flex justify-end">
+                                                <button onclick="archiveStandardSpec('${activeSpec.id}')" class="text-xs text-rose-600 hover:text-rose-700 font-bold">Archive Spec</button>
+                                            </div>
+                                        ` : ''}
+                                    ` : `
+                                        <p class="text-xs text-slate-400 text-center py-6">ไม่มีรายการเกณฑ์คุณภาพที่ใช้งานอยู่</p>
+                                    `}
                                 </div>
                             </div>
                         </div>
-                    `).join('')}
+
+                        <!-- Specification Versions & Actions -->
+                        <div class="space-y-6">
+                            <div class="bg-white rounded-xl border border-slate-200 p-5 shadow-sm space-y-4">
+                                <h3 class="font-bold text-slate-900 border-b pb-2 flex items-center gap-2">
+                                    <i data-lucide="history" class="w-4 h-4 text-blue-600"></i>Revisions
+                                </h3>
+                                ${isAllowedToEdit ? `
+                                    <button onclick="createStandardSpecDraft('${p.id}', '${activeApp}')" class="w-full bg-blue-600 hover:bg-blue-700 text-white py-2 rounded-lg text-xs font-semibold shadow-sm">
+                                        สร้างแบบร่างสเปกใหม่ (Create Draft)
+                                    </button>
+                                ` : ''}
+
+                                <div class="space-y-2">
+                                    <div class="text-[10px] font-bold text-slate-400 uppercase">แบบร่าง (Draft)</div>
+                                    ${draftSpecs.length > 0 ? draftSpecs.map(draft => `
+                                        <div class="p-3 bg-amber-50/50 rounded-lg border border-amber-200 space-y-2">
+                                            <div class="flex justify-between items-center">
+                                                <span class="font-bold text-slate-900">Rev.${draft.revisionNo}</span>
+                                                <span class="bg-amber-100 text-amber-800 text-[9px] font-bold px-1.5 py-0.5 rounded">DRAFT</span>
+                                            </div>
+                                            <div class="text-[10px] text-slate-500">Effective: ${draft.effectiveDate || '-'}</div>
+                                            <div class="flex gap-2">
+                                                <button onclick="openEditStandardSpecItemsModal('${draft.id}')" class="text-[10px] text-blue-600 font-bold hover:underline">แก้ไขเกณฑ์</button>
+                                                ${isAdminOrManager ? `
+                                                    <button onclick="activateStandardSpec('${draft.id}')" class="text-[10px] text-emerald-600 font-bold hover:underline">เปลี่ยนเป็น Active</button>
+                                                ` : ''}
+                                            </div>
+                                        </div>
+                                    `).join('') : '<div class="text-xs text-slate-400 text-center py-2">ไม่มีแบบร่างค้างไว้</div>'}
+                                </div>
+
+                                <div class="space-y-2">
+                                    <div class="text-[10px] font-bold text-slate-400 uppercase">ประวัติ (Archived)</div>
+                                    ${archivedSpecs.length > 0 ? archivedSpecs.map(arc => `
+                                        <div class="p-2.5 bg-slate-50 rounded-lg border border-slate-200 text-xs flex justify-between items-center">
+                                            <div>
+                                                <div class="font-bold text-slate-700">Rev.${arc.revisionNo}</div>
+                                                <div class="text-[9px] text-slate-400">Effective: ${arc.effectiveDate || '-'}</div>
+                                            </div>
+                                            <button onclick="viewArchivedSpecDetails('${arc.id}')" class="text-[10px] text-blue-600 hover:underline">ดูข้อมูล</button>
+                                        </div>
+                                    `).join('') : '<div class="text-xs text-slate-400 text-center py-1">ไม่มีประวัติสเปกเดิม</div>'}
+                                </div>
+                            </div>
+                        </div>
+                    </div>
                 </div>
             `;
+            lucide.createIcons();
+        }
+
+        async function createStandardSpecDraft(productId, application) {
+            const effectiveDate = new Date().toISOString().slice(0, 10);
+            try {
+                const res = await fetch('/api/standard-specs', {
+                    method: 'POST',
+                    headers: { 'content-type': 'application/json' },
+                    body: JSON.stringify({ productId, application, effectiveDate, notes: 'Created from frontend' })
+                });
+                const body = await res.json();
+                if (body && body.status === 'SUCCESS') {
+                    openProductDashboard(productId, application);
+                } else {
+                    alert('Failed to create draft: ' + body.message);
+                }
+            } catch (err) {
+                alert('Request failed: ' + err.message);
+            }
+        }
+
+        async function activateStandardSpec(specId) {
+            if (!confirm('ยืนยันเปิดใช้งานสเปกนี้ (จะจัดเก็บรุ่นก่อนหน้าเป็น Archived อัตโนมัติ)?')) return;
+            try {
+                const res = await fetch(`/api/standard-specs/${specId}/activate`, { method: 'POST' });
+                const body = await res.json();
+                if (body && body.status === 'SUCCESS') {
+                    openProductDashboard(state.selectedProductId, state.selectedProductApp);
+                } else {
+                    alert('Activation failed: ' + body.message);
+                }
+            } catch (err) {
+                alert('Request failed: ' + err.message);
+            }
+        }
+
+        async function archiveStandardSpec(specId) {
+            if (!confirm('ยืนยันการยกเลิกการใช้งานสเปกนี้ (Archive)?')) return;
+            try {
+                const res = await fetch(`/api/standard-specs/${specId}/archive`, { method: 'POST' });
+                const body = await res.json();
+                if (body && body.status === 'SUCCESS') {
+                    openProductDashboard(state.selectedProductId, state.selectedProductApp);
+                } else {
+                    alert('Archive failed: ' + body.message);
+                }
+            } catch (err) {
+                alert('Request failed: ' + err.message);
+            }
+        }
+
+        function openAddProductModal(productId = null) {
+            const p = productId ? state.products.find(x => x.id === productId) : null;
+            const title = p ? 'แก้ไขข้อมูลสินค้า' : 'เพิ่มสินค้าใหม่';
+            
+            const categoriesHtml = (state.productCategories || []).map(c => `
+                <option value="${c.id}" ${p && p.categoryId === c.id ? 'selected' : ''}>${c.name} (${c.code})</option>
+            `).join('');
+            const formsHtml = (state.productForms || []).map(f => `
+                <option value="${f.id}" ${p && p.formId === f.id ? 'selected' : ''}>${f.name} (${f.code})</option>
+            `).join('');
+
+            const appFeedChecked = p && p.applications.includes('FEED_GRADE') ? 'checked' : '';
+            const appPetChecked = p && p.applications.includes('PET_GRADE') ? 'checked' : '';
+
+            openModal(`
+                <div class="space-y-4">
+                    <div>
+                        <div class="text-[10px] font-black uppercase tracking-wider text-blue-600">Product Profile</div>
+                        <h3 class="text-lg font-black text-slate-900">${title}</h3>
+                    </div>
+                    
+                    <div class="grid grid-cols-2 gap-4">
+                        <label class="text-xs font-bold text-slate-600 block">
+                            รหัสสินค้า (Product Code) *
+                            <input id="prodCode" type="text" class="ui-input mt-1" value="${p ? p.code : ''}" ${p ? 'disabled' : ''}>
+                        </label>
+                        <label class="text-xs font-bold text-slate-600 block">
+                            ชื่อสินค้า (Product Name) *
+                            <input id="prodName" type="text" class="ui-input mt-1" value="${p ? p.name : ''}">
+                        </label>
+                    </div>
+
+                    <div class="grid grid-cols-2 gap-4">
+                        <label class="text-xs font-bold text-slate-600 block">
+                            ชื่อย่อ/แท็ก (Short Name) *
+                            <input id="prodShortName" type="text" class="ui-input mt-1" value="${p ? p.shortName : ''}">
+                        </label>
+                        <label class="text-xs font-bold text-slate-600 block">
+                            พิกัดศุลกากร (HS Code)
+                            <input id="prodHsCode" type="text" class="ui-input mt-1" value="${p ? p.hsCode || '' : ''}">
+                        </label>
+                    </div>
+
+                    <div class="grid grid-cols-2 gap-4">
+                        <label class="text-xs font-bold text-slate-600 block">
+                            หมวดสินค้า (Category) *
+                            <select id="prodCategoryId" class="ui-input mt-1">${categoriesHtml}</select>
+                        </label>
+                        <label class="text-xs font-bold text-slate-600 block">
+                            รูปแบบสินค้า (Product Form) *
+                            <select id="prodFormId" class="ui-input mt-1">${formsHtml}</select>
+                        </label>
+                    </div>
+
+                    <div class="grid grid-cols-2 gap-4">
+                        <label class="text-xs font-bold text-slate-600 block">
+                            หน่วยเริ่มต้น (Default Unit) *
+                            <input id="prodDefaultUnit" type="text" class="ui-input mt-1" value="${p ? p.defaultUnit || 'MT' : 'MT'}">
+                        </label>
+                        <label class="text-xs font-bold text-slate-600 block">
+                            สถานะ (Status) *
+                            <select id="prodStatus" class="ui-input mt-1">
+                                <option value="ACTIVE" ${p && p.status === 'ACTIVE' ? 'selected' : ''}>ACTIVE</option>
+                                <option value="INACTIVE" ${p && p.status === 'INACTIVE' ? 'selected' : ''}>INACTIVE</option>
+                            </select>
+                        </label>
+                    </div>
+
+                    <div class="space-y-1.5">
+                        <div class="text-xs font-bold text-slate-600">เกรดการใช้งานที่อนุญาต (Applications) *</div>
+                        <div class="flex gap-4">
+                            <label class="inline-flex items-center space-x-2 text-xs text-slate-700">
+                                <input type="checkbox" id="prodAppFeed" value="FEED_GRADE" ${appFeedChecked}>
+                                <span>FEED_GRADE</span>
+                            </label>
+                            <label class="inline-flex items-center space-x-2 text-xs text-slate-700">
+                                <input type="checkbox" id="prodAppPet" value="PET_GRADE" ${appPetChecked}>
+                                <span>PET_GRADE</span>
+                            </label>
+                        </div>
+                    </div>
+
+                    <div id="productFormError" class="hidden rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-bold text-rose-700"></div>
+
+                    <div class="flex justify-end gap-2">
+                        <button onclick="closeModal()" class="ui-btn ui-btn-secondary">Cancel</button>
+                        <button onclick="saveProduct(${p ? `'${p.id}'` : 'null'})" class="ui-btn ui-btn-primary">Save Product</button>
+                    </div>
+                </div>
+            `);
+        }
+
+        async function saveProduct(productId = null) {
+            const errDiv = document.getElementById('productFormError');
+            if (errDiv) errDiv.classList.add('hidden');
+
+            const code = document.getElementById('prodCode')?.value || '';
+            const name = document.getElementById('prodName')?.value || '';
+            const shortName = document.getElementById('prodShortName')?.value || '';
+            const hsCode = document.getElementById('prodHsCode')?.value || '';
+            const categoryId = document.getElementById('prodCategoryId')?.value || '';
+            const formId = document.getElementById('prodFormId')?.value || '';
+            const defaultUnit = document.getElementById('prodDefaultUnit')?.value || 'MT';
+            const status = document.getElementById('prodStatus')?.value || 'ACTIVE';
+
+            const apps = [];
+            if (document.getElementById('prodAppFeed')?.checked) apps.push('FEED_GRADE');
+            if (document.getElementById('prodAppPet')?.checked) apps.push('PET_GRADE');
+
+            if (!code || !name || !shortName || !categoryId || !formId || apps.length === 0) {
+                if (errDiv) {
+                    errDiv.innerText = 'กรุณากรอกข้อมูลที่จำเป็นทั้งหมด รวมถึงเลือกอย่างน้อย 1 Application';
+                    errDiv.classList.remove('hidden');
+                }
+                return;
+            }
+
+            const payload = { code, name, shortName, hsCode, categoryId, formId, defaultUnit, status, applications: apps };
+            const url = productId ? `/api/products/${productId}` : '/api/products';
+            const method = productId ? 'PUT' : 'POST';
+
+            try {
+                const res = await fetch(url, {
+                    method,
+                    headers: { 'content-type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+                const body = await res.json();
+                if (body && body.status === 'SUCCESS') {
+                    closeModal();
+                    await loadProductsFromApi();
+                    if (state.currentView === 'product_dashboard' && productId) {
+                        openProductDashboard(productId);
+                    } else {
+                        changeView('products');
+                    }
+                } else {
+                    if (errDiv) {
+                        errDiv.innerText = 'บันทึกล้มเหลว: ' + body.message;
+                        errDiv.classList.remove('hidden');
+                    }
+                }
+            } catch (err) {
+                if (errDiv) {
+                    errDiv.innerText = 'Error: ' + err.message;
+                    errDiv.classList.remove('hidden');
+                }
+            }
+        }
+
+        async function openEditStandardSpecItemsModal(specId) {
+            try {
+                const res = await fetch(`/api/standard-specs/${specId}`);
+                if (!res.ok) throw new Error('Failed to load standard spec details.');
+                const body = await res.json();
+                if (body.status !== 'SUCCESS') throw new Error(body.message);
+                const spec = body.data.standardSpec;
+
+                const itemsMap = new Map(spec.items.map(item => [item.parameterId, item]));
+
+                const tableRows = (state.specParameters || []).map(p => {
+                    const matched = itemsMap.get(p.id);
+                    const isChecked = matched ? 'checked' : '';
+                    const op = matched ? matched.operator : 'MIN';
+                    const numVal = matched && matched.numericValue != null ? matched.numericValue : '';
+                    const numValTo = matched && matched.numericValueTo != null ? matched.numericValueTo : '';
+                    const txtVal = matched && matched.textValue != null ? matched.textValue : '';
+                    const unit = matched ? matched.unit : p.defaultUnit || '';
+                    const notes = matched ? matched.notes : '';
+
+                    return `
+                        <tr class="align-middle border-b">
+                            <td class="p-2">
+                                <input type="checkbox" class="param-row-checkbox" data-param-id="${p.id}" ${isChecked}>
+                            </td>
+                            <td class="p-2 font-bold text-slate-800">${p.name} (${p.code})</td>
+                            <td class="p-2 text-slate-500">${p.dataType}</td>
+                            <td class="p-2">
+                                <select class="ui-input p-1 select-operator" style="height:32px;">
+                                    <option value="MIN" ${op === 'MIN' ? 'selected' : ''}>MIN</option>
+                                    <option value="MAX" ${op === 'MAX' ? 'selected' : ''}>MAX</option>
+                                    <option value="EXACT" ${op === 'EXACT' ? 'selected' : ''}>EXACT</option>
+                                    <option value="RANGE" ${op === 'RANGE' ? 'selected' : ''}>RANGE</option>
+                                    <option value="TEXT" ${op === 'TEXT' ? 'selected' : ''}>TEXT</option>
+                                </select>
+                            </td>
+                            <td class="p-2">
+                                <input type="number" class="ui-input p-1 input-num" style="height:32px; width:70px;" value="${numVal}" placeholder="Val">
+                                <input type="number" class="ui-input p-1 input-num-to" style="height:32px; width:70px; display:${op === 'RANGE' ? 'inline-block' : 'none'}" value="${numValTo}" placeholder="To">
+                                <input type="text" class="ui-input p-1 input-txt" style="height:32px; width:120px; display:${op === 'TEXT' ? 'inline-block' : 'none'}" value="${txtVal}" placeholder="Text">
+                            </td>
+                            <td class="p-2">
+                                <input type="text" class="ui-input p-1 input-unit" style="height:32px; width:60px;" value="${unit}">
+                            </td>
+                            <td class="p-2">
+                                <input type="text" class="ui-input p-1 input-notes" style="height:32px;" value="${notes}">
+                            </td>
+                        </tr>
+                    `;
+                }).join('');
+
+                openModal(`
+                    <div class="space-y-4 max-w-4xl" style="max-height:85vh; overflow-y:auto;">
+                        <div>
+                            <div class="text-[10px] font-black uppercase tracking-wider text-blue-600">Standard Specification</div>
+                            <h3 class="text-lg font-black text-slate-900">แก้ไขเกณฑ์รายการสเปกมาตรฐาน</h3>
+                            <p class="text-xs text-slate-500">เลือกพารามิเตอร์ที่คุณต้องการเปิดใช้งานและกำหนดเงื่อนไขคุณภาพ</p>
+                        </div>
+
+                        <div class="overflow-x-auto">
+                            <table class="w-full text-xs text-left">
+                                <thead class="bg-slate-100 uppercase text-[10px]">
+                                    <tr>
+                                        <th class="p-2">เลือก</th>
+                                        <th class="p-2">รายการ</th>
+                                        <th class="p-2">ประเภท</th>
+                                        <th class="p-2">เงื่อนไข</th>
+                                        <th class="p-2">ค่ากำหนด</th>
+                                        <th class="p-2">หน่วย</th>
+                                        <th class="p-2">หมายเหตุ</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="specItemsTableBody">
+                                    ${tableRows}
+                                </tbody>
+                            </table>
+                        </div>
+
+                        <div id="specItemsFormError" class="hidden rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-bold text-rose-700"></div>
+
+                        <div class="flex justify-end gap-2 pt-2 border-t">
+                            <button onclick="closeModal()" class="ui-btn ui-btn-secondary">Cancel</button>
+                            <button onclick="saveStandardSpecItems('${specId}')" class="ui-btn ui-btn-primary">Save Items</button>
+                        </div>
+                    </div>
+                `);
+
+                // Dynamically toggle inputs based on selected operator
+                document.querySelectorAll('#specItemsTableBody tr').forEach(row => {
+                    const sel = row.querySelector('.select-operator');
+                    if (sel) {
+                        sel.addEventListener('change', (e) => {
+                            const val = e.target.value;
+                            row.querySelector('.input-num').style.display = val === 'TEXT' ? 'none' : 'inline-block';
+                            row.querySelector('.input-num-to').style.display = val === 'RANGE' ? 'inline-block' : 'none';
+                            row.querySelector('.input-txt').style.display = val === 'TEXT' ? 'inline-block' : 'none';
+                        });
+                    }
+                });
+
+            } catch (err) {
+                alert(err.message);
+            }
+        }
+
+        async function saveStandardSpecItems(specId) {
+            const errDiv = document.getElementById('specItemsFormError');
+            if (errDiv) errDiv.classList.add('hidden');
+
+            const payloadItems = [];
+            let hasError = false;
+
+            document.querySelectorAll('#specItemsTableBody tr').forEach(row => {
+                const isChecked = row.querySelector('.param-row-checkbox').checked;
+                if (isChecked) {
+                    const parameterId = row.querySelector('.param-row-checkbox').dataset.paramId;
+                    const operator = row.querySelector('.select-operator').value;
+                    const unit = row.querySelector('.input-unit').value || '';
+                    const notes = row.querySelector('.input-notes').value || '';
+
+                    let numericValue = null;
+                    let numericValueTo = null;
+                    let textValue = null;
+
+                    if (operator === 'TEXT') {
+                        textValue = row.querySelector('.input-txt').value;
+                        if (!textValue) {
+                            hasError = true;
+                            if (errDiv) errDiv.innerText = 'กรุณาระบุเกณฑ์ข้อความสำหรับพารามิเตอร์ที่เลือก';
+                        }
+                    } else if (operator === 'RANGE') {
+                        const lowStr = row.querySelector('.input-num').value;
+                        const highStr = row.querySelector('.input-num-to').value;
+                        if (!lowStr || !highStr) {
+                            hasError = true;
+                            if (errDiv) errDiv.innerText = 'RANGE ต้องระบุทั้งขอบเขตล่างและขอบเขตบน';
+                        } else {
+                            numericValue = parseFloat(lowStr);
+                            numericValueTo = parseFloat(highStr);
+                            if (numericValueTo <= numericValue) {
+                                hasError = true;
+                                if (errDiv) errDiv.innerText = 'ขอบเขตบนของ RANGE ต้องมากกว่าขอบเขตล่าง';
+                            }
+                        }
+                    } else {
+                        const valStr = row.querySelector('.input-num').value;
+                        if (!valStr) {
+                            hasError = true;
+                            if (errDiv) errDiv.innerText = 'กรุณาระบุค่าตัวเลขสำหรับเกณฑ์ที่เลือก';
+                        } else {
+                            numericValue = parseFloat(valStr);
+                        }
+                    }
+
+                    payloadItems.push({ parameterId, operator, numericValue, numericValueTo, textValue, unit, notes });
+                }
+            });
+
+            if (hasError) {
+                if (errDiv) errDiv.classList.remove('hidden');
+                return;
+            }
+
+            try {
+                const res = await fetch(`/api/standard-specs/${specId}`, {
+                    method: 'PUT',
+                    headers: { 'content-type': 'application/json' },
+                    body: JSON.stringify({ items: payloadItems })
+                });
+                const body = await res.json();
+                if (body && body.status === 'SUCCESS') {
+                    closeModal();
+                    openProductDashboard(state.selectedProductId, state.selectedProductApp);
+                } else {
+                    if (errDiv) {
+                        errDiv.innerText = 'Save items failed: ' + body.message;
+                        errDiv.classList.remove('hidden');
+                    }
+                }
+            } catch (err) {
+                if (errDiv) {
+                    errDiv.innerText = 'Request failed: ' + err.message;
+                    errDiv.classList.remove('hidden');
+                }
+            }
+        }
+
+        function viewArchivedSpecDetails(specId) {
+            fetch(`/api/standard-specs/${specId}`)
+                .then(res => res.json())
+                .then(body => {
+                    if (body.status !== 'SUCCESS') throw new Error(body.message);
+                    const spec = body.data.standardSpec;
+                    const itemsHtml = spec.items.map(i => `
+                        <tr>
+                            <td class="p-2 font-bold">${i.parameterName}</td>
+                            <td class="p-2">${i.operator}</td>
+                            <td class="p-2">
+                                ${i.operator === 'RANGE' ? `${i.numericValue} - ${i.numericValueTo}` : i.numericValue != null ? i.numericValue : i.textValue || '-'}
+                            </td>
+                            <td class="p-2">${i.unit || '-'}</td>
+                            <td class="p-2 text-slate-500">${i.notes || '-'}</td>
+                        </tr>
+                    `).join('');
+
+                    openModal(`
+                        <div class="space-y-4">
+                            <div>
+                                <h3 class="text-lg font-black text-slate-900">Standard Spec Details (Archived)</h3>
+                                <p class="text-xs text-slate-500">รหัสฉบับ: ${spec.id} | Revision No: Rev.${spec.revisionNo}</p>
+                            </div>
+                            <table class="w-full text-xs text-left">
+                                <thead class="bg-slate-100">
+                                    <tr><th class="p-2">รายการ</th><th class="p-2">เงื่อนไข</th><th class="p-2">ค่ากำหนด</th><th class="p-2">หน่วย</th><th class="p-2">หมายเหตุ</th></tr>
+                                </thead>
+                                <tbody>${itemsHtml}</tbody>
+                            </table>
+                            <div class="flex justify-end gap-2"><button onclick="closeModal()" class="ui-btn ui-btn-secondary">Close</button></div>
+                        </div>
+                    `);
+                })
+                .catch(err => alert(err.message));
+        }
+
+        // --- CUSTOMER SPECS CONTROLS ---
+        function openCreateCustomerSpecModal(customerId) {
+            const productsHtml = state.products.map(p => `
+                <option value="${p.id}">${p.name} (${p.code})</option>
+            `).join('');
+
+            openModal(`
+                <div class="space-y-4">
+                    <div>
+                        <div class="text-[10px] font-black uppercase tracking-wider text-blue-600">Customer Specification</div>
+                        <h3 class="text-lg font-black text-slate-900">สร้างสเปกปรับแต่งเฉพาะรายลูกค้า</h3>
+                    </div>
+
+                    <label class="text-xs font-bold text-slate-600 block">
+                        สินค้าหลัก (Product) *
+                        <select id="custSpecProductId" class="ui-input mt-1" onchange="loadBaseSpecOptions()">${productsHtml}</select>
+                    </label>
+
+                    <label class="text-xs font-bold text-slate-600 block">
+                        เกรดการใช้งาน (Application) *
+                        <select id="custSpecApplication" class="ui-input mt-1" onchange="loadBaseSpecOptions()">
+                            <option value="FEED_GRADE">FEED_GRADE</option>
+                            <option value="PET_GRADE">PET_GRADE</option>
+                        </select>
+                    </label>
+
+                    <label class="text-xs font-bold text-slate-600 block">
+                        สเปกมาตรฐานอ้างอิง (Base Standard Spec) *
+                        <select id="custSpecBaseId" class="ui-input mt-1"></select>
+                    </label>
+
+                    <label class="text-xs font-bold text-slate-600 block">
+                        วันบังคับใช้ (Effective Date) *
+                        <input id="custSpecDate" type="date" class="ui-input mt-1" value="${new Date().toISOString().slice(0, 10)}">
+                    </label>
+
+                    <label class="text-xs font-bold text-slate-600 block">
+                        หมายเหตุ (Notes)
+                        <input id="custSpecNotes" type="text" class="ui-input mt-1">
+                    </label>
+
+                    <div id="custSpecFormError" class="hidden rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-bold text-rose-700"></div>
+
+                    <div class="flex justify-end gap-2">
+                        <button onclick="closeModal()" class="ui-btn ui-btn-secondary">Cancel</button>
+                        <button onclick="saveCustomerSpecDraft('${customerId}')" class="ui-btn ui-btn-primary">Create Draft</button>
+                    </div>
+                </div>
+            `);
+
+            loadBaseSpecOptions();
+        }
+
+        async function loadBaseSpecOptions() {
+            const pId = document.getElementById('custSpecProductId').value;
+            const app = document.getElementById('custSpecApplication').value;
+            const baseSelect = document.getElementById('custSpecBaseId');
+            if (!baseSelect) return;
+
+            baseSelect.innerHTML = '<option value="">Loading active specs...</option>';
+
+            try {
+                const res = await fetch(`/api/products/${pId}/standard-specs?application=${app}`);
+                if (res.ok) {
+                    const body = await res.json();
+                    if (body.status === 'SUCCESS' && Array.isArray(body.data.standardSpecs)) {
+                        const active = body.data.standardSpecs.filter(s => s.status === 'ACTIVE');
+                        if (active.length > 0) {
+                            baseSelect.innerHTML = active.map(s => `
+                                <option value="${s.id}">Rev.${s.revisionNo} (${s.id}) - Effective: ${s.effectiveDate}</option>
+                            `).join('');
+                        } else {
+                            baseSelect.innerHTML = '<option value="">-- ไม่พบสเปกมาตรฐานสถานะ ACTIVE --</option>';
+                        }
+                    }
+                }
+            } catch (err) {
+                baseSelect.innerHTML = '<option value="">-- โหลดข้อมูลล้มเหลว --</option>';
+            }
+        }
+
+        async function saveCustomerSpecDraft(customerId) {
+            const errDiv = document.getElementById('custSpecFormError');
+            if (errDiv) errDiv.classList.add('hidden');
+
+            const productId = document.getElementById('custSpecProductId').value;
+            const application = document.getElementById('custSpecApplication').value;
+            const baseStandardSpecId = document.getElementById('custSpecBaseId').value;
+            const effectiveDate = document.getElementById('custSpecDate').value;
+            const notes = document.getElementById('custSpecNotes').value;
+
+            if (!baseStandardSpecId) {
+                if (errDiv) {
+                    errDiv.innerText = 'ไม่สามารถสร้างสเปกของลูกค้าได้เนื่องจากไม่มีสเปกมาตรฐานสถานะ ACTIVE';
+                    errDiv.classList.remove('hidden');
+                }
+                return;
+            }
+
+            try {
+                const res = await fetch('/api/customer-specs', {
+                    method: 'POST',
+                    headers: { 'content-type': 'application/json' },
+                    body: JSON.stringify({ customerId, productId, application, baseStandardSpecId, effectiveDate, notes })
+                });
+                const body = await res.json();
+                if (body && body.status === 'SUCCESS') {
+                    closeModal();
+                    await loadCustomerSpecsForCustomer(customerId);
+                } else {
+                    if (errDiv) {
+                        errDiv.innerText = 'Failed to create draft: ' + body.message;
+                        errDiv.classList.remove('hidden');
+                    }
+                }
+            } catch (err) {
+                if (errDiv) {
+                    errDiv.innerText = 'Request error: ' + err.message;
+                    errDiv.classList.remove('hidden');
+                }
+            }
+        }
+
+        async function viewCustomerSpecDetails(specId) {
+            try {
+                const res1 = await fetch(`/api/customer-specs/${specId}`);
+                const res2 = await fetch(`/api/customer-specs/${specId}/effective`);
+
+                if (!res1.ok || !res2.ok) throw new Error('Failed to load spec info.');
+
+                const body1 = await res1.json();
+                const body2 = await res2.json();
+
+                if (body1.status !== 'SUCCESS' || body2.status !== 'SUCCESS') {
+                    throw new Error(body1.message || body2.message);
+                }
+
+                const spec = body1.data.customerSpec;
+                const effective = body2.data.effectiveSpec;
+
+                const isAllowedToEdit = ['ADMIN', 'MANAGER', 'SALES_SUPPORT'].includes(state.currentUser.role);
+                const isAdminOrManager = ['ADMIN', 'MANAGER'].includes(state.currentUser.role);
+
+                const tableRows = effective.items.map(item => {
+                    const isOverridden = item.source === 'OVERRIDDEN';
+                    return `
+                        <tr>
+                            <td class="p-2 font-bold text-slate-800">${item.parameterName} (${item.parameterCode})</td>
+                            <td class="p-2">${item.operator}</td>
+                            <td class="p-2">
+                                ${item.operator === 'RANGE' ? `${item.numericValue} - ${item.numericValueTo}` : item.numericValue != null ? item.numericValue : item.textValue || '-'}
+                            </td>
+                            <td class="p-2 text-slate-600">${item.unit || '-'}</td>
+                            <td class="p-2 text-slate-500">${item.notes || '-'}</td>
+                            <td class="p-2">
+                                <span class="px-1.5 py-0.5 rounded text-[9px] font-bold ${isOverridden ? 'bg-amber-100 text-amber-800' : 'bg-slate-100 text-slate-600'}">
+                                    ${item.source}
+                                </span>
+                            </td>
+                        </tr>
+                    `;
+                }).join('');
+
+                openModal(`
+                    <div class="space-y-4 max-w-4xl" style="max-height:85vh; overflow-y:auto;">
+                        <div class="flex justify-between items-start">
+                            <div>
+                                <div class="text-[10px] font-black uppercase tracking-wider text-blue-600">Customer Specification</div>
+                                <h3 class="text-lg font-black text-slate-900">สเปกข้อกำหนดคุณภาพรวม (Effective Specification)</h3>
+                                <p class="text-xs text-slate-500">วันบังคับใช้: ${spec.effectiveDate} | สถานะ: <strong>${spec.status}</strong></p>
+                            </div>
+                            <span class="bg-blue-100 text-blue-800 text-[10px] font-bold px-2 py-0.5 rounded border border-blue-200">Rev.${spec.revisionNo}</span>
+                        </div>
+
+                        <div class="overflow-x-auto">
+                            <table class="w-full text-xs text-left">
+                                <thead class="bg-slate-100 font-bold uppercase text-[10px]">
+                                    <tr>
+                                        <th class="p-2">รายการ</th>
+                                        <th class="p-2">เงื่อนไข</th>
+                                        <th class="p-2">เกณฑ์กำหนด</th>
+                                        <th class="p-2">หน่วย</th>
+                                        <th class="p-2">หมายเหตุ</th>
+                                        <th class="p-2">แหล่งที่มา</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    ${tableRows}
+                                </tbody>
+                            </table>
+                        </div>
+
+                        <div class="flex justify-end gap-2 pt-2 border-t">
+                            <button onclick="closeModal()" class="ui-btn ui-btn-secondary">Close</button>
+                            ${spec.status === 'DRAFT' && isAllowedToEdit ? `
+                                <button onclick="openEditCustomerSpecOverridesModal('${spec.id}')" class="ui-btn ui-btn-primary">แก้ไขค่าสเปกเฉพาะ (Edit Overrides)</button>
+                                ${isAdminOrManager ? `
+                                    <button onclick="activateCustomerSpec('${spec.id}', '${spec.customerId}')" class="bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded-lg text-xs font-semibold shadow-sm">
+                                        เปิดใช้งาน (Activate Spec)
+                                    </button>
+                                ` : ''}
+                            ` : ''}
+                            ${spec.status === 'ACTIVE' && isAdminOrManager ? `
+                                <button onclick="archiveCustomerSpec('${spec.id}', '${spec.customerId}')" class="bg-rose-600 hover:bg-rose-700 text-white px-4 py-2 rounded-lg text-xs font-semibold shadow-sm">
+                                    จัดเก็บ (Archive Spec)
+                                </button>
+                            ` : ''}
+                        </div>
+                    </div>
+                `);
+
+            } catch (err) {
+                alert(err.message);
+            }
+        }
+
+        async function activateCustomerSpec(specId, customerId) {
+            if (!confirm('ยืนยันเปิดใช้งานสเปกเฉพาะลูกค้านี้?')) return;
+            try {
+                const res = await fetch(`/api/customer-specs/${specId}/activate`, { method: 'POST' });
+                const body = await res.json();
+                if (body && body.status === 'SUCCESS') {
+                    closeModal();
+                    await loadCustomerSpecsForCustomer(customerId);
+                } else {
+                    alert('Activation failed: ' + body.message);
+                }
+            } catch (err) {
+                alert('Request failed: ' + err.message);
+            }
+        }
+
+        async function archiveCustomerSpec(specId, customerId) {
+            if (!confirm('ยืนยันจัดเก็บสเปกเฉพาะลูกค้านี้ (Archive)?')) return;
+            try {
+                const res = await fetch(`/api/customer-specs/${specId}/archive`, { method: 'POST' });
+                const body = await res.json();
+                if (body && body.status === 'SUCCESS') {
+                    closeModal();
+                    await loadCustomerSpecsForCustomer(customerId);
+                } else {
+                    alert('Archive failed: ' + body.message);
+                }
+            } catch (err) {
+                alert('Request failed: ' + err.message);
+            }
+        }
+
+        async function openEditCustomerSpecOverridesModal(specId) {
+            try {
+                const res1 = await fetch(`/api/customer-specs/${specId}`);
+                if (!res1.ok) throw new Error('Failed to load customer spec.');
+                const body1 = await res1.json();
+                const spec = body1.data.customerSpec;
+
+                const res2 = await fetch(`/api/standard-specs/${spec.baseStandardSpecId}`);
+                if (!res2.ok) throw new Error('Failed to load base standard spec.');
+                const body2 = await res2.json();
+                const baseSpec = body2.data.standardSpec;
+
+                const overridesMap = new Map(spec.overrides.map(o => [o.parameterId, o]));
+
+                const tableRows = baseSpec.items.map(stdItem => {
+                    const matchedOverride = overridesMap.get(stdItem.parameterId);
+                    const isChecked = matchedOverride ? 'checked' : '';
+                    const op = matchedOverride ? matchedOverride.operator : stdItem.operator;
+                    const numVal = matchedOverride && matchedOverride.numericValue != null ? matchedOverride.numericValue : (matchedOverride ? '' : stdItem.numericValue || '');
+                    const numValTo = matchedOverride && matchedOverride.numericValueTo != null ? matchedOverride.numericValueTo : (matchedOverride ? '' : stdItem.numericValueTo || '');
+                    const txtVal = matchedOverride && matchedOverride.textValue != null ? matchedOverride.textValue : (matchedOverride ? '' : stdItem.textValue || '');
+                    const unit = matchedOverride ? matchedOverride.unit : stdItem.unit || '';
+                    const notes = matchedOverride ? matchedOverride.notes : '';
+
+                    return `
+                        <tr class="align-middle border-b">
+                            <td class="p-2 text-center">
+                                <input type="checkbox" class="override-checkbox" data-param-id="${stdItem.parameterId}" ${isChecked}>
+                            </td>
+                            <td class="p-2">
+                                <div class="font-bold text-slate-800">${stdItem.parameterName}</div>
+                                <div class="text-[10px] text-slate-400">สเปกฐาน: ${stdItem.operator} ${stdItem.operator === 'RANGE' ? `${stdItem.numericValue}-${stdItem.numericValueTo}` : stdItem.numericValue != null ? stdItem.numericValue : stdItem.textValue || '-'} ${stdItem.unit}</div>
+                            </td>
+                            <td class="p-2">
+                                <select class="ui-input p-1 override-operator" style="height:32px;">
+                                    <option value="MIN" ${op === 'MIN' ? 'selected' : ''}>MIN</option>
+                                    <option value="MAX" ${op === 'MAX' ? 'selected' : ''}>MAX</option>
+                                    <option value="EXACT" ${op === 'EXACT' ? 'selected' : ''}>EXACT</option>
+                                    <option value="RANGE" ${op === 'RANGE' ? 'selected' : ''}>RANGE</option>
+                                    <option value="TEXT" ${op === 'TEXT' ? 'selected' : ''}>TEXT</option>
+                                </select>
+                            </td>
+                            <td class="p-2">
+                                <input type="number" class="ui-input p-1 override-num" style="height:32px; width:70px;" value="${numVal}" placeholder="Val">
+                                <input type="number" class="ui-input p-1 override-num-to" style="height:32px; width:70px; display:${op === 'RANGE' ? 'inline-block' : 'none'}" value="${numValTo}" placeholder="To">
+                                <input type="text" class="ui-input p-1 override-txt" style="height:32px; width:120px; display:${op === 'TEXT' ? 'inline-block' : 'none'}" value="${txtVal}" placeholder="Text">
+                            </td>
+                            <td class="p-2">
+                                <input type="text" class="ui-input p-1 override-unit" style="height:32px; width:60px;" value="${unit}">
+                            </td>
+                            <td class="p-2">
+                                <input type="text" class="ui-input p-1 override-notes" style="height:32px;" value="${notes}">
+                            </td>
+                        </tr>
+                    `;
+                }).join('');
+
+                openModal(`
+                    <div class="space-y-4 max-w-4xl" style="max-height:85vh; overflow-y:auto;">
+                        <div>
+                            <div class="text-[10px] font-black uppercase tracking-wider text-blue-600">Customer Specification</div>
+                            <h3 class="text-lg font-black text-slate-900">แก้ไขค่าสเปกเฉพาะกิจสำหรับลูกค้ารายนี้</h3>
+                            <p class="text-xs text-slate-500">เช็คถูกและกำหนดค่าในแถวพารามิเตอร์ที่ต้องการปรับปรุง (Override)</p>
+                        </div>
+
+                        <div class="overflow-x-auto">
+                            <table class="w-full text-xs text-left">
+                                <thead class="bg-slate-100 uppercase text-[10px]">
+                                    <tr>
+                                        <th class="p-2 text-center">แก้ไขค่า</th>
+                                        <th class="p-2">รายการ (สเปกมาตรฐานอ้างอิง)</th>
+                                        <th class="p-2">เงื่อนไข</th>
+                                        <th class="p-2">ค่ากำหนดใหม่</th>
+                                        <th class="p-2">หน่วย</th>
+                                        <th class="p-2">หมายเหตุเฉพาะ</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="custOverridesTableBody">
+                                    ${tableRows}
+                                </tbody>
+                            </table>
+                        </div>
+
+                        <div id="custOverridesFormError" class="hidden rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-bold text-rose-700"></div>
+
+                        <div class="flex justify-end gap-2 pt-2 border-t">
+                            <button onclick="closeModal(); viewCustomerSpecDetails('${specId}')" class="ui-btn ui-btn-secondary">Back to Details</button>
+                            <button onclick="saveCustomerSpecOverrides('${specId}', '${spec.customerId}')" class="ui-btn ui-btn-primary">Save Overrides</button>
+                        </div>
+                    </div>
+                `);
+
+                // Add change listeners
+                document.querySelectorAll('#custOverridesTableBody tr').forEach(row => {
+                    const sel = row.querySelector('.override-operator');
+                    if (sel) {
+                        sel.addEventListener('change', (e) => {
+                            const val = e.target.value;
+                            row.querySelector('.override-num').style.display = val === 'TEXT' ? 'none' : 'inline-block';
+                            row.querySelector('.override-num-to').style.display = val === 'RANGE' ? 'inline-block' : 'none';
+                            row.querySelector('.override-txt').style.display = val === 'TEXT' ? 'inline-block' : 'none';
+                        });
+                    }
+                });
+
+            } catch (err) {
+                alert(err.message);
+            }
+        }
+
+        async function saveCustomerSpecOverrides(specId, customerId) {
+            const errDiv = document.getElementById('custOverridesFormError');
+            if (errDiv) errDiv.classList.add('hidden');
+
+            const overrides = [];
+            let hasError = false;
+
+            document.querySelectorAll('#custOverridesTableBody tr').forEach(row => {
+                const isChecked = row.querySelector('.override-checkbox').checked;
+                if (isChecked) {
+                    const parameterId = row.querySelector('.override-checkbox').dataset.paramId;
+                    const operator = row.querySelector('.override-operator').value;
+                    const unit = row.querySelector('.override-unit').value || '';
+                    const notes = row.querySelector('.override-notes').value || '';
+
+                    let numericValue = null;
+                    let numericValueTo = null;
+                    let textValue = null;
+
+                    if (operator === 'TEXT') {
+                        textValue = row.querySelector('.override-txt').value;
+                        if (!textValue) {
+                            hasError = true;
+                            if (errDiv) errDiv.innerText = 'กรุณาระบุเกณฑ์ข้อความสำหรับพารามิเตอร์ที่เลือก';
+                        }
+                    } else if (operator === 'RANGE') {
+                        const lowStr = row.querySelector('.override-num').value;
+                        const highStr = row.querySelector('.override-num-to').value;
+                        if (!lowStr || !highStr) {
+                            hasError = true;
+                            if (errDiv) errDiv.innerText = 'RANGE ต้องระบุทั้งขอบเขตล่างและขอบเขตบน';
+                        } else {
+                            numericValue = parseFloat(lowStr);
+                            numericValueTo = parseFloat(highStr);
+                            if (numericValueTo <= numericValue) {
+                                hasError = true;
+                                if (errDiv) errDiv.innerText = 'ขอบเขตบนของ RANGE ต้องมากกว่าขอบเขตล่าง';
+                            }
+                        }
+                    } else {
+                        const valStr = row.querySelector('.override-num').value;
+                        if (!valStr) {
+                            hasError = true;
+                            if (errDiv) errDiv.innerText = 'กรุณาระบุค่าตัวเลขสำหรับเกณฑ์ที่เลือก';
+                        } else {
+                            numericValue = parseFloat(valStr);
+                        }
+                    }
+
+                    overrides.push({ parameterId, operator, numericValue, numericValueTo, textValue, unit, notes });
+                }
+            });
+
+            if (hasError) {
+                if (errDiv) errDiv.classList.remove('hidden');
+                return;
+            }
+
+            try {
+                const res = await fetch(`/api/customer-specs/${specId}`, {
+                    method: 'PUT',
+                    headers: { 'content-type': 'application/json' },
+                    body: JSON.stringify({ overrides })
+                });
+                const body = await res.json();
+                if (body && body.status === 'SUCCESS') {
+                    closeModal();
+                    await loadCustomerSpecsForCustomer(customerId);
+                    viewCustomerSpecDetails(specId);
+                } else {
+                    if (errDiv) {
+                        errDiv.innerText = 'Save overrides failed: ' + body.message;
+                        errDiv.classList.remove('hidden');
+                    }
+                }
+            } catch (err) {
+                if (errDiv) {
+                    errDiv.innerText = 'Request failed: ' + err.message;
+                    errDiv.classList.remove('hidden');
+                }
+            }
         }
 
         // --- PAYMENTS ---

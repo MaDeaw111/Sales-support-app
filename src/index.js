@@ -26,6 +26,12 @@ export default {
       return createAuthHandlerFromEnv(env)(request);
     }
 
+    if (url.pathname.startsWith('/api/customers/') && url.pathname.endsWith('/specs')) {
+      if (!env.DB) return jsonResponse({ status: 'ERROR', message: 'D1 DB binding is not configured.' }, 503);
+      const { createProductHandlerFromEnv } = await import('./products/routes.js');
+      return createProductHandlerFromEnv(env)(request);
+    }
+
     if (url.pathname === '/api/customers' || url.pathname.startsWith('/api/customers/') || url.pathname === '/api/customer-owners') {
       if (!env.DB) return jsonResponse({ status: 'ERROR', message: 'D1 DB binding is not configured.' }, 503);
       const { createCustomerHandlerFromEnv } = await import('./customers/routes.js');
@@ -42,6 +48,20 @@ export default {
       if (!env.DB) return jsonResponse({ status: 'ERROR', message: 'D1 DB binding is not configured.' }, 503);
       const { createUserHandlerFromEnv } = await import('./users/routes.js');
       return createUserHandlerFromEnv(env)(request);
+    }
+
+    if (
+      url.pathname === '/api/products' || url.pathname.startsWith('/api/products/') ||
+      url.pathname === '/api/product-categories' || url.pathname.startsWith('/api/product-categories/') ||
+      url.pathname === '/api/product-forms' || url.pathname.startsWith('/api/product-forms/') ||
+      url.pathname === '/api/spec-parameters' || url.pathname.startsWith('/api/spec-parameters/') ||
+      url.pathname === '/api/standard-specs' || url.pathname.startsWith('/api/standard-specs/') ||
+      url.pathname === '/api/customer-specs' || url.pathname.startsWith('/api/customer-specs/') ||
+      (url.pathname.startsWith('/api/customers/') && url.pathname.endsWith('/specs'))
+    ) {
+      if (!env.DB) return jsonResponse({ status: 'ERROR', message: 'D1 DB binding is not configured.' }, 503);
+      const { createProductHandlerFromEnv } = await import('./products/routes.js');
+      return createProductHandlerFromEnv(env)(request);
     }
 
     if (url.pathname === '/api/gateway') {
