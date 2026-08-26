@@ -36,6 +36,16 @@
 
 ---
 
+## Relational Anchor Scope Boundary
+* **Discovery:** Purchase Orders (POs) and Shipments currently exist only as frontend mock arrays inside `public/index.html` and have no D1 database backing.
+* **Scope Boundary Rules:**
+  1. This phase is **NOT** a full migration of PO Management or Shipment Readiness. Do not replace all existing mock PO/Shipment frontend workflows.
+  2. Minimal D1 tables `pos` and `shipments` will be created **strictly** as database relational anchors for Phase 5E commercial features (Shipment expenses, document links, Freight Quote references, and Shipment Detail Cost/Doc tabs).
+  3. No downstream business workflows (e.g. stuffing status, trucking provider assignments, etc.) are migrated.
+  4. For testing and integration, minimal records will be seeded/created dynamically in the `pos` and `shipments` tables.
+
+---
+
 ## File Structure / Responsibility Map
 
 We will create and modify the following files:
@@ -62,173 +72,324 @@ We will create and modify the following files:
 * `test/shipment-expenses.repository.test.js`
 * `test/shipment-expenses.routes.test.js`
 * `test/freight-variance.test.js`
-
----
-
-## Shipment & PO Infrastructure Warning
-* **Discovery:** Inspection of the codebase reveals that Purchase Order (PO) and Shipment data entities do not exist in D1 yet; they are currently mock-only front-end arrays inside `public/index.html`.
-* **Strategy:** To build a robust, testable, D1-backed commercial/shipment costing workflow without a full PO/Shipment redesign, we will define minimal `pos` and `shipments` tables in D1. This serves as the relational anchor for shipment costs and document links, ensuring foreign keys are correctly enforced.
+* `test/frontend-pricing-shipment-adapter.test.js` (frontend adapter regression tests)
 
 ---
 
 ## Implementation Tasks
 
 ### [ ] Task 1 — D1 Migration & Database Setup
-* **Files:** Create `migrations/0004_commercial_shipment_control.sql`, Create `test/commercial-migration.test.js`
-* **Details:**
-  * Define schema for the following tables:
-    1. `pos` (po_id TEXT PRIMARY KEY, customer_id TEXT, product_id TEXT, incoterm TEXT, destination_port TEXT, po_date TEXT, status TEXT)
-    2. `shipments` (shipment_id TEXT PRIMARY KEY, po_id TEXT, freight_quote_id TEXT, status TEXT)
-    3. `expense_categories` (category_id TEXT PRIMARY KEY, category_code TEXT UNIQUE, category_name TEXT, category_group TEXT, status TEXT, sort_order INTEGER)
-    4. `manager_price_notes` (note_id TEXT PRIMARY KEY, sales_user_id TEXT, customer_id TEXT, product_id TEXT, incoterm TEXT, destination_port TEXT, offer_price_usd_per_mt REAL, note TEXT, created_by_manager_id TEXT, created_at TEXT)
-    5. `freight_quotes` (quote_id TEXT PRIMARY KEY, origin_port TEXT, destination_port TEXT, container_size TEXT, shipping_line_or_forwarder TEXT, quoted_freight_usd_per_container REAL, valid_until TEXT, remark TEXT, created_by TEXT, created_at TEXT)
-    6. `shipment_document_links` (link_id TEXT PRIMARY KEY, shipment_id TEXT, document_type TEXT, title TEXT, drive_url TEXT, reference_no TEXT, remark TEXT, created_by TEXT, created_at TEXT, updated_at TEXT)
-    7. `shipment_expenses` (expense_id TEXT PRIMARY KEY, shipment_id TEXT, expense_category_id TEXT, amount REAL, currency TEXT, fx_used REAL, amount_thb REAL, reference_no TEXT, shipment_document_link_id TEXT, remark TEXT, created_by TEXT, created_at TEXT, updated_by TEXT, updated_at TEXT)
-  * Verify constraints in `test/commercial-migration.test.js`.
-* **TDD Run:**
-  * Run `node --test test/commercial-migration.test.js` and see it FAIL before sql run, then PASS.
-* **Commit:** `git commit -m "feat: Task 1 - implement commercial and shipment database migration"`
+* **Files:** 
+  * Create `migrations/0004_commercial_shipment_control.sql`
+  * Create `test/commercial-migration.test.js`
+* **Interfaces:**
+  * Consumes: D1 execute / SQLite constraints engine
+  * Produces: SQLite tables with foreign keys and checks:
+    * `pos`
+    * `shipments`
+    * `expense_categories`
+    * `manager_price_notes`
+    * `freight_quotes`
+    * `shipment_document_links`
+    * `shipment_expenses`
+* **Schema Specifications & Database Constraints:**
+  * `pos`: `po_id` PRIMARY KEY, `customer_id` NOT NULL REFERENCES `customers(customer_id)`, `product_id` NOT NULL REFERENCES `products(product_id)`, `incoterm` TEXT CHECK(incoterm IN ('FOB', 'CFR', 'CIF')) NOT NULL, `destination_port` TEXT.
+  * `shipments`: `shipment_id` PRIMARY KEY, `po_id` NOT NULL REFERENCES `pos(po_id)`, `freight_quote_id` REFERENCES `freight_quotes(quote_id)`.
+  * `expense_categories`: `category_id` PRIMARY KEY, `category_code` TEXT UNIQUE NOT NULL, `category_name` TEXT NOT NULL, `category_group` TEXT CHECK(category_group IN ('OCEAN_FREIGHT', 'SHIPPING_LOCAL', 'TRANSPORT', 'DOCUMENT', 'INSURANCE', 'OTHER')) NOT NULL, `status` TEXT CHECK(status IN ('ACTIVE', 'INACTIVE')) DEFAULT 'ACTIVE'.
+  * `manager_price_notes`: `note_id` PRIMARY KEY, `sales_user_id` TEXT REFERENCES `users(user_id)`, `customer_id` TEXT REFERENCES `customers(customer_id)`, `product_id` TEXT REFERENCES `products(product_id)`, `incoterm` TEXT CHECK(incoterm IN ('FOB', 'CFR', 'CIF')) NOT NULL, `destination_port` TEXT, `offer_price_usd_per_mt` REAL CHECK(offer_price_usd_per_mt > 0) NOT NULL, `note` TEXT, `created_by_manager_id` TEXT NOT NULL REFERENCES `users(user_id)`, `created_at` TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP.
+  * `freight_quotes`: `quote_id` PRIMARY KEY, `origin_port` TEXT NOT NULL, `destination_port` TEXT NOT NULL, `container_size` TEXT NOT NULL, `shipping_line_or_forwarder` TEXT NOT NULL, `quoted_freight_usd_per_container` REAL CHECK(quoted_freight_usd_per_container > 0) NOT NULL, `valid_until` TEXT, `remark` TEXT, `created_by` TEXT NOT NULL, `created_at` TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP.
+  * `shipment_document_links`: `link_id` PRIMARY KEY, `shipment_id` NOT NULL REFERENCES `shipments(shipment_id) ON DELETE CASCADE`, `document_type` TEXT CHECK(document_type IN ('PO', 'DI', 'BOOKING', 'STUFFING_REPORT', 'ALL_SHIP_DOC', 'IR', 'LC')) NOT NULL, `title` TEXT NOT NULL, `drive_url` TEXT CHECK(drive_url LIKE 'http://%' OR drive_url LIKE 'https://%') NOT NULL, `reference_no` TEXT, `remark` TEXT, `created_by` TEXT, `created_at` TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, `updated_at` TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP.
+  * `shipment_expenses`: `expense_id` PRIMARY KEY, `shipment_id` NOT NULL REFERENCES `shipments(shipment_id) ON DELETE CASCADE`, `expense_category_id` NOT NULL REFERENCES `expense_categories(category_id)`, `amount` REAL CHECK(amount > 0) NOT NULL, `currency` TEXT CHECK(currency IN ('THB', 'USD')) NOT NULL, `fx_used` REAL CHECK(fx_used > 0), `amount_thb` REAL CHECK(amount_thb > 0) NOT NULL, `reference_no` TEXT, `shipment_document_link_id` REFERENCES `shipment_document_links(link_id) ON DELETE SET NULL`, `remark` TEXT, `created_by` TEXT, `created_at` TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, `updated_by` TEXT, `updated_at` TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP.
+* **TDD Process Steps:**
+  * [ ] **Step 1:** Write a failing test in `test/commercial-migration.test.js` checking that the tables and constraints (e.g. rejecting `quoted_freight_usd_per_container = 0`) behave as defined.
+    ```javascript
+    test('D1 constraints enforced', async () => {
+      const { db } = await setupTestDb();
+      assert.throws(() => {
+        db.prepare("INSERT INTO freight_quotes (quote_id, quoted_freight_usd_per_container) VALUES ('Q1', 0)").run();
+      }, /constraint failed/);
+    });
+    ```
+  * [ ] **Step 2:** Run `node --test test/commercial-migration.test.js` and verify it fails (expected table-not-found or check-constraint-not-enforced).
+  * [ ] **Step 3:** Implement the DDL file `migrations/0004_commercial_shipment_control.sql` containing the D1 migrations and tables.
+  * [ ] **Step 4:** Run targeted test again and verify it passes.
+  * [ ] **Step 5:** Run overall regression test group `npm test`.
+  * [ ] **Step 6:** Commit: `git commit -m "feat: Task 1 - implement D1 database migration and constraints verification"`
 
 ### [ ] Task 2 — Expense Category Master Setup
-* **Files:** Modify `migrations/0004_commercial_shipment_control.sql` (Add seed INSERTs), Create `test/expense-categories.test.js`
-* **Details:**
-  * Seed the required categories: Ocean Freight, BL Fee, THC, Seal Fee, Other Shipping / Local Charge, Truck / Inland Transport, Documentation, Fumigation, Inspection, Insurance, Bank Charge, Other.
-  * Categories must map to groups: `OCEAN_FREIGHT`, `SHIPPING_LOCAL`, `TRANSPORT`, `DOCUMENT`, `INSURANCE`, `OTHER`.
-  * Status defaults to `ACTIVE`.
-  * Implement Repository functions `listExpenseCategories()` and `createExpenseCategory()` in `src/shipments/repository.js`.
-* **TDD Run:**
-  * Run `node --test test/expense-categories.test.js` to verify CRUD.
-* **Commit:** `git commit -m "feat: Task 2 - seed expense categories and create repository module"`
+* **Files:**
+  * Modify `migrations/0004_commercial_shipment_control.sql` (Add INSERT scripts)
+  * Create `test/expense-categories.test.js`
+  * Create repository helper in `src/shipments/repository.js`
+* **Interfaces:**
+  * Consumes: D1 DB
+  * Produces: array of categories `listExpenseCategories() => Promise<Array>`
+  * DTO shape: `{ id, code, name, categoryGroup, status, sortOrder }`
+* **TDD Process Steps:**
+  * [ ] **Step 1:** Write a failing test in `test/expense-categories.test.js` that checks for category seeding and listing.
+  * [ ] **Step 2:** Run `node --test test/expense-categories.test.js` and verify it fails.
+  * [ ] **Step 3:** Add INSERT SQL seeds to `migrations/0004_commercial_shipment_control.sql` and write `listExpenseCategories` in repository.
+  * [ ] **Step 4:** Run targeted test and confirm it passes.
+  * [ ] **Step 5:** Run overall regression tests.
+  * [ ] **Step 6:** Commit: `git commit -m "feat: Task 2 - seed expense categories and create repository reader"`
 
 ### [ ] Task 3 — Manager Price Note Backend
-* **Files:** Create `src/price-notes/repository.js`, Create `src/price-notes/routes.js`, Create `test/manager-price-notes.repository.test.js`, Create `test/manager-price-notes.routes.test.js`
-* **Details:**
-  * Implement `createPriceNote(dto, creatorId)` and `listPriceNotes(filters)`.
-  * Validate `offerPriceUsdPerMt > 0`.
-  * Enforce that CFR and CIF incoterms require a destination port; FOB does not.
-  * Implement HTTP routes:
+* **Files:**
+  * Create `src/price-notes/repository.js`
+  * Create `src/price-notes/routes.js`
+  * Create `test/manager-price-notes.repository.test.js`
+  * Create `test/manager-price-notes.routes.test.js`
+* **Interfaces:**
+  * Repository:
+    * `createPriceNote(dto, creatorId) => Promise<PriceNote>`
+    * `listPriceNotes(filters) => Promise<Array<PriceNote>>`
+  * API endpoints:
     * `POST /api/manager-price-notes`
+      * Payload DTO: `{ salesUserId, customerId, productId, incoterm, destinationPort, offerPriceUsdPerMt, note }`
+      * Returns: `200 OK` with `{ status: "SUCCESS", data: { priceNote } }` or `400 Bad Request` / `403 Forbidden`
     * `GET /api/manager-price-notes`
-  * Apply RBAC: Write requests are allowed only for `ADMIN` and `MANAGER` roles. Read requests are allowed for authenticated users.
-* **TDD Run:**
-  * Run `node --test test/manager-price-notes.repository.test.js test/manager-price-notes.routes.test.js`.
-* **Commit:** `git commit -m "feat: Task 3 - implement Manager Price Note repository and REST routes"`
+      * Query parameters: `salesUserId`, `customerId`, `productId`
+      * Returns: `200 OK` with `{ status: "SUCCESS", data: { priceNotes } }`
+  * RBAC rule: Write requires role `ADMIN` or `MANAGER`. Read requires authenticated session.
+* **TDD Process Steps:**
+  * [ ] **Step 1:** Write failing tests in `test/manager-price-notes.routes.test.js` asserting `SALES_SUPPORT` gets `403` on create, destination port is rejected when blank for `CFR` but allowed for `FOB`, and price notes can be saved by `MANAGER`.
+  * [ ] **Step 2:** Run `node --test test/manager-price-notes.routes.test.js` and confirm failure.
+  * [ ] **Step 3:** Implement repository and routes modules with the required guards and parameter checks.
+  * [ ] **Step 4:** Run targeted tests and confirm success.
+  * [ ] **Step 5:** Run all route regressions.
+  * [ ] **Step 6:** Commit: `git commit -m "feat: Task 3 - implement Manager Price Notes backend and RBAC guards"`
 
 ### [ ] Task 4 — Freight Quote Backend
-* **Files:** Modify `src/price-notes/repository.js`, Modify `src/price-notes/routes.js`, Create `test/freight-quotes.repository.test.js`, Create `test/freight-quotes.routes.test.js`
-* **Details:**
-  * Implement `createFreightQuote(dto, creatorId)` and `listFreightQuotes()`.
-  * Validate `quotedFreightUsdPerContainer > 0`. Currency is USD-only.
-  * Freight quotes exist independently from shipments or POs.
-  * Implement HTTP routes:
+* **Files:**
+  * Modify `src/price-notes/repository.js`
+  * Modify `src/price-notes/routes.js`
+  * Create `test/freight-quotes.repository.test.js`
+  * Create `test/freight-quotes.routes.test.js`
+* **Interfaces:**
+  * Repository:
+    * `createFreightQuote(dto, creatorId) => Promise<FreightQuote>`
+    * `listFreightQuotes() => Promise<Array<FreightQuote>>`
+  * API endpoints:
     * `POST /api/freight-quotes`
+      * Payload: `{ originPort, destinationPort, containerSize, shippingLineOrForwarder, quotedFreightUsdPerContainer, validUntil, remark }`
+      * Returns: `200 OK` or error codes.
     * `GET /api/freight-quotes`
-  * Apply RBAC: Write requests are allowed for `ADMIN`, `MANAGER`, and `EXPORT`/`SALES_SUPPORT` role equivalents.
-* **TDD Run:**
-  * Run `node --test test/freight-quotes.repository.test.js test/freight-quotes.routes.test.js`.
-* **Commit:** `git commit -m "feat: Task 4 - implement Freight Quote repository and API routes"`
+      * Returns: `{ status: "SUCCESS", data: { freightQuotes } }`
+  * RBAC rule: Write allowed for `ADMIN`, `MANAGER`, and `SALES_SUPPORT`.
+* **TDD Process Steps:**
+  * [ ] **Step 1:** Write a failing test in `test/freight-quotes.routes.test.js` verifying that `SALES_SUPPORT` can post freight quotes and that `quotedFreightUsdPerContainer <= 0` throws `400`.
+  * [ ] **Step 2:** Run `node --test test/freight-quotes.routes.test.js` and confirm failure.
+  * [ ] **Step 3:** Implement Freight Quote repository methods and write route controllers.
+  * [ ] **Step 4:** Run targeted tests and verify it passes.
+  * [ ] **Step 5:** Run full regression tests.
+  * [ ] **Step 6:** Commit: `git commit -m "feat: Task 4 - implement Freight Quotes repository and API endpoints"`
 
 ### [ ] Task 5 — Shipment Foundation & Documents Backend
-* **Files:** Create `src/shipments/repository.js`, Create `src/shipments/routes.js`, Create `test/shipment-documents.repository.test.js`, Create `test/shipment-documents.routes.test.js`
-* **Details:**
-  * Implement minimal D1 PO and Shipment creation helper methods (to replace front-end mocks in tests).
-  * Implement Document Links methods: `addShipmentDocumentLink(dto, creatorId)` and `listShipmentDocumentLinks(shipmentId)`.
-  * Enforce URL verification: `driveUrl` must start with `http://` or `https://`.
-  * Document types allowed: `PO`, `DI`, `BOOKING`, `STUFFING_REPORT`, `ALL_SHIP_DOC`, `IR`, `LC`.
-  * Allow multiple links per type.
-  * Implement HTTP routes:
+* **Files:**
+  * Create `src/shipments/repository.js`
+  * Create `src/shipments/routes.js`
+  * Create `test/shipment-documents.repository.test.js`
+  * Create `test/shipment-documents.routes.test.js`
+* **Interfaces:**
+  * Repository:
+    * `addShipmentDocumentLink(dto, creatorId) => Promise<DocumentLink>`
+    * `listShipmentDocumentLinks(shipmentId) => Promise<Array<DocumentLink>>`
+    * `createPoAnchor(dto)` / `createShipmentAnchor(dto)` (internal test helpers)
+  * API endpoints:
     * `POST /api/shipments/:id/documents`
+      * Payload: `{ documentType, title, driveUrl, referenceNo, remark }`
+      * Returns: `200 OK` or `400` / `403`
     * `GET /api/shipments/:id/documents`
-* **TDD Run:**
-  * Run `node --test test/shipment-documents.repository.test.js test/shipment-documents.routes.test.js`.
-* **Commit:** `git commit -m "feat: Task 5 - implement Shipment documents storage and link APIs"`
+      * Returns: `{ status: "SUCCESS", data: { documentLinks } }`
+  * Rules: Enforce `driveUrl` starts with `http://` or `https://` on the server before database mutation. Validate document type matches enums.
+* **TDD Process Steps:**
+  * [ ] **Step 1:** Write failing tests in `test/shipment-documents.routes.test.js` verifying multiple links storage and `driveUrl` validation error (e.g. invalid string `ftp://drive.google.com` gets `400`).
+  * [ ] **Step 2:** Run `node --test test/shipment-documents.routes.test.js` and confirm failure.
+  * [ ] **Step 3:** Implement repository and routes handler with URL check and dynamic SQLite insertions.
+  * [ ] **Step 4:** Run targeted tests and verify it passes.
+  * [ ] **Step 5:** Run full regression tests.
+  * [ ] **Step 6:** Commit: `git commit -m "feat: Task 5 - implement Shipment Document Links repository and endpoints"`
 
 ### [ ] Task 6 — Shipment Expenses Backend
-* **Files:** Modify `src/shipments/repository.js`, Modify `src/shipments/routes.js`, Create `test/shipment-expenses.repository.test.js`, Create `test/shipment-expenses.routes.test.js`
-* **Details:**
-  * Implement `addShipmentExpense(dto, creatorId)` and `listShipmentExpenses(shipmentId)`.
-  * Business rules for conversion:
-    * If currency is `THB`: `amount_thb` is equal to `amount` and `fx_used` is set to `null`.
-    * If currency is `USD`: `fx_used` must be present and greater than `0`. Calculate `amount_thb = amount * fx_used`.
-  * Calculate total shipment actual export cost as sum of `amount_thb`.
-  * Implement HTTP routes:
+* **Files:**
+  * Modify `src/shipments/repository.js`
+  * Modify `src/shipments/routes.js`
+  * Create `test/shipment-expenses.repository.test.js`
+  * Create `test/shipment-expenses.routes.test.js`
+* **Interfaces:**
+  * Repository:
+    * `addShipmentExpense(dto, creatorId) => Promise<ShipmentExpense>`
+    * `listShipmentExpenses(shipmentId) => Promise<Array<ShipmentExpense>>`
+  * API endpoints:
     * `POST /api/shipments/:id/expenses`
+      * Payload DTO: `{ expenseCategoryId, amount, currency, fxUsed, referenceNo, shipmentDocumentLinkId, remark }`
+      * Returns: `200 OK` or `400`
     * `GET /api/shipments/:id/expenses`
-* **TDD Run:**
-  * Run `node --test test/shipment-expenses.repository.test.js test/shipment-expenses.routes.test.js`.
-* **Commit:** `git commit -m "feat: Task 6 - implement Shipment expenses conversion and sum API"`
+      * Returns: `{ status: "SUCCESS", data: { expenses } }`
+  * Expense validation rules:
+    * If `currency === 'THB'`: `amount_thb = amount`, `fx_used = null`.
+    * If `currency === 'USD'`: require `fxUsed > 0`, calculate `amount_thb = amount * fxUsed`.
+* **TDD Process Steps:**
+  * [ ] **Step 1:** Write failing tests in `test/shipment-expenses.repository.test.js` verifying currency calculations (USD conversion, THB straight copy, missing FX error).
+  * [ ] **Step 2:** Run `node --test test/shipment-expenses.repository.test.js` and verify it fails.
+  * [ ] **Step 3:** Implement amount_thb computation and repository methods.
+  * [ ] **Step 4:** Run targeted tests and confirm they pass.
+  * [ ] **Step 5:** Run all route regressions.
+  * [ ] **Step 6:** Commit: `git commit -m "feat: Task 6 - implement Shipment Expenses conversion and sum logic"`
 
 ### [ ] Task 7 — Ocean Freight Variance Logic
-* **Files:** Modify `src/shipments/repository.js`, Create `test/freight-variance.test.js`
-* **Details:**
-  * Implement Ocean Freight comparison check. If a Shipment references a `Freight Quote` and contains expense entries belonging to the `OCEAN_FREIGHT` category group:
-    * Aggregate all ocean-freight expense amounts (USD).
-    * Compute `Freight Variance = Quoted Freight - Actual Freight`.
-    * Return variance value (positive is favorable/saving, negative is unfavorable/loss).
-  * Exclude foreign exchange (FX) from variance calculation; comparison is USD-to-USD.
-* **TDD Run:**
-  * Run `node --test test/freight-variance.test.js`.
-* **Commit:** `git commit -m "feat: Task 7 - implement Ocean Freight variance calculation logic"`
+* **Files:**
+  * Modify `src/shipments/repository.js`
+  * Create `test/freight-variance.test.js`
+* **Interfaces:**
+  * Repository:
+    * `getShipmentFreightVariance(shipmentId) => Promise<{ quotedFreight: number, actualFreightSum: number, variance: number }>`
+  * Variance Sign Convention: `Freight Variance = Quoted Freight - Actual Freight`
+  * Variance Calculation Rule: Sum all expenses for the shipment where the category belongs to the `OCEAN_FREIGHT` group. Compare this total USD value to the associated `quoted_freight_usd_per_container` referenced in the shipment. Ignore FX values (comparison is USD-only).
+* **TDD Process Steps:**
+  * [ ] **Step 1:** Write a failing test in `test/freight-variance.test.js` seeding a shipment with a $1,500 quote and two actual ocean freight expenses of $700 and $900. Assert the returned variance is `-100` (unfavorable).
+  * [ ] **Step 2:** Run `node --test test/freight-variance.test.js` and verify failure.
+  * [ ] **Step 3:** Implement aggregation and comparison logic in the repository.
+  * [ ] **Step 4:** Run targeted test and confirm success.
+  * [ ] **Step 5:** Run all regressions.
+  * [ ] **Step 6:** Commit: `git commit -m "feat: Task 7 - implement USD-to-USD Ocean Freight variance comparison"`
 
 ### [ ] Task 8 — API Route Wiring
-* **Files:** Modify `src/index.js`
-* **Details:**
-  * Import handlers `createPriceNoteHandlerFromEnv` and `createShipmentHandlerFromEnv`.
-  * Register route prefixes in the API gateway routing block:
+* **Files:**
+  * Modify `src/index.js`
+* **Interfaces:**
+  * Consumes: incoming HTTP Requests
+  * Produces: routes incoming requests to appropriate handler
+  * Paths wired:
     * `/api/manager-price-notes`
     * `/api/freight-quotes`
     * `/api/expense-categories`
-    * `/api/shipments`
-    * `/api/customer-specs` (already exists, but ensure routing matches).
-* **TDD Run:**
-  * Run `npm test` to verify no existing tests break and all API paths are routed correctly.
-* **Commit:** `git commit -m "feat: Task 8 - composition and route wiring in composition entry"`
+    * `/api/shipments` (covering subpaths `/api/shipments/:id/expenses` and `/api/shipments/:id/documents`)
+* **TDD Process Steps:**
+  * [ ] **Step 1:** Add a routing test in `test/method-guard-regression.test.js` asserting that requests to the new paths are correctly delegated and not matched by fallback 404s.
+  * [ ] **Step 2:** Run `node --test test/method-guard-regression.test.js` and confirm failure.
+  * [ ] **Step 3:** Wire imports and routing conditions in `src/index.js`.
+  * [ ] **Step 4:** Run targeted test and confirm it passes.
+  * [ ] **Step 5:** Run all regressions.
+  * [ ] **Step 6:** Commit: `git commit -m "feat: Task 8 - wire Phase 5E api route paths in composable gateway"`
 
-### [ ] Task 9 — Frontend Manager Price Note UI
-* **Files:** Modify `public/index.html`
-* **Details:**
-  * Remove mock Pricing state and wire Price Note creation and list loading directly to `/api/manager-price-notes`.
-  * Implement customer dropdown filtering based on selected salesperson.
-  * Set conditional visibility/validation on destination port depending on Incoterm selection (FOB vs CFR/CIF).
-  * Render recent price notes history newest-first.
-* **Commit:** `git commit -m "feat: Task 9 - build frontend Manager Price Note offering interface"`
+### [ ] Task 9 — Frontend Manager Price Note UI (TDD)
+* **Files:**
+  * Modify `public/index.html`
+  * Create `test/frontend-pricing-shipment-adapter.test.js`
+* **Interfaces:**
+  * Frontend functions:
+    * `loadPriceNotesFromApi() => Promise<void>` (fetches `/api/manager-price-notes` and saves to `state.priceNotes`)
+    * `savePriceNoteToApi(note) => Promise<PriceNote>`
+    * `renderPriceNotesForm()`
+* **TDD Process Steps:**
+  * [ ] **Step 1:** Write a failing frontend adapter test in `test/frontend-pricing-shipment-adapter.test.js` checking that `loadPriceNotesFromApi()` calls the correct endpoint, matches payload structure, and updates `state.priceNotes`.
+  * [ ] **Step 2:** Run `node --test test/frontend-pricing-shipment-adapter.test.js` and confirm failure.
+  * [ ] **Step 3:** Implement UI input elements, dropdown filter bindings, and loader functions in `public/index.html`.
+  * [ ] **Step 4:** Run targeted test and confirm it passes.
+  * [ ] **Step 5:** Run frontend adapter regressions.
+  * [ ] **Step 6:** Commit: `git commit -m "feat: Task 9 - implement frontend Manager Price Notes interface with TDD"`
 
-### [ ] Task 10 — Frontend Freight Quote UI
-* **Files:** Modify `public/index.html`
-* **Details:**
-  * Wire Freight Quotes UI panel to load and save to `/api/freight-quotes`.
-  * Restrict creation controls based on user role.
-* **Commit:** `git commit -m "feat: Task 10 - build frontend Freight Quote reference panel"`
+### [ ] Task 10 — Frontend Freight Quote UI (TDD)
+* **Files:**
+  * Modify `public/index.html`
+  * Modify `test/frontend-pricing-shipment-adapter.test.js`
+* **Interfaces:**
+  * Frontend functions:
+    * `loadFreightQuotesFromApi() => Promise<void>` (saves to `state.freightQuotes`)
+    * `saveFreightQuoteToApi(quote) => Promise<FreightQuote>`
+* **TDD Process Steps:**
+  * [ ] **Step 1:** Write a failing frontend adapter test in `test/frontend-pricing-shipment-adapter.test.js` verifying `saveFreightQuoteToApi()` maps inputs to a `POST` request and calls `renderView()`.
+  * [ ] **Step 2:** Run the test and verify it fails.
+  * [ ] **Step 3:** Implement Freight Quote list and forms in `public/index.html`.
+  * [ ] **Step 4:** Run targeted test and confirm success.
+  * [ ] **Step 5:** Run frontend regressions.
+  * [ ] **Step 6:** Commit: `git commit -m "feat: Task 10 - implement frontend Freight Quote reference panel with TDD"`
 
-### [ ] Task 11 — Frontend Shipment Detail UI
-* **Files:** Modify `public/index.html`
-* **Details:**
-  * Upgrade Shipment Detail view to include three tabs: Overview, Costs, and Documents.
-  * Overview: Display identity, Ocean Freight summary (Quoted USD, Actual USD, Variance USD), Total THB expenses, and document presence indicators.
-  * Costs: Form to record expenses (validating currency and exchange rate input) and aggregate list.
-  * Documents: Groups for PO, DI, Booking, Stuffing Report, All Ship Doc, IR, LC allowing adding multiple links.
-* **Commit:** `git commit -m "feat: Task 11 - upgrade Shipment Detail panel with costs and Drive links"`
+### [ ] Task 11 — Frontend Shipment Detail UI (TDD)
+* **Files:**
+  * Modify `public/index.html`
+  * Modify `test/frontend-pricing-shipment-adapter.test.js`
+* **Interfaces:**
+  * Frontend functions:
+    * `loadShipmentExpensesFromApi(shipmentId) => Promise<void>`
+    * `saveShipmentExpenseToApi(shipmentId, expense) => Promise<void>`
+    * `loadShipmentDocumentLinksFromApi(shipmentId) => Promise<void>`
+    * `saveShipmentDocumentLinkToApi(shipmentId, link) => Promise<void>`
+* **TDD Process Steps:**
+  * [ ] **Step 1:** Write failing tests in `test/frontend-pricing-shipment-adapter.test.js` checking that expense entry submissions validate currency selections, and document group links support multiple URLs.
+  * [ ] **Step 2:** Run the test and verify it fails.
+  * [ ] **Step 3:** Implement tabs (Overview, Costs, Documents) inside the Shipment Detail view in `public/index.html` and write the loaders.
+  * [ ] **Step 4:** Run targeted test and confirm it passes.
+  * [ ] **Step 5:** Run all frontend regressions.
+  * [ ] **Step 6:** Commit: `git commit -m "feat: Task 11 - implement frontend Shipment detail tabs with costs and docs"`
 
 ### [ ] Task 12 — End-to-End Regression & Verification
-* **Files:** Run verification scripts and test suites.
+* **Files:** None (Gate Task)
 * **Details:**
-  * Verify all 115 original tests + new test files pass cleanly.
-  * Verify no syntax errors on changed JS files.
-* **Commit:** `git commit -m "test: Task 12 - execute full regression and verify green status"`
+  * Run the full test suite (`npm test`) containing all 115 original tests plus the 12 new regression test files (~140 tests total).
+  * Run syntax checks on changed JS files using `node --check`.
+  * Verify `git status` shows no dirty untracked modifications.
+  * **STOP immediately on any test or lint failure.**
 
-### [ ] Task 13 — Project Status Update
+### [ ] Task 13 — Pull Request, Review, and Merge Gate
+* **Files:** None (Gate Task)
+* **Details:**
+  * Push the feature branch `feature/commercial-shipment-control` to origin.
+  * Create Pull Request #7 on GitHub pointing to `main`.
+  * PR description must clearly outline the Phase 5E summary, relational database anchors, and TDD verification count.
+  * Resolve review findings, verify CI/tests build.
+  * Merge PR into `main` using normal merge commit.
+  * Pull updated `main` branch to primary workspace and verify HEAD commit.
+  * Only after successful merge, update `docs/PROJECT_STATUS.md` status to `COMPLETE / MERGED / DEPLOYMENT PENDING`.
+* **Commit:** `git commit -m "docs: Task 13 - update project status to merged"`
+
+---
+
+## Task 14 — Deploy and Production Verify (Separately Gated)
+
 * **Files:** Modify `docs/PROJECT_STATUS.md`
 * **Details:**
-  * Update Phase 5E status to `COMPLETE / MERGED / DEPLOYMENT PENDING`.
-  * Update the current stopped checkpoint.
-* **Commit:** `git commit -m "docs: Task 13 - update project status to completed"`
 
-### [ ] Task 14 — Deploy and Production Verify
-* **Files:** None (Deployment-only task)
-* **Details:**
-  * Deploy database migrations to remote D1.
-  * Deploy Worker code to remote.
-  * Perform functional smoke tests using TEST data.
-  * Cleanup test data.
-  * Update status to `COMPLETE / MERGED / DEPLOYED / PRODUCTION VERIFIED`.
-* **Commit:** `git commit -m "docs: close Phase 5E production verification"`
+### Preflight Checks
+* Confirm primary workspace main HEAD matches the merged main commit.
+* Execute `npm test` pre-deployment and verify ~140 tests pass.
+* Verify syntax on all changed files.
+* Retrieve D1 row counts of critical tables (`users`, `sessions`, `customers`, `customer_contacts`) to establish a pre-migration backup reference.
+
+### Apply Migration
+* Apply database migration:
+  ```powershell
+  npx wrangler d1 migrations apply wcat-sales-db --remote
+  ```
+* Verify database table structure contains the 7 new tables: `pos`, `shipments`, `expense_categories`, `manager_price_notes`, `freight_quotes`, `shipment_document_links`, `shipment_expenses`.
+* Verify existing critical tables row counts match exactly (no data loss/unintended changes).
+
+### Deploy Worker
+* Deploy merged main Worker to Cloudflare:
+  ```powershell
+  npx wrangler deploy
+  ```
+* Record the new Worker Version ID and deployment URL.
+
+### Production Smoke Test (UI & API)
+* Verify auth login page is accessible and healthy.
+* Create a test Product Category (`TEST_TAPIOCA`) and Product Form (`TEST_PELLET`).
+* Create a temporary test Product (`TEST-P5E-001`).
+* Create a test Manager Price Note and verify persistence.
+* Create a test Freight Quote.
+* Create a minimal test PO and Shipment anchor record.
+* Create standard shipment expenses (USD converting to THB, THB straight copying) and check totals.
+* Add multiple Drive document links.
+* Check Ocean Freight variance calculation on the Overview panel.
+* Verify existing CRM/External Sales modules are healthy.
+* **Cleanup:** Deactivate test product, archive test specs, and remove test session records from remote database.
+
+### Close Phase 5E
+* Update `docs/PROJECT_STATUS.md` Phase 5E status to: `COMPLETE / MERGED / DEPLOYED / PRODUCTION VERIFIED`
+* Record deployment parameters (Merge commit, D1 ID, Version ID).
+* Commit status changes:
+  ```powershell
+  git commit -m "docs: close Phase 5E production verification"
+  ```
+* Push main.
