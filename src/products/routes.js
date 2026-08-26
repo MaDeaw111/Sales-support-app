@@ -246,6 +246,122 @@ export function createProductHandler({ repo, resolveUser, db }) {
       }
     }
 
+    // GET /api/customers/:customerId/specs
+    const listCustomerSpecsMatch = path.match(/^\/api\/customers\/([^/]+)\/specs$/);
+    if (listCustomerSpecsMatch) {
+      const customerId = listCustomerSpecsMatch[1];
+      const prodQuery = url.searchParams.get('productId') || null;
+      const appQuery = url.searchParams.get('application') || null;
+      const customerSpecs = await repo.listCustomerSpecs(customerId, prodQuery, appQuery);
+      return json({ status: 'SUCCESS', data: { customerSpecs } });
+    }
+
+    // POST /api/customer-specs
+    if (path === '/api/customer-specs' && method === 'POST') {
+      const body = await readJson(request);
+      if (!body || typeof body !== 'object' || Array.isArray(body)) {
+        return json({ status: 'ERROR', message: 'Invalid request body.' }, 400);
+      }
+      try {
+        const customerSpec = await repo.createCustomerSpecDraft({
+          customerId: body.customerId,
+          productId: body.productId,
+          application: body.application,
+          baseStandardSpecId: body.baseStandardSpecId,
+          effectiveDate: body.effectiveDate,
+          notes: body.notes,
+          createdBy: caller.id
+        });
+        return json({ status: 'SUCCESS', data: { customerSpec } });
+      } catch (err) {
+        return json({ status: 'ERROR', message: err.message }, 400);
+      }
+    }
+
+    // Customer Spec detail & overrides matching /api/customer-specs/:id
+    const custSpecMatch = path.match(/^\/api\/customer-specs\/([^/]+)$/);
+    if (custSpecMatch) {
+      const specId = custSpecMatch[1];
+
+      // GET /api/customer-specs/:id
+      if (method === 'GET') {
+        const customerSpec = await repo.findCustomerSpecById(specId);
+        if (!customerSpec) {
+          return json({ status: 'ERROR', message: 'Customer specification not found.' }, 404);
+        }
+        return json({ status: 'SUCCESS', data: { customerSpec } });
+      }
+
+      // PUT /api/customer-specs/:id
+      if (method === 'PUT') {
+        const body = await readJson(request);
+        if (!body || typeof body !== 'object' || Array.isArray(body) || !body.overrides) {
+          return json({ status: 'ERROR', message: 'Invalid request body.' }, 400);
+        }
+        try {
+          const validated = await validateSpecItems(db, body.overrides);
+          const customerSpec = await repo.updateCustomerSpecDraftOverrides(specId, validated, caller.id);
+          return json({ status: 'SUCCESS', data: { customerSpec } });
+        } catch (err) {
+          if (err.message && err.message.includes('not found')) {
+            return json({ status: 'ERROR', message: 'Customer specification not found.' }, 404);
+          }
+          return json({ status: 'ERROR', message: err.message }, 400);
+        }
+      }
+    }
+
+    // GET /api/customer-specs/:id/effective
+    const effectiveMatch = path.match(/^\/api\/customer-specs\/([^/]+)\/effective$/);
+    if (effectiveMatch && method === 'GET') {
+      const specId = effectiveMatch[1];
+      try {
+        const effectiveSpec = await repo.resolveEffectiveCustomerSpec(specId);
+        return json({ status: 'SUCCESS', data: { effectiveSpec } });
+      } catch (err) {
+        if (err.message && err.message.includes('not found')) {
+          return json({ status: 'ERROR', message: 'Customer specification not found.' }, 404);
+        }
+        return json({ status: 'ERROR', message: err.message }, 400);
+      }
+    }
+
+    // POST /api/customer-specs/:id/activate
+    const activateCustMatch = path.match(/^\/api\/customer-specs\/([^/]+)\/activate$/);
+    if (activateCustMatch && method === 'POST') {
+      if (!isAdmin && !isManager) {
+        return json({ status: 'ERROR', message: 'Permission denied.' }, 403);
+      }
+      const specId = activateCustMatch[1];
+      try {
+        const customerSpec = await repo.activateCustomerSpec(specId, caller.id);
+        return json({ status: 'SUCCESS', data: { customerSpec } });
+      } catch (err) {
+        if (err.message && err.message.includes('not found')) {
+          return json({ status: 'ERROR', message: 'Customer specification not found.' }, 404);
+        }
+        return json({ status: 'ERROR', message: err.message }, 400);
+      }
+    }
+
+    // POST /api/customer-specs/:id/archive
+    const archiveCustMatch = path.match(/^\/api\/customer-specs\/([^/]+)\/archive$/);
+    if (archiveCustMatch && method === 'POST') {
+      if (!isAdmin && !isManager) {
+        return json({ status: 'ERROR', message: 'Permission denied.' }, 403);
+      }
+      const specId = archiveCustMatch[1];
+      try {
+        const customerSpec = await repo.archiveCustomerSpec(specId, caller.id);
+        return json({ status: 'SUCCESS', data: { customerSpec } });
+      } catch (err) {
+        if (err.message && err.message.includes('not found')) {
+          return json({ status: 'ERROR', message: 'Customer specification not found.' }, 404);
+        }
+        return json({ status: 'ERROR', message: err.message }, 400);
+      }
+    }
+
     return json({ status: 'ERROR', message: 'Route not found.' }, 404);
   };
 }
