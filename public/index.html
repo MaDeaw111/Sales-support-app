@@ -270,6 +270,186 @@
             }
         }
 
+        async function loadPriceNotesFromApi() {
+            try {
+                const filters = state.priceNotesFilters || {};
+                const params = new URLSearchParams();
+                if (filters.salesUserId) params.set('salesUserId', filters.salesUserId);
+                if (filters.customerId) params.set('customerId', filters.customerId);
+                if (filters.productId) params.set('productId', filters.productId);
+                if (filters.dateFrom) params.set('dateFrom', filters.dateFrom);
+                if (filters.dateTo) params.set('dateTo', filters.dateTo);
+
+                const res = await fetch('/api/manager-price-notes?' + params.toString());
+                if (!res.ok) return;
+                const body = await res.json();
+                if (body && body.status === 'SUCCESS' && body.data && Array.isArray(body.data.priceNotes)) {
+                    state.priceNotes = body.data.priceNotes;
+                    renderView();
+                }
+            } catch (err) {
+                console.error('Failed to load price notes:', err);
+            }
+        }
+
+        async function savePriceNoteToApi(payload) {
+            const res = await fetch('/api/manager-price-notes', {
+                method: 'POST',
+                headers: { 'content-type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
+            if (!res.ok) {
+                const errBody = await res.json();
+                throw new Error(errBody.message || 'Failed to save price note');
+            }
+            const body = await res.json();
+            return body.data.priceNote;
+        }
+
+        async function loadFreightQuotesFromApi() {
+            try {
+                const res = await fetch('/api/freight-quotes');
+                if (!res.ok) return;
+                const body = await res.json();
+                if (body && body.status === 'SUCCESS' && body.data && Array.isArray(body.data.freightQuotes)) {
+                    state.freightQuotes = body.data.freightQuotes;
+                    renderView();
+                }
+            } catch (err) {
+                console.error('Failed to load freight quotes:', err);
+            }
+        }
+
+        async function saveFreightQuoteToApi(payload) {
+            const res = await fetch('/api/freight-quotes', {
+                method: 'POST',
+                headers: { 'content-type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
+            if (!res.ok) {
+                const errBody = await res.json();
+                throw new Error(errBody.message || 'Failed to save freight quote');
+            }
+            const body = await res.json();
+            return body.data.freightQuote;
+        }
+
+        async function loadShipmentExpensesFromApi(shipmentId) {
+            try {
+                const res = await fetch(`/api/shipments/${shipmentId}/expenses`);
+                if (!res.ok) return;
+                const body = await res.json();
+                if (body && body.status === 'SUCCESS' && body.data) {
+                    state.shipmentExpenses = body.data.expenses || [];
+                    state.totalActualExportCostThb = body.data.totalActualExportCostThb || 0;
+                    state.freightVariance = body.data.freightVariance || null;
+                    renderView();
+                }
+            } catch (err) {
+                console.error('Failed to load shipment expenses:', err);
+            }
+        }
+
+        async function saveShipmentExpenseToApi(shipmentId, payload) {
+            const res = await fetch(`/api/shipments/${shipmentId}/expenses`, {
+                method: 'POST',
+                headers: { 'content-type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
+            if (!res.ok) {
+                const errBody = await res.json();
+                throw new Error(errBody.message || 'Failed to save shipment expense');
+            }
+            const body = await res.json();
+            return body.data.expense;
+        }
+
+        async function loadShipmentDocumentLinksFromApi(shipmentId) {
+            try {
+                const res = await fetch(`/api/shipments/${shipmentId}/documents`);
+                if (!res.ok) return;
+                const body = await res.json();
+                if (body && body.status === 'SUCCESS' && body.data && Array.isArray(body.data.documentLinks)) {
+                    state.shipmentDocumentLinks = body.data.documentLinks;
+                    renderView();
+                }
+            } catch (err) {
+                console.error('Failed to load shipment document links:', err);
+            }
+        }
+
+        async function saveShipmentDocumentLinkToApi(shipmentId, payload) {
+            const res = await fetch(`/api/shipments/${shipmentId}/documents`, {
+                method: 'POST',
+                headers: { 'content-type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
+            if (!res.ok) {
+                const errBody = await res.json();
+                throw new Error(errBody.message || 'Failed to save shipment document link');
+            }
+            const body = await res.json();
+            return body.data.documentLink;
+        }
+
+        async function ensureShipmentAnchorToApi(shipmentId, payload) {
+            const res = await fetch(`/api/shipments/${shipmentId}/ensure`, {
+                method: 'POST',
+                headers: { 'content-type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
+            if (!res.ok) {
+                const errBody = await res.json();
+                throw new Error(errBody.message || 'Failed to ensure shipment anchor');
+            }
+            const body = await res.json();
+            return body.data.shipment;
+        }
+
+        async function updateShipmentToApi(shipmentId, payload) {
+            const res = await fetch(`/api/shipments/${shipmentId}`, {
+                method: 'PUT',
+                headers: { 'content-type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
+            if (!res.ok) {
+                const errBody = await res.json();
+                throw new Error(errBody.message || 'Failed to update shipment');
+            }
+            const body = await res.json();
+            return body.data.shipment;
+        }
+
+        async function loadShipmentDetailFromApi(shipmentId) {
+            try {
+                const res = await fetch(`/api/shipments/${shipmentId}`);
+                if (!res.ok) return null;
+                const body = await res.json();
+                if (body && body.status === 'SUCCESS' && body.data) {
+                    state.currentShipment = body.data.shipment;
+                    renderView();
+                    return body.data.shipment;
+                }
+            } catch (err) {
+                console.error('Failed to load shipment detail:', err);
+            }
+            return null;
+        }
+
+        async function loadExpenseCategoriesFromApi() {
+            try {
+                const res = await fetch('/api/expense-categories');
+                if (!res.ok) return;
+                const body = await res.json();
+                if (body && body.status === 'SUCCESS' && body.data && Array.isArray(body.data.categories)) {
+                    state.expenseCategories = body.data.categories;
+                    renderView();
+                }
+            } catch (err) {
+                console.error('Failed to load expense categories:', err);
+            }
+        }
+
         async function loadCustomersFromApi() {
             try {
                 const res = await fetch('/api/customers');
@@ -847,6 +1027,13 @@
             const main = document.getElementById('mainContent');
             renderPricing(main);
             lucide.createIcons();
+            if (tab === 'PRICE_NOTES') {
+                loadPriceNotesFromApi();
+                loadUsersFromApi();
+            } else if (tab === 'FREIGHT_QUOTES') {
+                loadFreightQuotesFromApi();
+                loadUsersFromApi();
+            }
         }
 
         function canManagePricing() {
@@ -904,6 +1091,540 @@
             state.pricingTab = 'SPECIAL'; closeModal(); renderPricing(document.getElementById('mainContent'));
         }
 
+        function filterPnCustomerDropdown(salesUserId) {
+            const customerSelect = document.getElementById('pnCustomer');
+            if (!customerSelect) return;
+            const currentSelected = customerSelect.value;
+            const filtered = getScopedCustomers().filter(c => c.ownerId === salesUserId);
+            customerSelect.innerHTML = filtered.map(c => `<option value="${c.id}">${c.name}</option>`).join('') || '<option value="">-- No Customers Owned --</option>';
+            if (!filtered.some(c => c.id === currentSelected)) {
+                customerSelect.value = filtered[0]?.id || '';
+            } else {
+                customerSelect.value = currentSelected;
+            }
+        }
+
+        function openAddPriceNoteModal() {
+            const salesUsers = (state.adminUsers || []).filter(u => u.role === 'EXTERNAL_SALES');
+            const salesOptions = salesUsers.map(u => `<option value="${u.user_id || u.id}">${u.full_name}</option>`).join('');
+            const firstSalesUser = salesUsers[0];
+            const firstSalesUserId = firstSalesUser ? (firstSalesUser.user_id || firstSalesUser.id) : '';
+            const filteredCustomers = getScopedCustomers().filter(c => c.ownerId === firstSalesUserId);
+            const customerOptions = filteredCustomers.map(c => `<option value="${c.id}">${c.name}</option>`).join('') || '<option value="">-- No Customers Owned --</option>';
+            const productOptions = (state.products || []).map(p => `<option value="${p.id}">${p.shortName}</option>`).join('');
+
+            openModal(`
+                <div class="space-y-4">
+                    <div class="flex justify-between items-start">
+                        <div>
+                            <h3 class="text-lg font-bold text-slate-900">Add Manager Price Note</h3>
+                            <p class="text-xs text-slate-500">Provide binding price note for sales guidance.</p>
+                        </div>
+                        <button onclick="closeModal()" class="text-slate-400 text-xl">&times;</button>
+                    </div>
+                    <div class="grid grid-cols-2 gap-3">
+                        <div>
+                            <label class="text-xs font-bold text-slate-600">Sales User</label>
+                            <select id="pnSalesUser" onchange="filterPnCustomerDropdown(this.value)" class="mt-1 w-full border rounded-lg px-3 py-2 text-sm">${salesOptions}</select>
+                        </div>
+                        <div>
+                            <label class="text-xs font-bold text-slate-600">Customer</label>
+                            <select id="pnCustomer" class="mt-1 w-full border rounded-lg px-3 py-2 text-sm">${customerOptions}</select>
+                        </div>
+                    </div>
+                    <div>
+                        <label class="text-xs font-bold text-slate-600">Product</label>
+                        <select id="pnProduct" class="mt-1 w-full border rounded-lg px-3 py-2 text-sm">${productOptions}</select>
+                    </div>
+                    <div class="grid grid-cols-2 gap-3">
+                        <div>
+                            <label class="text-xs font-bold text-slate-600">Incoterm</label>
+                            <select id="pnIncoterm" onchange="togglePnPortField(this.value)" class="mt-1 w-full border rounded-lg px-3 py-2 text-sm">
+                                <option value="FOB">FOB</option>
+                                <option value="CFR">CFR</option>
+                                <option value="CIF">CIF</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label class="text-xs font-bold text-slate-600">Destination Port</label>
+                            <input id="pnPort" type="text" disabled class="mt-1 w-full border rounded-lg px-3 py-2 text-sm bg-slate-100">
+                        </div>
+                    </div>
+                    <div>
+                        <label class="text-xs font-bold text-slate-600">Offer Price (USD / MT)</label>
+                        <input id="pnPrice" type="number" step="0.01" class="mt-1 w-full border rounded-lg px-3 py-2 text-sm">
+                    </div>
+                    <div>
+                        <label class="text-xs font-bold text-slate-600">Note</label>
+                        <textarea id="pnNote" class="mt-1 w-full border rounded-lg px-3 py-2 text-sm" rows="3"></textarea>
+                    </div>
+                    <div class="flex justify-end gap-2">
+                        <button onclick="closeModal()" class="px-4 py-2 rounded-lg border text-xs font-bold">Cancel</button>
+                        <button onclick="submitPriceNote()" class="px-4 py-2 rounded-lg bg-blue-600 text-white text-xs font-bold">Add Note</button>
+                    </div>
+                </div>
+            `);
+        }
+
+        function togglePnPortField(incoterm) {
+            const port = document.getElementById('pnPort');
+            if (incoterm === 'FOB') {
+                port.value = '';
+                port.disabled = true;
+                port.classList.add('bg-slate-100');
+            } else {
+                port.disabled = false;
+                port.classList.remove('bg-slate-100');
+            }
+        }
+
+        async function submitPriceNote() {
+            const salesUserId = document.getElementById('pnSalesUser').value;
+            const customerId = document.getElementById('pnCustomer').value;
+            const productId = document.getElementById('pnProduct').value;
+            const incoterm = document.getElementById('pnIncoterm').value;
+            const destinationPort = document.getElementById('pnPort').value;
+            const offerPriceUsdPerMt = Number(document.getElementById('pnPrice').value || 0);
+            const note = document.getElementById('pnNote').value;
+
+            if (offerPriceUsdPerMt <= 0) return alert('Offer price must be greater than zero.');
+            if (['CFR', 'CIF'].includes(incoterm) && (!destinationPort || !destinationPort.trim())) {
+                return alert('Destination port is required for CFR and CIF.');
+            }
+
+            try {
+                const saved = await savePriceNoteToApi({
+                    salesUserId,
+                    customerId,
+                    productId,
+                    incoterm,
+                    destinationPort,
+                    offerPriceUsdPerMt,
+                    note
+                });
+                state.priceNotes = state.priceNotes || [];
+                state.priceNotes.unshift(saved);
+                closeModal();
+                renderPricing(document.getElementById('mainContent'));
+            } catch (err) {
+                alert('Error saving price note: ' + err.message);
+            }
+        }
+
+        function canWriteFreightQuotes() {
+            return ['MANAGER', 'ADMIN', 'SALES_SUPPORT'].includes(state.currentUser.role);
+        }
+
+        function openAddFreightQuoteModal() {
+            if (!canWriteFreightQuotes()) return alert('Permission denied.');
+
+            openModal(`
+                <div class="space-y-4">
+                    <div class="flex justify-between items-start">
+                        <div>
+                            <h3 class="text-lg font-bold text-slate-900">Add Freight Quote</h3>
+                            <p class="text-xs text-slate-500">Record a new ocean freight quotation reference.</p>
+                        </div>
+                        <button onclick="closeModal()" class="text-slate-400 text-xl">&times;</button>
+                    </div>
+                    <div class="grid grid-cols-2 gap-3">
+                        <div>
+                            <label class="text-xs font-bold text-slate-600">Origin Port</label>
+                            <input id="fqOrigin" type="text" value="Laem Chabang" class="mt-1 w-full border rounded-lg px-3 py-2 text-sm">
+                        </div>
+                        <div>
+                            <label class="text-xs font-bold text-slate-600">Destination Port</label>
+                            <input id="fqDestination" type="text" class="mt-1 w-full border rounded-lg px-3 py-2 text-sm">
+                        </div>
+                    </div>
+                    <div class="grid grid-cols-2 gap-3">
+                        <div>
+                            <label class="text-xs font-bold text-slate-600">Container Size</label>
+                            <input id="fqSize" type="text" value="20' GP" class="mt-1 w-full border rounded-lg px-3 py-2 text-sm">
+                        </div>
+                        <div>
+                            <label class="text-xs font-bold text-slate-600">Shipping Line / Forwarder</label>
+                            <input id="fqLine" type="text" class="mt-1 w-full border rounded-lg px-3 py-2 text-sm">
+                        </div>
+                    </div>
+                    <div class="grid grid-cols-2 gap-3">
+                        <div>
+                            <label class="text-xs font-bold text-slate-600">Quoted USD / Container</label>
+                            <input id="fqPrice" type="number" step="0.01" class="mt-1 w-full border rounded-lg px-3 py-2 text-sm">
+                        </div>
+                        <div>
+                            <label class="text-xs font-bold text-slate-600">Valid Until</label>
+                            <input id="fqValid" type="date" class="mt-1 w-full border rounded-lg px-3 py-2 text-sm">
+                        </div>
+                    </div>
+                    <div>
+                        <label class="text-xs font-bold text-slate-600">Remark</label>
+                        <textarea id="fqRemark" class="mt-1 w-full border rounded-lg px-3 py-2 text-sm" rows="2"></textarea>
+                    </div>
+                    <div class="flex justify-end gap-2">
+                        <button onclick="closeModal()" class="px-4 py-2 rounded-lg border text-xs font-bold">Cancel</button>
+                        <button onclick="submitFreightQuote()" class="px-4 py-2 rounded-lg bg-blue-600 text-white text-xs font-bold">Add Quote</button>
+                    </div>
+                </div>
+            `);
+        }
+
+        async function submitFreightQuote() {
+            const originPort = document.getElementById('fqOrigin').value;
+            const destinationPort = document.getElementById('fqDestination').value;
+            const containerSize = document.getElementById('fqSize').value;
+            const shippingLineOrForwarder = document.getElementById('fqLine').value;
+            const quotedFreightUsdPerContainer = Number(document.getElementById('fqPrice').value || 0);
+            const validUntil = document.getElementById('fqValid').value;
+            const remark = document.getElementById('fqRemark').value;
+
+            if (!originPort || !destinationPort || !containerSize || !shippingLineOrForwarder) {
+                return alert('Origin, Destination, Container Size, and Shipping Line are required.');
+            }
+            if (quotedFreightUsdPerContainer <= 0) {
+                return alert('Quoted freight must be greater than zero.');
+            }
+
+            try {
+                const saved = await saveFreightQuoteToApi({
+                    originPort,
+                    destinationPort,
+                    containerSize,
+                    shippingLineOrForwarder,
+                    quotedFreightUsdPerContainer,
+                    validUntil,
+                    remark
+                });
+                state.freightQuotes = state.freightQuotes || [];
+                state.freightQuotes.unshift(saved);
+                closeModal();
+                renderPricing(document.getElementById('mainContent'));
+            } catch (err) {
+                alert('Error saving freight quote: ' + err.message);
+            }
+        }
+
+        async function updateShipmentOneContainer(shipmentId, checked) {
+            try {
+                const isOneContainer = checked ? 1 : 0;
+                await updateShipmentToApi(shipmentId, { isOneContainer });
+                await loadShipmentDetailFromApi(shipmentId);
+                await loadShipmentExpensesFromApi(shipmentId);
+            } catch (err) {
+                alert('Error updating shipment type: ' + err.message);
+            }
+        }
+
+        async function updateShipmentFreightQuote(shipmentId, quoteId) {
+            try {
+                await updateShipmentToApi(shipmentId, { freightQuoteId: quoteId || null });
+                await loadShipmentDetailFromApi(shipmentId);
+                await loadShipmentExpensesFromApi(shipmentId);
+            } catch (err) {
+                alert('Error linking freight quote: ' + err.message);
+            }
+        }
+
+        function toggleExpFxField(currency) {
+            const fx = document.getElementById('expFx');
+            if (currency === 'THB') {
+                fx.value = '';
+                fx.disabled = true;
+                fx.classList.add('bg-slate-100');
+            } else {
+                fx.disabled = false;
+                fx.classList.remove('bg-slate-100');
+            }
+        }
+
+        function openManageExpensesModal(shipmentId) {
+            const categoryOptions = (state.expenseCategories || []).map(c => `<option value="${c.id}">${c.category_name} (${c.category_group})</option>`).join('');
+            const expenseRows = (state.shipmentExpenses || []).map(x => {
+                const dateText = x.created_at ? new Date(x.created_at).toLocaleDateString() : '-';
+                const fxText = x.currency === 'USD' ? ` (FX: ${x.fx_used})` : '';
+                return `<tr>
+                    <td class="p-2 font-bold">${x.expense_category_id}</td>
+                    <td class="p-2 text-right">${x.amount} ${x.currency}${fxText}</td>
+                    <td class="p-2 text-right font-bold text-slate-800">THB ${x.amount_thb.toLocaleString()}</td>
+                    <td class="p-2">${x.reference_no || '-'}</td>
+                    <td class="p-2 text-slate-500 text-[10px]">${dateText}</td>
+                </tr>`;
+            }).join('');
+
+            openModal(`
+                <div class="space-y-4 max-h-[85vh] overflow-y-auto">
+                    <div class="flex justify-between items-start">
+                        <div>
+                            <h3 class="text-lg font-bold text-slate-900">Shipment Expenses</h3>
+                            <p class="text-xs text-slate-500">Record and review actual export costs for shipment: <strong>${shipmentId}</strong></p>
+                        </div>
+                        <button onclick="closeModal()" class="text-slate-400 text-xl">&times;</button>
+                    </div>
+
+                    <!-- Expenses List -->
+                    <div class="border rounded-lg overflow-hidden max-h-48 overflow-y-auto">
+                        <table class="w-full text-left text-xs">
+                            <thead class="bg-slate-50 text-slate-600 font-bold border-b">
+                                <tr>
+                                    <th class="p-2">Category</th>
+                                    <th class="p-2 text-right">Amount</th>
+                                    <th class="p-2 text-right">THB Cost</th>
+                                    <th class="p-2">Ref</th>
+                                    <th class="p-2">Date</th>
+                                </tr>
+                            </thead>
+                            <tbody class="divide-y">
+                                ${expenseRows || '<tr><td colspan="5" class="p-4 text-center text-slate-400">No expenses recorded yet.</td></tr>'}
+                            </tbody>
+                        </table>
+                    </div>
+
+                    <!-- Add Expense Form -->
+                    <div class="border-t pt-3 space-y-3">
+                        <h4 class="text-xs font-bold text-slate-900">Record New Expense</h4>
+                        <div class="grid grid-cols-2 gap-3">
+                            <div>
+                                <label class="text-xs font-bold text-slate-600">Category</label>
+                                <select id="expCategory" class="mt-1 w-full border rounded-lg px-2 py-1.5 text-xs bg-white">${categoryOptions}</select>
+                            </div>
+                            <div>
+                                <label class="text-xs font-bold text-slate-600">Amount</label>
+                                <input id="expAmount" type="number" step="0.01" class="mt-1 w-full border rounded-lg px-2 py-1.5 text-xs">
+                            </div>
+                        </div>
+                        <div class="grid grid-cols-2 gap-3">
+                            <div>
+                                <label class="text-xs font-bold text-slate-600">Currency</label>
+                                <select id="expCurrency" onchange="toggleExpFxField(this.value)" class="mt-1 w-full border rounded-lg px-2 py-1.5 text-xs bg-white">
+                                    <option value="THB">THB</option>
+                                    <option value="USD">USD</option>
+                                </select>
+                            </div>
+                            <div>
+                                <label class="text-xs font-bold text-slate-600">FX Rate (THB/USD)</label>
+                                <input id="expFx" type="number" step="0.0001" disabled class="mt-1 w-full border rounded-lg px-2 py-1.5 text-xs bg-slate-100">
+                            </div>
+                        </div>
+                        <div class="grid grid-cols-2 gap-3">
+                            <div>
+                                <label class="text-xs font-bold text-slate-600">Reference No</label>
+                                <input id="expRef" type="text" class="mt-1 w-full border rounded-lg px-2 py-1.5 text-xs">
+                            </div>
+                            <div>
+                                <label class="text-xs font-bold text-slate-600">Remark</label>
+                                <input id="expRemark" type="text" class="mt-1 w-full border rounded-lg px-2 py-1.5 text-xs">
+                            </div>
+                        </div>
+                        <div class="flex justify-end gap-2 pt-2">
+                            <button onclick="closeModal()" class="px-4 py-2 rounded-lg border text-xs font-bold">Cancel</button>
+                            <button onclick="submitShipmentExpense('${shipmentId}')" class="px-4 py-2 rounded-lg bg-blue-600 text-white text-xs font-bold">Save Expense</button>
+                        </div>
+                    </div>
+                </div>
+            `);
+        }
+
+        async function submitShipmentExpense(shipmentId) {
+            const expenseCategoryId = document.getElementById('expCategory').value;
+            const amount = Number(document.getElementById('expAmount').value || 0);
+            const currency = document.getElementById('expCurrency').value;
+            const fxUsed = Number(document.getElementById('expFx').value || 0);
+            const referenceNo = document.getElementById('expRef').value;
+            const remark = document.getElementById('expRemark').value;
+
+            if (amount <= 0) return alert('Amount must be greater than zero.');
+            if (currency === 'USD' && fxUsed <= 0) return alert('FX rate is required for USD expenses.');
+
+            try {
+                await saveShipmentExpenseToApi(shipmentId, {
+                    expenseCategoryId,
+                    amount,
+                    currency,
+                    fxUsed: currency === 'USD' ? fxUsed : null,
+                    referenceNo,
+                    remark
+                });
+                await loadShipmentExpensesFromApi(shipmentId);
+                openManageExpensesModal(shipmentId); // Refresh modal content
+            } catch (err) {
+                alert('Error saving expense: ' + err.message);
+            }
+        }
+
+        function openManageDocumentLinksModal(shipmentId) {
+            const documentRows = (state.shipmentDocumentLinks || []).map(x => {
+                return `<tr>
+                    <td class="p-2 font-bold">${x.document_type}</td>
+                    <td class="p-2">
+                        <a href="${x.drive_url}" target="_blank" class="text-blue-600 hover:underline font-medium">${x.title} &rarr;</a>
+                    </td>
+                    <td class="p-2">${x.reference_no || '-'}</td>
+                </tr>`;
+            }).join('');
+
+            openModal(`
+                <div class="space-y-4 max-h-[85vh] overflow-y-auto">
+                    <div class="flex justify-between items-start">
+                        <div>
+                            <h3 class="text-lg font-bold text-slate-900">Shipment Documents</h3>
+                            <p class="text-xs text-slate-500">Google Drive supporting document index for: <strong>${shipmentId}</strong></p>
+                        </div>
+                        <button onclick="closeModal()" class="text-slate-400 text-xl">&times;</button>
+                    </div>
+
+                    <!-- Links List -->
+                    <div class="border rounded-lg overflow-hidden max-h-48 overflow-y-auto">
+                        <table class="w-full text-left text-xs">
+                            <thead class="bg-slate-50 text-slate-600 font-bold border-b">
+                                <tr>
+                                    <th class="p-2">Type</th>
+                                    <th class="p-2">Document Title & Link</th>
+                                    <th class="p-2">Ref No</th>
+                                </tr>
+                            </thead>
+                            <tbody class="divide-y">
+                                ${documentRows || '<tr><td colspan="3" class="p-4 text-center text-slate-400">No document links recorded yet.</td></tr>'}
+                            </tbody>
+                        </table>
+                    </div>
+
+                    <!-- Add Link Form -->
+                    <div class="border-t pt-3 space-y-3">
+                        <h4 class="text-xs font-bold text-slate-900">Add Supporting Document Link</h4>
+                        <div>
+                            <label class="text-xs font-bold text-slate-600">Document Type</label>
+                            <select id="docType" class="mt-1 w-full border rounded-lg px-2 py-1.5 text-xs bg-white">
+                                <option value="PO">PO</option>
+                                <option value="DI">DI</option>
+                                <option value="BOOKING">Booking</option>
+                                <option value="STUFFING_REPORT">Stuffing Report</option>
+                                <option value="ALL_SHIP_DOC">All Ship Doc</option>
+                                <option value="IR">IR</option>
+                                <option value="LC">LC</option>
+                            </select>
+                        </div>
+                        <div class="grid grid-cols-2 gap-3">
+                            <div>
+                                <label class="text-xs font-bold text-slate-600">Document Title</label>
+                                <input id="docTitle" type="text" placeholder="e.g. Booking Confirmation Scan" class="mt-1 w-full border rounded-lg px-2 py-1.5 text-xs">
+                            </div>
+                            <div>
+                                <label class="text-xs font-bold text-slate-600">Reference No</label>
+                                <input id="docRef" type="text" placeholder="e.g. BK-987" class="mt-1 w-full border rounded-lg px-2 py-1.5 text-xs">
+                            </div>
+                        </div>
+                        <div>
+                            <label class="text-xs font-bold text-slate-600">Google Drive URL</label>
+                            <input id="docUrl" type="url" placeholder="https://drive.google.com/..." class="mt-1 w-full border rounded-lg px-2 py-1.5 text-xs">
+                        </div>
+                        <div>
+                            <label class="text-xs font-bold text-slate-600">Remark</label>
+                            <input id="docRemark" type="text" class="mt-1 w-full border rounded-lg px-2 py-1.5 text-xs">
+                        </div>
+                        <div class="flex justify-end gap-2 pt-2">
+                            <button onclick="closeModal()" class="px-4 py-2 rounded-lg border text-xs font-bold">Cancel</button>
+                            <button onclick="submitShipmentDocumentLink('${shipmentId}')" class="px-4 py-2 rounded-lg bg-blue-600 text-white text-xs font-bold">Add Link</button>
+                        </div>
+                    </div>
+                </div>
+            `);
+        }
+
+        async function submitShipmentDocumentLink(shipmentId) {
+            const documentType = document.getElementById('docType').value;
+            const title = document.getElementById('docTitle').value;
+            const driveUrl = document.getElementById('docUrl').value;
+            const referenceNo = document.getElementById('docRef').value;
+            const remark = document.getElementById('docRemark').value;
+
+            if (!title || !driveUrl) return alert('Title and Google Drive URL are required.');
+            if (!driveUrl.startsWith('http://') && !driveUrl.startsWith('https://')) {
+                return alert('Drive URL must start with http:// or https://');
+            }
+
+            try {
+                await saveShipmentDocumentLinkToApi(shipmentId, {
+                    documentType,
+                    title,
+                    driveUrl,
+                    referenceNo,
+                    remark
+                });
+                await loadShipmentDocumentLinksFromApi(shipmentId);
+                openManageDocumentLinksModal(shipmentId); // Refresh modal content
+            } catch (err) {
+                alert('Error saving document link: ' + err.message);
+            }
+        }
+
+        function setShipmentDetailTab(tab) {
+            state.shipmentDetailTab = tab;
+            renderView();
+        }
+
+        function toggleTabExpenseFxField(currency) {
+            const fxInput = document.getElementById('tabExpenseFx');
+            if (!fxInput) return;
+            if (currency === 'THB') {
+                fxInput.value = '';
+                fxInput.disabled = true;
+                fxInput.classList.add('bg-slate-100');
+            } else {
+                fxInput.disabled = false;
+                fxInput.classList.remove('bg-slate-100');
+            }
+        }
+
+        async function submitTabExpense(shipmentId) {
+            const categoryId = document.getElementById('tabExpenseCat').value;
+            const currency = document.getElementById('tabExpenseCurr').value;
+            const amount = parseFloat(document.getElementById('tabExpenseAmt').value || 0);
+            const fxUsed = currency === 'USD' ? parseFloat(document.getElementById('tabExpenseFx').value || 0) : null;
+            const referenceNo = document.getElementById('tabExpenseRef').value || '';
+            const remark = document.getElementById('tabExpenseRemark').value || '';
+
+            if (amount <= 0) return alert('Amount must be greater than zero.');
+            if (currency === 'USD' && (!fxUsed || fxUsed <= 0)) return alert('FX rate is required for USD expenses.');
+
+            try {
+                await saveShipmentExpenseToApi(shipmentId, {
+                    expenseCategoryId: categoryId,
+                    amount,
+                    currency,
+                    fxUsed,
+                    referenceNo,
+                    remark
+                });
+                await loadShipmentDetailFromApi(shipmentId);
+            } catch (err) {
+                alert('Error saving expense: ' + err.message);
+            }
+        }
+
+        async function submitTabDoc(shipmentId) {
+            const documentType = document.getElementById('tabDocType').value;
+            const title = document.getElementById('tabDocTitle').value || '';
+            const driveUrl = document.getElementById('tabDocUrl').value || '';
+            const referenceNo = document.getElementById('tabDocRef').value || '';
+
+            if (!title.trim()) return alert('Link Title is required.');
+            if (!driveUrl.trim() || (!driveUrl.startsWith('http://') && !driveUrl.startsWith('https://'))) {
+                return alert('Valid Google Drive URL is required.');
+            }
+
+            try {
+                await saveShipmentDocumentLinkToApi(shipmentId, {
+                    documentType,
+                    title,
+                    driveUrl,
+                    referenceNo
+                });
+                await loadShipmentDetailFromApi(shipmentId);
+            } catch (err) {
+                alert('Error saving document link: ' + err.message);
+            }
+        }
+
         function reviewSpecialPrice(priceId, decision) {
             if (!canManagePricing()) return alert('Only Manager or Admin can approve/reject Special Price.');
             const rec = (state.specialPrices || []).find(x => x.id === priceId);
@@ -924,33 +1645,179 @@
             const manager = canManagePricing();
             const productMap = Object.fromEntries((state.products || []).map(p => [p.id, p]));
             const customerMap = Object.fromEntries(getScopedCustomers().map(c => [c.id, c]));
+            const userMap = Object.fromEntries((state.adminUsers || []).map(u => [u.user_id || u.id, u]));
+
             const standardRows = (state.standardPrices || []).map(x => {
                 const p = productMap[x.productId];
                 return `<tr class="hover:bg-slate-50"><td class="p-3 font-mono text-blue-600 font-bold">${x.id}</td><td class="p-3"><div class="font-bold text-slate-900">${p?.shortName || x.productId}</div><div class="text-[10px] text-slate-500">${p?.name || ''}</div></td><td class="p-3 text-right font-black text-emerald-700">USD ${Number(x.fobUsdPerMt || 0).toFixed(2)}</td><td class="p-3 text-center">${x.effectiveDate || '-'}</td><td class="p-3 text-center">${x.validUntil || '-'}</td><td class="p-3 text-center">${pricingStatusBadge(x.status)}</td><td class="p-3 text-right">${manager ? `<button onclick="openEditStandardPrice('${x.id}')" class="px-2.5 py-1.5 rounded-lg bg-amber-100 text-amber-700 font-bold text-[10px]">Edit Standard Price</button>` : '<span class="text-[10px] text-slate-400">View only</span>'}</td></tr>`;
             }).join('');
+
             const allowedCustomerIds = new Set(getScopedCustomers().map(c => c.id));
             const specialRows = (state.specialPrices || []).filter(x => state.currentUser.role !== 'EXTERNAL_SALES' || allowedCustomerIds.has(x.customerId)).map(x => {
                 const p = productMap[x.productId], c = customerMap[x.customerId];
                 const actions = manager && String(x.approvalStatus).toUpperCase() === 'PENDING' ? `<div class="flex justify-end gap-1"><button onclick="reviewSpecialPrice('${x.id}','APPROVE')" class="px-2.5 py-1.5 rounded-lg bg-emerald-600 text-white font-bold text-[10px]">Approve</button><button onclick="reviewSpecialPrice('${x.id}','REJECT')" class="px-2.5 py-1.5 rounded-lg bg-red-100 text-red-700 font-bold text-[10px]">Reject</button></div>` : '<span class="text-[10px] text-slate-400">-</span>';
                 return `<tr class="hover:bg-slate-50"><td class="p-3 font-mono text-blue-600 font-bold">${x.id}</td><td class="p-3 font-bold text-slate-900">${c?.name || x.customerId}</td><td class="p-3"><div class="font-bold text-slate-900">${p?.shortName || x.productId}</div><div class="text-[10px] text-slate-500">Std at request: USD ${Number(x.stdFobAtRequest || 0).toFixed(2)}</div></td><td class="p-3 text-right font-black text-emerald-700">USD ${Number(x.approvedPriceUsd || 0).toFixed(2)}</td><td class="p-3 text-right">${Number(x.expectedQtyMt || 0).toFixed(3)} MT</td><td class="p-3 text-center">${x.validUntil || '-'}</td><td class="p-3 text-center">${pricingStatusBadge(x.approvalStatus)}</td><td class="p-3 text-right">${actions}</td></tr>`;
             }).join('');
+
+            const priceNoteRows = (state.priceNotes || []).map(x => {
+                const p = productMap[x.product_id];
+                const c = customerMap[x.customer_id];
+                const salesUser = userMap[x.sales_user_id] || { full_name: x.sales_user_id };
+                const creator = userMap[x.created_by_manager_id] || { full_name: x.created_by_manager_id };
+                const portText = x.incoterm === 'FOB' ? 'FOB' : `${x.incoterm} (${x.destination_port || '-'})`;
+                const dateText = x.created_at ? new Date(x.created_at).toLocaleString() : '-';
+                return `<tr class="hover:bg-slate-50">
+                    <td class="p-3 font-mono text-blue-600 font-bold">${x.id}</td>
+                    <td class="p-3">
+                        <div class="font-bold text-slate-900">${salesUser.full_name || ''}</div>
+                        <div class="text-[10px] text-slate-500">${salesUser.email || ''}</div>
+                    </td>
+                    <td class="p-3 font-bold text-slate-900">${c?.name || x.customer_id}</td>
+                    <td class="p-3 font-bold text-slate-900">${p?.shortName || x.product_id}</td>
+                    <td class="p-3 text-center font-bold text-slate-700">${portText}</td>
+                    <td class="p-3 text-right font-black text-emerald-700">USD ${Number(x.offer_price_usd_per_mt || 0).toFixed(2)}</td>
+                    <td class="p-3 text-slate-600">${x.note || '-'}</td>
+                    <td class="p-3 text-xs text-slate-500">${creator.full_name || x.created_by_manager_id}</td>
+                    <td class="p-3 text-center text-slate-500 text-[10px]">${dateText}</td>
+                </tr>`;
+            }).join('');
+
+            const freightQuoteRows = (state.freightQuotes || []).map(x => {
+                const creator = userMap[x.created_by] || { full_name: x.created_by };
+                const dateText = x.created_at ? new Date(x.created_at).toLocaleString() : '-';
+                return `<tr class="hover:bg-slate-50">
+                    <td class="p-3 font-mono text-blue-600 font-bold">${x.quote_id}</td>
+                    <td class="p-3 font-bold text-slate-700">${x.origin_port}</td>
+                    <td class="p-3 font-bold text-slate-700">${x.destination_port}</td>
+                    <td class="p-3 text-center text-slate-600">${x.container_size}</td>
+                    <td class="p-3 text-slate-900 font-bold">${x.shipping_line_or_forwarder}</td>
+                    <td class="p-3 text-right font-black text-emerald-700">USD ${Number(x.quoted_freight_usd_per_container || 0).toFixed(2)}</td>
+                    <td class="p-3 text-center text-slate-500 text-[10px]">${x.valid_until || '-'}</td>
+                    <td class="p-3 text-slate-600">${x.remark || '-'}</td>
+                    <td class="p-3 text-xs text-slate-500">${creator.full_name || x.created_by}</td>
+                    <td class="p-3 text-center text-slate-500 text-[10px]">${dateText}</td>
+                </tr>`;
+            }).join('');
+
+            let actionBtn = '';
+            if (tab === 'PRICE_NOTES') {
+                if (manager) {
+                    actionBtn = `<button onclick="openAddPriceNoteModal()" class="px-3 py-2 rounded-lg bg-blue-600 text-white text-xs font-bold">Add Price Note</button>`;
+                }
+            } else if (tab === 'FREIGHT_QUOTES') {
+                if (canWriteFreightQuotes()) {
+                    actionBtn = `<button onclick="openAddFreightQuoteModal()" class="px-3 py-2 rounded-lg bg-blue-600 text-white text-xs font-bold">Add Freight Quote</button>`;
+                }
+            } else {
+                actionBtn = `<button onclick="openRequestSpecialPrice()" class="px-3 py-2 rounded-lg bg-blue-600 text-white text-xs font-bold">Request Special Price</button>`;
+            }
+
+            const salesUsers = (state.adminUsers || []).filter(u => u.role === 'EXTERNAL_SALES');
+            const salesOptions = `<option value="">All Sales Users</option>` + salesUsers.map(u => `<option value="${u.user_id || u.id}" ${state.priceNotesFilters?.salesUserId === (u.user_id || u.id) ? 'selected' : ''}>${u.full_name}</option>`).join('');
+            const customerOptions = `<option value="">All Customers</option>` + getScopedCustomers().map(c => `<option value="${c.id}" ${state.priceNotesFilters?.customerId === c.id ? 'selected' : ''}>${c.name}</option>`).join('');
+            const productOptions = `<option value="">All Products</option>` + (state.products || []).map(p => `<option value="${p.id}" ${state.priceNotesFilters?.productId === p.id ? 'selected' : ''}>${p.shortName}</option>`).join('');
+
             container.innerHTML = `
                 <div class="space-y-5">
                     <div class="flex items-center justify-between gap-4">
                         <div><h2 class="text-xl font-bold text-slate-900">Pricing</h2><p class="text-xs text-slate-500 mt-1">Standard FOB + approved customer special price used as PO selling-price suggestion.</p></div>
-                        <div class="flex items-center gap-3"><button onclick="openRequestSpecialPrice()" class="px-3 py-2 rounded-lg bg-blue-600 text-white text-xs font-bold">Request Special Price</button><div class="text-right"><div class="text-[10px] uppercase text-slate-400 font-bold">Pricing permission</div><div class="text-xs font-bold ${manager ? 'text-emerald-700' : 'text-slate-600'}">${manager ? 'Manager/Admin · Edit & Approve' : 'Sales · View & Request'}</div></div></div>
+                        <div class="flex items-center gap-3">${actionBtn}<div class="text-right"><div class="text-[10px] uppercase text-slate-400 font-bold">Pricing permission</div><div class="text-xs font-bold ${manager ? 'text-emerald-700' : 'text-slate-600'}">${manager ? 'Manager/Admin · Edit & Approve' : 'Sales · View & Request'}</div></div></div>
                     </div>
                     <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
                         <div class="flex border-b border-slate-200 bg-slate-50 p-2 gap-2">
                             <button onclick="setPricingTab('STANDARD')" class="px-4 py-2 rounded-lg text-xs font-bold ${tab === 'STANDARD' ? 'bg-blue-600 text-white' : 'bg-white text-slate-600 border border-slate-200'}">Standard Prices</button>
                             <button onclick="setPricingTab('SPECIAL')" class="px-4 py-2 rounded-lg text-xs font-bold ${tab === 'SPECIAL' ? 'bg-blue-600 text-white' : 'bg-white text-slate-600 border border-slate-200'}">Special Prices</button>
+                            <button onclick="setPricingTab('PRICE_NOTES')" class="px-4 py-2 rounded-lg text-xs font-bold ${tab === 'PRICE_NOTES' ? 'bg-blue-600 text-white' : 'bg-white text-slate-600 border border-slate-200'}">Manager Price Notes</button>
+                            <button onclick="setPricingTab('FREIGHT_QUOTES')" class="px-4 py-2 rounded-lg text-xs font-bold ${tab === 'FREIGHT_QUOTES' ? 'bg-blue-600 text-white' : 'bg-white text-slate-600 border border-slate-200'}">Freight Quotes</button>
                         </div>
-                        ${tab === 'STANDARD' ? `
+                        
+                        ${tab === 'PRICE_NOTES' ? `
+                        <div class="p-3 border-b border-slate-200 bg-slate-50 flex flex-wrap gap-3 items-center">
+                            <div class="text-xs font-bold text-slate-700">Filters:</div>
+                            <div>
+                                <select onchange="applyPriceNotesFilter('salesUserId', this.value)" class="border rounded-lg px-2 py-1 text-xs bg-white">
+                                    ${salesOptions}
+                                </select>
+                            </div>
+                            <div>
+                                <select onchange="applyPriceNotesFilter('customerId', this.value)" class="border rounded-lg px-2 py-1 text-xs bg-white">
+                                    ${customerOptions}
+                                </select>
+                            </div>
+                            <div>
+                                <select onchange="applyPriceNotesFilter('productId', this.value)" class="border rounded-lg px-2 py-1 text-xs bg-white">
+                                    ${productOptions}
+                                </select>
+                            </div>
+                            <div class="flex items-center gap-1">
+                                <span class="text-[10px] text-slate-500 font-bold">From:</span>
+                                <input type="date" value="${(state.priceNotesFilters || {}).dateFrom || ''}" onchange="applyPriceNotesFilter('dateFrom', this.value)" class="border rounded-lg px-2 py-0.5 text-xs bg-white">
+                            </div>
+                            <div class="flex items-center gap-1">
+                                <span class="text-[10px] text-slate-500 font-bold">To:</span>
+                                <input type="date" value="${(state.priceNotesFilters || {}).dateTo || ''}" onchange="applyPriceNotesFilter('dateTo', this.value)" class="border rounded-lg px-2 py-0.5 text-xs bg-white">
+                            </div>
+                            <button onclick="clearPriceNotesFilters()" class="text-xs text-blue-600 font-bold hover:underline">Clear</button>
+                        </div>
+                        <table class="ui-table w-full text-left text-xs">
+                            <thead class="bg-slate-100 text-slate-600 uppercase text-[10px] font-bold">
+                                <tr>
+                                    <th class="p-3">Note ID</th>
+                                    <th class="p-3">Sales User</th>
+                                    <th class="p-3">Customer</th>
+                                    <th class="p-3">Product</th>
+                                    <th class="p-3 text-center">Incoterm</th>
+                                    <th class="p-3 text-right">Offer Price USD/MT</th>
+                                    <th class="p-3">Note</th>
+                                    <th class="p-3">Created By</th>
+                                    <th class="p-3 text-center">Created At</th>
+                                </tr>
+                            </thead>
+                            <tbody class="divide-y divide-slate-200">
+                                ${priceNoteRows || '<tr><td colspan="9" class="p-6 text-center text-slate-400">No Price Notes</td></tr>'}
+                            </tbody>
+                        </table>
+                        ` : tab === 'FREIGHT_QUOTES' ? `
+                        <table class="ui-table w-full text-left text-xs">
+                            <thead class="bg-slate-100 text-slate-600 uppercase text-[10px] font-bold">
+                                <tr>
+                                    <th class="p-3">Quote ID</th>
+                                    <th class="p-3">Origin</th>
+                                    <th class="p-3">Destination</th>
+                                    <th class="p-3 text-center">Size</th>
+                                    <th class="p-3">Carrier / Forwarder</th>
+                                    <th class="p-3 text-right">Quoted USD/Container</th>
+                                    <th class="p-3 text-center">Valid Until</th>
+                                    <th class="p-3">Remark</th>
+                                    <th class="p-3">Created By</th>
+                                    <th class="p-3 text-center">Created At</th>
+                                </tr>
+                            </thead>
+                            <tbody class="divide-y divide-slate-200">
+                                ${freightQuoteRows || '<tr><td colspan="10" class="p-6 text-center text-slate-400">No Freight Quotes</td></tr>'}
+                            </tbody>
+                        </table>
+                        ` : tab === 'STANDARD' ? `
                         <table class="ui-table w-full text-left text-xs"><thead class="bg-slate-100 text-slate-600 uppercase text-[10px] font-bold"><tr><th class="p-3">Price ID</th><th class="p-3">Product</th><th class="p-3 text-right">Standard FOB / MT</th><th class="p-3 text-center">Effective</th><th class="p-3 text-center">Valid Until</th><th class="p-3 text-center">Status</th><th class="p-3 text-right">Action</th></tr></thead><tbody class="divide-y divide-slate-200">${standardRows || '<tr><td colspan="7" class="p-6 text-center text-slate-400">No Standard Price</td></tr>'}</tbody></table>` : `
                         <table class="ui-table w-full text-left text-xs"><thead class="bg-slate-100 text-slate-600 uppercase text-[10px] font-bold"><tr><th class="p-3">SPR ID</th><th class="p-3">Customer</th><th class="p-3">Product</th><th class="p-3 text-right">Requested / Approved Price</th><th class="p-3 text-right">Expected Qty</th><th class="p-3 text-center">Valid Until</th><th class="p-3 text-center">Approval</th><th class="p-3 text-right">Action</th></tr></thead><tbody class="divide-y divide-slate-200">${specialRows || '<tr><td colspan="8" class="p-6 text-center text-slate-400">No Special Price</td></tr>'}</tbody></table>`}
                     </div>
                     <div class="rounded-xl border border-blue-200 bg-blue-50/50 p-4 text-xs text-blue-900"><strong>Permission rule:</strong> Sales Support / External Sales can view prices and submit Special Price requests. Only Manager and Admin can edit Standard Price or Approve/Reject Special Price. Backend authorization will be enforced again when the Apps Script layer is connected.</div>
                 </div>`;
+        }
+
+        function applyPriceNotesFilter(key, value) {
+            state.priceNotesFilters = state.priceNotesFilters || {};
+            if (value) {
+                state.priceNotesFilters[key] = value;
+            } else {
+                delete state.priceNotesFilters[key];
+            }
+            loadPriceNotesFromApi();
+        }
+
+        function clearPriceNotesFilters() {
+            state.priceNotesFilters = {};
+            loadPriceNotesFromApi();
         }
 
         function renderDashboardCard(label, value, icon='circle-dot', tone='slate') {
@@ -4041,6 +4908,27 @@
             if (state.currentUser.role === 'PRODUCTION_WAREHOUSE') { renderProductionOrders(container); return; }
             const selectedDI = state.selectedDiId ? getScopedDIRecords().find(d => d.id === state.selectedDiId) : null;
             if (selectedDI) {
+                if (state.lastLoadedShipmentId !== selectedDI.id) {
+                    state.lastLoadedShipmentId = selectedDI.id;
+                    (async () => {
+                        try {
+                            const po = getDIContext(selectedDI).po || {};
+                            await ensureShipmentAnchorToApi(selectedDI.id, {
+                                poId: selectedDI.poId,
+                                customerId: selectedDI.customerId || po.customerId,
+                                productId: selectedDI.productId || po.productId,
+                                isOneContainer: selectedDI.plannedContainers === 1 ? 1 : 0
+                            });
+                            await loadShipmentDetailFromApi(selectedDI.id);
+                            await loadShipmentExpensesFromApi(selectedDI.id);
+                            await loadShipmentDocumentLinksFromApi(selectedDI.id);
+                            await loadExpenseCategoriesFromApi();
+                            await loadFreightQuotesFromApi();
+                        } catch (err) {
+                            console.error(err);
+                        }
+                    })();
+                }
                 container.innerHTML = renderDIDetail(selectedDI);
             } else {
                 container.innerHTML = `
@@ -4310,6 +5198,205 @@
                                     <div class="rounded-lg border border-slate-200 p-3"><div class="flex items-center justify-between gap-2"><div><div class="text-xs font-bold text-slate-900">Stuffing Report</div><div class="text-[10px] text-slate-400 mt-0.5">Loading / stuffing report from operations</div></div><span class="px-2 py-1 rounded text-[9px] font-bold ${getStatusBadgeClass(docs.stuffingReport.status)}">${docs.stuffingReport.status}</span></div><div class="text-[10px] text-slate-500 mt-2">Received: <strong>${docs.stuffingReport.receivedDate || '-'}</strong>${docs.stuffingReport.note ? ` · ${docs.stuffingReport.note}` : ''}</div><div class="mt-2 flex gap-2">${docs.stuffingReport.status!=='RECEIVED'?`<button onclick="markDocumentReceivedPrototype('${di.id}','stuffingReport')" class="text-[10px] font-bold text-emerald-600 hover:underline">Mark Received</button>`:''}<button onclick="openDocumentBundlePrototype('${di.id}','stuffingReport')" class="text-[10px] font-bold text-amber-600 hover:underline">Edit</button></div></div>
                                     <div class="rounded-lg border border-slate-200 p-3"><div class="flex items-center justify-between gap-2"><div><div class="text-xs font-bold text-slate-900">All Ship Doc</div><div class="text-[10px] text-slate-400 mt-0.5">All Ship Doc includes INV, COA, BL, Certificate of Origin, Phytosanitary Certificate, Etc.</div></div><span class="px-2 py-1 rounded text-[9px] font-bold ${getStatusBadgeClass(docs.allShipDoc.status)}">${docs.allShipDoc.status}</span></div><div class="text-[10px] text-slate-500 mt-2">Received: <strong>${docs.allShipDoc.receivedDate || '-'}</strong>${docs.allShipDoc.note ? ` · ${docs.allShipDoc.note}` : ''}</div><div class="mt-2 flex gap-2">${docs.allShipDoc.status!=='RECEIVED'?`<button onclick="markDocumentReceivedPrototype('${di.id}','allShipDoc')" class="text-[10px] font-bold text-emerald-600 hover:underline">Mark Received</button>`:''}<button onclick="openDocumentBundlePrototype('${di.id}','allShipDoc')" class="text-[10px] font-bold text-amber-600 hover:underline">Edit</button></div></div>
                                 </div>`; })()}
+                                            </div>
+
+                            <div class="bg-white rounded-xl border border-slate-200 shadow-sm p-5 space-y-4">
+                                <h3 class="text-sm font-bold text-slate-900 border-b pb-2 flex items-center gap-1.5"><i data-lucide="scale" class="w-4 h-4 text-blue-600"></i> Commercial & Shipment Control</h3>
+                                
+                                <!-- Tabs Header -->
+                                <div class="flex border-b text-xs gap-2">
+                                    <button onclick="setShipmentDetailTab('OVERVIEW')" class="py-2 px-3 font-bold border-b-2 ${(!state.shipmentDetailTab || state.shipmentDetailTab === 'OVERVIEW') ? 'border-blue-600 text-blue-600' : 'border-transparent text-slate-500 hover:text-slate-800'}">Overview</button>
+                                    <button onclick="setShipmentDetailTab('COSTS')" class="py-2 px-3 font-bold border-b-2 ${state.shipmentDetailTab === 'COSTS' ? 'border-blue-600 text-blue-600' : 'border-transparent text-slate-500 hover:text-slate-800'}">Costs</button>
+                                    <button onclick="setShipmentDetailTab('DOCUMENTS')" class="py-2 px-3 font-bold border-b-2 ${state.shipmentDetailTab === 'DOCUMENTS' ? 'border-blue-600 text-blue-600' : 'border-transparent text-slate-500 hover:text-slate-800'}">Documents</button>
+                                </div>
+
+                                <!-- Tab 1: Overview -->
+                                ${(!state.shipmentDetailTab || state.shipmentDetailTab === 'OVERVIEW') ? `
+                                <div class="space-y-4">
+                                    <!-- One Container Toggle -->
+                                    <div class="flex items-center justify-between text-xs bg-slate-50 p-2 rounded-lg">
+                                        <span class="text-slate-600 font-medium">Is One Container Shipment?</span>
+                                        <input type="checkbox" id="shIsOneContainer" 
+                                            ${(state.currentShipment && state.currentShipment.is_one_container === 1) ? 'checked' : ''} 
+                                            onchange="updateShipmentOneContainer('${di.id}', this.checked)"
+                                            class="w-4 h-4 text-blue-600 border-slate-300 rounded focus:ring-blue-500">
+                                    </div>
+
+                                    <!-- Freight Quote Selection -->
+                                    <div class="space-y-1">
+                                        <label class="text-[10px] uppercase font-bold text-slate-400">Link Freight Quote</label>
+                                        <select onchange="updateShipmentFreightQuote('${di.id}', this.value)" class="w-full border rounded-lg px-2 py-1.5 text-xs bg-white">
+                                            <option value="">-- No Quote Linked --</option>
+                                            ${(state.freightQuotes || []).map(q => `<option value="${q.quote_id}" ${state.currentShipment && state.currentShipment.freight_quote_id === q.quote_id ? 'selected' : ''}>${q.origin_port} &rarr; ${q.destination_port} (${q.shipping_line_or_forwarder}) - USD ${q.quoted_freight_usd_per_container.toFixed(2)}</option>`).join('')}
+                                        </select>
+                                    </div>
+
+                                    <!-- Freight Variance Summary -->
+                                    <div class="grid grid-cols-3 gap-2 bg-slate-50 p-2.5 rounded-lg text-center text-xs">
+                                        <div>
+                                            <div class="text-[8px] uppercase font-bold text-slate-400">Quoted</div>
+                                            <div class="font-bold text-slate-800">${state.freightVariance?.quotedFreight !== null && state.freightVariance?.quotedFreight !== undefined ? 'USD ' + state.freightVariance.quotedFreight.toFixed(2) : '-'}</div>
+                                        </div>
+                                        <div>
+                                            <div class="text-[8px] uppercase font-bold text-slate-400">Actual</div>
+                                            <div class="font-bold text-slate-800">${state.freightVariance?.actualFreightSum !== null && state.freightVariance?.actualFreightSum !== undefined ? 'USD ' + state.freightVariance.actualFreightSum.toFixed(2) : 'USD 0.00'}</div>
+                                        </div>
+                                        <div>
+                                            <div class="text-[8px] uppercase font-bold text-slate-400">Variance</div>
+                                            <div class="font-black ${state.freightVariance?.variance < 0 ? 'text-red-600' : state.freightVariance?.variance > 0 ? 'text-emerald-600' : 'text-slate-600'}">${state.freightVariance?.variance !== null && state.freightVariance?.variance !== undefined ? 'USD ' + state.freightVariance.variance.toFixed(2) : 'N/A'}</div>
+                                        </div>
+                                    </div>
+
+                                    <!-- Total Actual Export Cost -->
+                                    <div class="pt-2 border-t flex justify-between items-center bg-slate-50 p-2.5 rounded-lg">
+                                        <span class="text-xs text-slate-500 font-medium">Total Actual Cost:</span>
+                                        <strong class="text-xs font-black text-slate-900">THB ${Number(state.totalActualExportCostThb || 0).toLocaleString(undefined, {minimumFractionDigits: 2})}</strong>
+                                    </div>
+
+                                    <!-- Document Presence Summary -->
+                                    <div class="text-xs space-y-1">
+                                        <div class="font-bold text-slate-700">Handover Document Status:</div>
+                                        <div class="grid grid-cols-2 gap-2 text-[10px] bg-slate-50 p-2 rounded-lg text-slate-600">
+                                            <div>PO: <strong class="${(state.shipmentDocumentLinks || []).some(x => x.document_type === 'PO') ? 'text-emerald-600' : 'text-slate-400'}">${(state.shipmentDocumentLinks || []).some(x => x.document_type === 'PO') ? 'UPLOADED' : 'PENDING'}</strong></div>
+                                            <div>DI: <strong class="${(state.shipmentDocumentLinks || []).some(x => x.document_type === 'DI') ? 'text-emerald-600' : 'text-slate-400'}">${(state.shipmentDocumentLinks || []).some(x => x.document_type === 'DI') ? 'UPLOADED' : 'PENDING'}</strong></div>
+                                            <div>Booking: <strong class="${(state.shipmentDocumentLinks || []).some(x => x.document_type === 'BOOKING') ? 'text-emerald-600' : 'text-slate-400'}">${(state.shipmentDocumentLinks || []).some(x => x.document_type === 'BOOKING') ? 'UPLOADED' : 'PENDING'}</strong></div>
+                                            <div>Stuffing Report: <strong class="${(state.shipmentDocumentLinks || []).some(x => x.document_type === 'STUFFING_REPORT') ? 'text-emerald-600' : 'text-slate-400'}">${(state.shipmentDocumentLinks || []).some(x => x.document_type === 'STUFFING_REPORT') ? 'UPLOADED' : 'PENDING'}</strong></div>
+                                            <div>All Ship Doc: <strong class="${(state.shipmentDocumentLinks || []).some(x => x.document_type === 'ALL_SHIP_DOC') ? 'text-emerald-600' : 'text-slate-400'}">${(state.shipmentDocumentLinks || []).some(x => x.document_type === 'ALL_SHIP_DOC') ? 'UPLOADED' : 'PENDING'}</strong></div>
+                                            <div>IR: <strong class="${(state.shipmentDocumentLinks || []).some(x => x.document_type === 'IR') ? 'text-emerald-600' : 'text-slate-400'}">${(state.shipmentDocumentLinks || []).some(x => x.document_type === 'IR') ? 'UPLOADED' : 'PENDING'}</strong></div>
+                                            <div>LC: <strong class="${(state.shipmentDocumentLinks || []).some(x => x.document_type === 'LC') ? 'text-emerald-600' : 'text-slate-400'}">${(state.shipmentDocumentLinks || []).some(x => x.document_type === 'LC') ? 'UPLOADED' : 'PENDING'}</strong></div>
+                                        </div>
+                                    </div>
+                                </div>
+                                ` : ''}
+
+                                <!-- Tab 2: Costs -->
+                                ${state.shipmentDetailTab === 'COSTS' ? `
+                                <div class="space-y-4">
+                                    <!-- Expense List -->
+                                    <div class="text-xs font-bold text-slate-700">Recorded Expenses:</div>
+                                    <div class="border rounded-lg overflow-hidden max-h-48 overflow-y-auto">
+                                        <table class="w-full text-left text-xs bg-white">
+                                            <thead class="bg-slate-50 text-slate-600 border-b">
+                                                <tr>
+                                                    <th class="p-2">Category</th>
+                                                    <th class="p-2 text-right">Amount</th>
+                                                    <th class="p-2 text-right">THB Equivalent</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody class="divide-y">
+                                                ${(state.shipmentExpenses || []).map(x => {
+                                                    const cat = (state.expenseCategories || []).find(c => c.id === x.expense_category_id);
+                                                    return `<tr>
+                                                        <td class="p-2 font-medium">${cat?.category_name || x.expense_category_id}</td>
+                                                        <td class="p-2 text-right">${x.currency} ${Number(x.amount).toFixed(2)}</td>
+                                                        <td class="p-2 text-right">THB ${Number(x.amount_thb).toFixed(2)}</td>
+                                                    </tr>`;
+                                                }).join('') || '<tr><td colspan="3" class="p-4 text-center text-slate-400">No expenses recorded yet.</td></tr>'}
+                                            </tbody>
+                                        </table>
+                                    </div>
+
+                                    <!-- Add Expense Form -->
+                                    <div class="border-t pt-3 space-y-3">
+                                        <div class="text-xs font-bold text-slate-900">Add New Expense</div>
+                                        <div class="grid grid-cols-2 gap-2">
+                                            <div>
+                                                <label class="text-[10px] font-bold text-slate-600">Category</label>
+                                                <select id="tabExpenseCat" class="mt-1 w-full border rounded-lg px-2 py-1 text-xs bg-white">
+                                                    ${(state.expenseCategories || []).map(c => `<option value="${c.id}">${c.category_name}</option>`).join('')}
+                                                </select>
+                                            </div>
+                                            <div>
+                                                <label class="text-[10px] font-bold text-slate-600">Currency</label>
+                                                <select id="tabExpenseCurr" onchange="toggleTabExpenseFxField(this.value)" class="mt-1 w-full border rounded-lg px-2 py-1 text-xs bg-white">
+                                                    <option value="THB">THB</option>
+                                                    <option value="USD">USD</option>
+                                                </select>
+                                            </div>
+                                        </div>
+                                        <div class="grid grid-cols-2 gap-2">
+                                            <div>
+                                                <label class="text-[10px] font-bold text-slate-600">Amount</label>
+                                                <input id="tabExpenseAmt" type="number" step="0.01" class="mt-1 w-full border rounded-lg px-2 py-1 text-xs">
+                                            </div>
+                                            <div>
+                                                <label class="text-[10px] font-bold text-slate-600">FX Rate (to THB)</label>
+                                                <input id="tabExpenseFx" type="number" step="0.0001" disabled class="mt-1 w-full border rounded-lg px-2 py-1 text-xs bg-slate-100">
+                                            </div>
+                                        </div>
+                                        <div class="grid grid-cols-2 gap-2">
+                                            <div>
+                                                <label class="text-[10px] font-bold text-slate-600">Ref No</label>
+                                                <input id="tabExpenseRef" type="text" class="mt-1 w-full border rounded-lg px-2 py-1 text-xs">
+                                            </div>
+                                            <div>
+                                                <label class="text-[10px] font-bold text-slate-600">Remark</label>
+                                                <input id="tabExpenseRemark" type="text" class="mt-1 w-full border rounded-lg px-2 py-1 text-xs">
+                                            </div>
+                                        </div>
+                                        <button onclick="submitTabExpense('${di.id}')" class="w-full text-center bg-blue-600 text-white rounded-lg p-2 text-xs font-bold hover:bg-blue-700">Save Expense</button>
+                                    </div>
+                                </div>
+                                ` : ''}
+
+                                <!-- Tab 3: Documents -->
+                                ${state.shipmentDetailTab === 'DOCUMENTS' ? `
+                                <div class="space-y-4">
+                                    <!-- Documents List by Type -->
+                                    <div class="space-y-2">
+                                        ${['PO', 'DI', 'BOOKING', 'STUFFING_REPORT', 'ALL_SHIP_DOC', 'IR', 'LC'].map(type => {
+                                            const links = (state.shipmentDocumentLinks || []).filter(x => x.document_type === type);
+                                            return `
+                                            <div class="rounded-lg border border-slate-200 p-2 bg-slate-50/50">
+                                                <div class="flex justify-between items-center text-xs">
+                                                    <span class="font-bold text-slate-800">${type}</span>
+                                                    <span class="text-[10px] text-slate-500 font-semibold">${links.length} Links</span>
+                                                </div>
+                                                <div class="mt-1 space-y-1">
+                                                    ${links.map(link => `
+                                                        <div class="flex items-center justify-between text-[11px] bg-white p-1 border rounded">
+                                                            <a href="${link.drive_url}" target="_blank" class="text-blue-600 font-medium hover:underline truncate max-w-[200px]">${link.title}</a>
+                                                            ${link.reference_no ? `<span class="text-slate-400 font-mono text-[9px]">${link.reference_no}</span>` : ''}
+                                                        </div>
+                                                    `).join('') || '<div class="text-[10px] text-slate-400 italic">No document links</div>'}
+                                                </div>
+                                            </div>`;
+                                        }).join('')}
+                                    </div>
+
+                                    <!-- Add Document Link Form -->
+                                    <div class="border-t pt-3 space-y-3">
+                                        <div class="text-xs font-bold text-slate-900">Add Supporting Document Link</div>
+                                        <div>
+                                            <label class="text-[10px] font-bold text-slate-600">Document Type</label>
+                                            <select id="tabDocType" class="mt-1 w-full border rounded-lg px-2 py-1 text-xs bg-white">
+                                                <option value="PO">PO</option>
+                                                <option value="DI">DI</option>
+                                                <option value="BOOKING">Booking</option>
+                                                <option value="STUFFING_REPORT">Stuffing Report</option>
+                                                <option value="ALL_SHIP_DOC">All Ship Doc</option>
+                                                <option value="IR">IR</option>
+                                                <option value="LC">LC</option>
+                                            </select>
+                                        </div>
+                                        <div class="grid grid-cols-2 gap-2">
+                                            <div>
+                                                <label class="text-[10px] font-bold text-slate-600">Link Title</label>
+                                                <input id="tabDocTitle" type="text" placeholder="e.g. Booking Confirmation" class="mt-1 w-full border rounded-lg px-2 py-1 text-xs">
+                                            </div>
+                                            <div>
+                                                <label class="text-[10px] font-bold text-slate-600">Google Drive URL</label>
+                                                <input id="tabDocUrl" type="url" placeholder="https://drive.google.com/..." class="mt-1 w-full border rounded-lg px-2 py-1 text-xs">
+                                            </div>
+                                        </div>
+                                        <div>
+                                            <label class="text-[10px] font-bold text-slate-600">Reference No</label>
+                                            <input id="tabDocRef" type="text" class="mt-1 w-full border rounded-lg px-2 py-1 text-xs">
+                                        </div>
+                                        <button onclick="submitTabDoc('${di.id}')" class="w-full text-center bg-blue-600 text-white rounded-lg p-2 text-xs font-bold hover:bg-blue-700">Save Document Link</button>
+                                    </div>
+                                </div>
+                                ` : ''}
                             </div>
                         </div>
                     </div>
