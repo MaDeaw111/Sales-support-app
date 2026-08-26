@@ -594,6 +594,191 @@ export function createProductRepository(db) {
       `).bind(userId || null, specId).run();
 
       return this.findStandardSpecById(specId);
+    },
+
+    async listCustomerSpecs(customerId, productId, application) {
+      const { results } = await db.prepare(`
+        SELECT customer_spec_id, customer_id, product_id, application, base_standard_spec_id, revision_no, status, effective_date, notes, created_by, created_at, updated_by, updated_at
+        FROM customer_specs
+        WHERE customer_id = ? AND product_id = ? AND application = ?
+        ORDER BY revision_no DESC
+      `).bind(customerId, productId, application).all();
+
+      const list = [];
+      for (const r of (results || [])) {
+        const spec = await this.findCustomerSpecById(r.customer_spec_id);
+        if (spec) list.push(spec);
+      }
+      return list;
+    },
+
+    async findCustomerSpecById(id) {
+      const r = await db.prepare(`
+        SELECT customer_spec_id, customer_id, product_id, application, base_standard_spec_id, revision_no, status, effective_date, notes, created_by, created_at, updated_by, updated_at
+        FROM customer_specs
+        WHERE customer_spec_id = ?
+        LIMIT 1
+      `).bind(id).first();
+
+      if (!r) return null;
+
+      const { results: overrideRows } = await db.prepare(`
+        SELECT o.customer_spec_override_id, o.parameter_id, p.parameter_code, p.parameter_name, o.operator, o.numeric_value, o.numeric_value_to, o.text_value, o.unit, o.sort_order, o.notes
+        FROM customer_spec_overrides o
+        JOIN spec_parameters p ON o.parameter_id = p.parameter_id
+        WHERE o.customer_spec_id = ?
+        ORDER BY o.sort_order ASC, p.parameter_name ASC
+      `).bind(id).all();
+
+      return {
+        id: r.customer_spec_id,
+        customerId: r.customer_id,
+        productId: r.product_id,
+        application: r.application,
+        baseStandardSpecId: r.base_standard_spec_id,
+        revisionNo: Number(r.revision_no),
+        status: r.status,
+        effectiveDate: r.effective_date,
+        notes: r.notes,
+        createdBy: r.created_by,
+        createdAt: r.created_at,
+        updatedBy: r.updated_by,
+        updatedAt: r.updated_at,
+        overrides: (overrideRows || []).map(o => ({
+          overrideId: o.customer_spec_override_id,
+          parameterId: o.parameter_id,
+          parameterCode: o.parameter_code,
+          parameterName: o.parameter_name,
+          operator: o.operator,
+          numericValue: o.numeric_value,
+          numericValueTo: o.numeric_value_to,
+          textValue: o.text_value,
+          unit: o.unit,
+          sortOrder: Number(o.sort_order),
+          notes: o.notes
+        }))
+      };
+    },
+
+    async createCustomerSpecDraft(dto) {
+      if (!dto.customerId || !dto.productId || !dto.application || !dto.baseStandardSpecId || !dto.effectiveDate) {
+        throw new Error('Customer, product, application, base standard spec, and effective date are required.');
+      }
+
+      // 1. Verify customer exists
+      const custRow = await db.prepare('SELECT 1 FROM customers WHERE customer_id = ? LIMIT 1').bind(dto.customerId).first();
+      if (!custRow) throw new Error('Customer not found.');
+
+      // 2. Verify base standard spec exists, is for correct product/application, and is ACTIVE
+      const baseSpec = await this.findStandardSpecById(dto.baseStandardSpecId);
+      if (!baseSpec) throw new Error('Base standard specification not found.');
+      if (baseSpec.productId !== dto.productId || baseSpec.application !== dto.application) {
+        throw new Error('Base standard specification does not match the product/application.');
+      }
+      if (baseSpec.status !== 'ACTIVE') {
+        throw new Error('Base standard specification must be ACTIVE.');
+      }
+
+      // 3. Calculate next revision number
+      const revRow = await db.prepare(`
+        SELECT COALESCE(MAX(revision_no), -1) AS max_rev
+        FROM customer_specs
+        WHERE customer_id = ? AND product_id = ? AND application = ?
+      `).bind(dto.customerId, dto.productId, dto.application).first();
+      const nextRev = Number(revRow?.max_rev ?? -1) + 1;
+
+      // 4. Generate customer spec ID
+      const specId = await nextId(db, 'customer_specs', 'customer_spec_id', 'CSP');
+
+      await db.prepare(`
+        INSERT INTO customer_specs (customer_spec_id, customer_id, product_id, application, base_standard_spec_id, revision_no, status, effective_date, notes, created_by, updated_by)
+        VALUES (?, ?, ?, ?, ?, ?, 'DRAFT', ?, ?, ?, ?)
+      `).bind(specId, dto.customerId, dto.productId, dto.application, dto.baseStandardSpecId, nextRev, dto.effectiveDate, dto.notes || '', dto.createdBy || null, dto.createdBy || null).run();
+
+      return this.findCustomerSpecById(specId);
+    },
+
+    async updateCustomerSpecDraftOverrides(specId, overrides, updatedBy) {
+      const existing = await this.findCustomerSpecById(specId);
+      if (!existing) throw new Error('Customer specification not found.');
+      if (existing.status !== 'DRAFT') {
+        throw new Error('Cannot edit non-DRAFT specifications.');
+      }
+
+      const statements = [];
+      statements.push(db.prepare(`
+        DELETE FROM customer_spec_overrides WHERE customer_spec_id = ?
+      `).bind(specId));
+
+      for (const override of (overrides || [])) {
+        const overrideId = `CSO-${crypto.randomUUID()}`;
+        statements.push(db.prepare(`
+          INSERT INTO customer_spec_overrides (customer_spec_override_id, customer_spec_id, parameter_id, operator, numeric_value, numeric_value_to, text_value, unit, sort_order, notes)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `).bind(
+          overrideId,
+          specId,
+          override.parameterId,
+          override.operator,
+          override.numericValue !== undefined ? override.numericValue : null,
+          override.numericValueTo !== undefined ? override.numericValueTo : null,
+          override.textValue !== undefined ? override.textValue : null,
+          override.unit || '',
+          override.sortOrder || 0,
+          override.notes || ''
+        ));
+      }
+
+      statements.push(db.prepare(`
+        UPDATE customer_specs
+        SET updated_by = ?, updated_at = CURRENT_TIMESTAMP
+        WHERE customer_spec_id = ?
+      `).bind(updatedBy || null, specId));
+
+      await db.batch(statements);
+      return this.findCustomerSpecById(specId);
+    },
+
+    async activateCustomerSpec(specId, userId) {
+      const existing = await this.findCustomerSpecById(specId);
+      if (!existing) throw new Error('Customer specification not found.');
+      if (existing.status !== 'DRAFT') {
+        throw new Error('Only DRAFT specifications can be activated.');
+      }
+
+      const statements = [];
+      // Archive any existing active customer spec
+      statements.push(db.prepare(`
+        UPDATE customer_specs
+        SET status = 'ARCHIVED', updated_by = ?, updated_at = CURRENT_TIMESTAMP
+        WHERE customer_id = ? AND product_id = ? AND application = ? AND status = 'ACTIVE'
+      `).bind(userId || null, existing.customerId, existing.productId, existing.application));
+
+      // Activate target spec
+      statements.push(db.prepare(`
+        UPDATE customer_specs
+        SET status = 'ACTIVE', updated_by = ?, updated_at = CURRENT_TIMESTAMP
+        WHERE customer_spec_id = ?
+      `).bind(userId || null, specId));
+
+      await db.batch(statements);
+      return this.findCustomerSpecById(specId);
+    },
+
+    async archiveCustomerSpec(specId, userId) {
+      const existing = await this.findCustomerSpecById(specId);
+      if (!existing) throw new Error('Customer specification not found.');
+      if (existing.status !== 'ACTIVE') {
+        throw new Error('Only ACTIVE specifications can be archived.');
+      }
+
+      await db.prepare(`
+        UPDATE customer_specs
+        SET status = 'ARCHIVED', updated_by = ?, updated_at = CURRENT_TIMESTAMP
+        WHERE customer_spec_id = ?
+      `).bind(userId || null, specId).run();
+
+      return this.findCustomerSpecById(specId);
     }
   };
 }
