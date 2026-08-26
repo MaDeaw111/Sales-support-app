@@ -779,6 +779,84 @@ export function createProductRepository(db) {
       `).bind(userId || null, specId).run();
 
       return this.findCustomerSpecById(specId);
+    },
+
+    async resolveEffectiveCustomerSpec(id) {
+      const spec = await this.findCustomerSpecById(id);
+      if (!spec) throw new Error('Customer specification not found.');
+
+      const baseSpec = await this.findStandardSpecById(spec.baseStandardSpecId);
+      if (!baseSpec) throw new Error('Base standard specification not found.');
+
+      const standardItems = baseSpec.items || [];
+      const overrides = spec.overrides || [];
+
+      const overrideMap = new Map(overrides.map(o => [o.parameterId, o]));
+      const resolvedItems = [];
+
+      for (const stdItem of standardItems) {
+        if (overrideMap.has(stdItem.parameterId)) {
+          const over = overrideMap.get(stdItem.parameterId);
+          resolvedItems.push({
+            parameterId: stdItem.parameterId,
+            parameterCode: stdItem.parameterCode,
+            parameterName: stdItem.parameterName,
+            operator: over.operator,
+            numericValue: over.numericValue,
+            numericValueTo: over.numericValueTo,
+            textValue: over.textValue,
+            unit: over.unit,
+            source: 'OVERRIDDEN',
+            sortOrder: stdItem.sortOrder
+          });
+          overrideMap.delete(stdItem.parameterId);
+        } else {
+          resolvedItems.push({
+            parameterId: stdItem.parameterId,
+            parameterCode: stdItem.parameterCode,
+            parameterName: stdItem.parameterName,
+            operator: stdItem.operator,
+            numericValue: stdItem.numericValue,
+            numericValueTo: stdItem.numericValueTo,
+            textValue: stdItem.textValue,
+            unit: stdItem.unit,
+            source: 'INHERITED',
+            sortOrder: stdItem.sortOrder
+          });
+        }
+      }
+
+      for (const [_, over] of overrideMap) {
+        resolvedItems.push({
+          parameterId: over.parameterId,
+          parameterCode: over.parameterCode,
+          parameterName: over.parameterName,
+          operator: over.operator,
+          numericValue: over.numericValue,
+          numericValueTo: over.numericValueTo,
+          textValue: over.textValue,
+          unit: over.unit,
+          source: 'OVERRIDDEN',
+          sortOrder: over.sortOrder
+        });
+      }
+
+      resolvedItems.sort((a, b) => {
+        if (a.sortOrder !== b.sortOrder) return a.sortOrder - b.sortOrder;
+        return a.parameterName.localeCompare(b.parameterName);
+      });
+
+      return {
+        id,
+        customerId: spec.customerId,
+        productId: spec.productId,
+        application: spec.application,
+        baseStandardSpecId: spec.baseStandardSpecId,
+        revisionNo: spec.revisionNo,
+        status: spec.status,
+        effectiveDate: spec.effectiveDate,
+        items: resolvedItems
+      };
     }
   };
 }
