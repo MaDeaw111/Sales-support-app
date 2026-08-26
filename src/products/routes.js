@@ -1,5 +1,6 @@
 import { createProductRepository } from './repository.js';
 import { resolveAuthenticatedUser } from '../auth/routes.js';
+import { validateSpecItems } from './validation.js';
 
 function json(body, status = 200) {
   return new Response(JSON.stringify(body), {
@@ -16,7 +17,7 @@ async function readJson(request) {
   }
 }
 
-export function createProductHandler({ repo, resolveUser }) {
+export function createProductHandler({ repo, resolveUser, db }) {
   return async function handle(request, env) {
     const caller = await resolveUser(request, env);
     if (!caller) {
@@ -147,6 +148,104 @@ export function createProductHandler({ repo, resolveUser }) {
       }
     }
 
+    // GET /api/products/:productId/standard-specs
+    const listStdSpecsMatch = path.match(/^\/api\/products\/([^/]+)\/standard-specs$/);
+    if (listStdSpecsMatch) {
+      const productId = listStdSpecsMatch[1];
+      const appQuery = url.searchParams.get('application') || 'FEED_GRADE';
+      const standardSpecs = await repo.listStandardSpecs(productId, appQuery);
+      return json({ status: 'SUCCESS', data: { standardSpecs } });
+    }
+
+    // POST /api/standard-specs
+    if (path === '/api/standard-specs' && method === 'POST') {
+      const body = await readJson(request);
+      if (!body || typeof body !== 'object' || Array.isArray(body)) {
+        return json({ status: 'ERROR', message: 'Invalid request body.' }, 400);
+      }
+      try {
+        const standardSpec = await repo.createStandardSpecDraft({
+          productId: body.productId,
+          application: body.application,
+          effectiveDate: body.effectiveDate,
+          notes: body.notes,
+          createdBy: caller.id
+        });
+        return json({ status: 'SUCCESS', data: { standardSpec } });
+      } catch (err) {
+        return json({ status: 'ERROR', message: err.message }, 400);
+      }
+    }
+
+    // Standard spec detail & update matching /api/standard-specs/:id
+    const stdSpecMatch = path.match(/^\/api\/standard-specs\/([^/]+)$/);
+    if (stdSpecMatch) {
+      const specId = stdSpecMatch[1];
+
+      // GET /api/standard-specs/:id
+      if (method === 'GET') {
+        const standardSpec = await repo.findStandardSpecById(specId);
+        if (!standardSpec) {
+          return json({ status: 'ERROR', message: 'Standard specification not found.' }, 404);
+        }
+        return json({ status: 'SUCCESS', data: { standardSpec } });
+      }
+
+      // PUT /api/standard-specs/:id
+      if (method === 'PUT') {
+        const body = await readJson(request);
+        if (!body || typeof body !== 'object' || Array.isArray(body) || !body.items) {
+          return json({ status: 'ERROR', message: 'Invalid request body.' }, 400);
+        }
+        try {
+          const validated = await validateSpecItems(db, body.items);
+          const standardSpec = await repo.updateStandardSpecDraftItems(specId, validated, caller.id);
+          return json({ status: 'SUCCESS', data: { standardSpec } });
+        } catch (err) {
+          if (err.message && err.message.includes('not found')) {
+            return json({ status: 'ERROR', message: 'Standard specification not found.' }, 404);
+          }
+          return json({ status: 'ERROR', message: err.message }, 400);
+        }
+      }
+    }
+
+    // POST /api/standard-specs/:id/activate
+    const activateMatch = path.match(/^\/api\/standard-specs\/([^/]+)\/activate$/);
+    if (activateMatch && method === 'POST') {
+      if (!isAdmin && !isManager) {
+        return json({ status: 'ERROR', message: 'Permission denied.' }, 403);
+      }
+      const specId = activateMatch[1];
+      try {
+        const standardSpec = await repo.activateStandardSpec(specId, caller.id);
+        return json({ status: 'SUCCESS', data: { standardSpec } });
+      } catch (err) {
+        if (err.message && err.message.includes('not found')) {
+          return json({ status: 'ERROR', message: 'Standard specification not found.' }, 404);
+        }
+        return json({ status: 'ERROR', message: err.message }, 400);
+      }
+    }
+
+    // POST /api/standard-specs/:id/archive
+    const archiveMatch = path.match(/^\/api\/standard-specs\/([^/]+)\/archive$/);
+    if (archiveMatch && method === 'POST') {
+      if (!isAdmin && !isManager) {
+        return json({ status: 'ERROR', message: 'Permission denied.' }, 403);
+      }
+      const specId = archiveMatch[1];
+      try {
+        const standardSpec = await repo.archiveStandardSpec(specId, caller.id);
+        return json({ status: 'SUCCESS', data: { standardSpec } });
+      } catch (err) {
+        if (err.message && err.message.includes('not found')) {
+          return json({ status: 'ERROR', message: 'Standard specification not found.' }, 404);
+        }
+        return json({ status: 'ERROR', message: err.message }, 400);
+      }
+    }
+
     return json({ status: 'ERROR', message: 'Route not found.' }, 404);
   };
 }
@@ -154,6 +253,7 @@ export function createProductHandler({ repo, resolveUser }) {
 export function createProductHandlerFromEnv(env) {
   return createProductHandler({
     repo: createProductRepository(env.DB),
-    resolveUser: (req) => resolveAuthenticatedUser(req, env)
+    resolveUser: (req) => resolveAuthenticatedUser(req, env),
+    db: env.DB
   });
 }
