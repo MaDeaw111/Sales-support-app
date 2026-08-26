@@ -46,6 +46,8 @@ export default {
 
     if (
       url.pathname === '/api/products' || url.pathname.startsWith('/api/products/') ||
+      url.pathname === '/api/product-categories' || url.pathname.startsWith('/api/product-categories/') ||
+      url.pathname === '/api/product-forms' || url.pathname.startsWith('/api/product-forms/') ||
       url.pathname === '/api/spec-parameters' || url.pathname.startsWith('/api/spec-parameters/') ||
       url.pathname === '/api/standard-specs' || url.pathname.startsWith('/api/standard-specs/') ||
       url.pathname === '/api/customer-specs' || url.pathname.startsWith('/api/customer-specs/') ||
