@@ -243,6 +243,10 @@ export function createProductRepository(db) {
         throw new Error('Product code, name, short name, category, and form are required.');
       }
 
+      if (!dto.applications || !Array.isArray(dto.applications) || dto.applications.length === 0) {
+        throw new Error('Product must have at least one valid application.');
+      }
+
       // Check category and form exist
       const cat = await this.findCategoryById(dto.categoryId);
       if (!cat) throw new Error('Category not found.');

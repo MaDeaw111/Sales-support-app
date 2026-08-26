@@ -132,3 +132,72 @@ test('Product Applications Diff Update & Constraints - Finding 2', async () => {
     });
   }, /must retain at least one valid application/);
 });
+
+test('Product Application Validation on Creation - TDD', async () => {
+  const { db, wrappedDb } = await setupTestDb();
+  const repo = createProductRepository(wrappedDb);
+
+  const cat = await repo.createCategory({ code: 'TAPIOCA', name: 'Tapioca', status: 'ACTIVE' });
+  const form = await repo.createForm({ code: 'PELLET', name: 'Pellet', status: 'ACTIVE' });
+
+  // 1. applications empty array must reject
+  await assert.rejects(async () => {
+    await repo.createProduct({
+      code: 'THP_ERR1',
+      name: 'Tapioca hard pellet err 1',
+      shortName: 'THPE1',
+      categoryId: cat.id,
+      formId: form.id,
+      applications: [],
+      status: 'ACTIVE'
+    });
+  }, /Product must have at least one valid application/);
+
+  // 2. applications omitted must reject
+  await assert.rejects(async () => {
+    await repo.createProduct({
+      code: 'THP_ERR2',
+      name: 'Tapioca hard pellet err 2',
+      shortName: 'THPE2',
+      categoryId: cat.id,
+      formId: form.id,
+      status: 'ACTIVE'
+    });
+  }, /Product must have at least one valid application/);
+
+  // 3. Confirm valid cases: ['PET_GRADE'] -> allowed
+  const p1 = await repo.createProduct({
+    code: 'THP_OK1',
+    name: 'Tapioca OK 1',
+    shortName: 'TOK1',
+    categoryId: cat.id,
+    formId: form.id,
+    applications: ['PET_GRADE'],
+    status: 'ACTIVE'
+  });
+  assert.deepEqual(p1.applications, ['PET_GRADE']);
+
+  // ['FEED_GRADE'] -> allowed
+  const p2 = await repo.createProduct({
+    code: 'THP_OK2',
+    name: 'Tapioca OK 2',
+    shortName: 'TOK2',
+    categoryId: cat.id,
+    formId: form.id,
+    applications: ['FEED_GRADE'],
+    status: 'ACTIVE'
+  });
+  assert.deepEqual(p2.applications, ['FEED_GRADE']);
+
+  // ['PET_GRADE', 'FEED_GRADE'] -> allowed
+  const p3 = await repo.createProduct({
+    code: 'THP_OK3',
+    name: 'Tapioca OK 3',
+    shortName: 'TOK3',
+    categoryId: cat.id,
+    formId: form.id,
+    applications: ['PET_GRADE', 'FEED_GRADE'],
+    status: 'ACTIVE'
+  });
+  assert.deepEqual(p3.applications.sort(), ['FEED_GRADE', 'PET_GRADE']);
+});
