@@ -984,6 +984,9 @@
             if (tab === 'PRICE_NOTES') {
                 loadPriceNotesFromApi();
                 loadUsersFromApi();
+            } else if (tab === 'FREIGHT_QUOTES') {
+                loadFreightQuotesFromApi();
+                loadUsersFromApi();
             }
         }
 
@@ -1146,6 +1149,99 @@
             }
         }
 
+        function canWriteFreightQuotes() {
+            return ['MANAGER', 'ADMIN', 'SALES_SUPPORT'].includes(state.currentUser.role);
+        }
+
+        function openAddFreightQuoteModal() {
+            if (!canWriteFreightQuotes()) return alert('Permission denied.');
+
+            openModal(`
+                <div class="space-y-4">
+                    <div class="flex justify-between items-start">
+                        <div>
+                            <h3 class="text-lg font-bold text-slate-900">Add Freight Quote</h3>
+                            <p class="text-xs text-slate-500">Record a new ocean freight quotation reference.</p>
+                        </div>
+                        <button onclick="closeModal()" class="text-slate-400 text-xl">&times;</button>
+                    </div>
+                    <div class="grid grid-cols-2 gap-3">
+                        <div>
+                            <label class="text-xs font-bold text-slate-600">Origin Port</label>
+                            <input id="fqOrigin" type="text" value="Laem Chabang" class="mt-1 w-full border rounded-lg px-3 py-2 text-sm">
+                        </div>
+                        <div>
+                            <label class="text-xs font-bold text-slate-600">Destination Port</label>
+                            <input id="fqDestination" type="text" class="mt-1 w-full border rounded-lg px-3 py-2 text-sm">
+                        </div>
+                    </div>
+                    <div class="grid grid-cols-2 gap-3">
+                        <div>
+                            <label class="text-xs font-bold text-slate-600">Container Size</label>
+                            <input id="fqSize" type="text" value="20' GP" class="mt-1 w-full border rounded-lg px-3 py-2 text-sm">
+                        </div>
+                        <div>
+                            <label class="text-xs font-bold text-slate-600">Shipping Line / Forwarder</label>
+                            <input id="fqLine" type="text" class="mt-1 w-full border rounded-lg px-3 py-2 text-sm">
+                        </div>
+                    </div>
+                    <div class="grid grid-cols-2 gap-3">
+                        <div>
+                            <label class="text-xs font-bold text-slate-600">Quoted USD / Container</label>
+                            <input id="fqPrice" type="number" step="0.01" class="mt-1 w-full border rounded-lg px-3 py-2 text-sm">
+                        </div>
+                        <div>
+                            <label class="text-xs font-bold text-slate-600">Valid Until</label>
+                            <input id="fqValid" type="date" class="mt-1 w-full border rounded-lg px-3 py-2 text-sm">
+                        </div>
+                    </div>
+                    <div>
+                        <label class="text-xs font-bold text-slate-600">Remark</label>
+                        <textarea id="fqRemark" class="mt-1 w-full border rounded-lg px-3 py-2 text-sm" rows="2"></textarea>
+                    </div>
+                    <div class="flex justify-end gap-2">
+                        <button onclick="closeModal()" class="px-4 py-2 rounded-lg border text-xs font-bold">Cancel</button>
+                        <button onclick="submitFreightQuote()" class="px-4 py-2 rounded-lg bg-blue-600 text-white text-xs font-bold">Add Quote</button>
+                    </div>
+                </div>
+            `);
+        }
+
+        async function submitFreightQuote() {
+            const originPort = document.getElementById('fqOrigin').value;
+            const destinationPort = document.getElementById('fqDestination').value;
+            const containerSize = document.getElementById('fqSize').value;
+            const shippingLineOrForwarder = document.getElementById('fqLine').value;
+            const quotedFreightUsdPerContainer = Number(document.getElementById('fqPrice').value || 0);
+            const validUntil = document.getElementById('fqValid').value;
+            const remark = document.getElementById('fqRemark').value;
+
+            if (!originPort || !destinationPort || !containerSize || !shippingLineOrForwarder) {
+                return alert('Origin, Destination, Container Size, and Shipping Line are required.');
+            }
+            if (quotedFreightUsdPerContainer <= 0) {
+                return alert('Quoted freight must be greater than zero.');
+            }
+
+            try {
+                const saved = await saveFreightQuoteToApi({
+                    originPort,
+                    destinationPort,
+                    containerSize,
+                    shippingLineOrForwarder,
+                    quotedFreightUsdPerContainer,
+                    validUntil,
+                    remark
+                });
+                state.freightQuotes = state.freightQuotes || [];
+                state.freightQuotes.unshift(saved);
+                closeModal();
+                renderPricing(document.getElementById('mainContent'));
+            } catch (err) {
+                alert('Error saving freight quote: ' + err.message);
+            }
+        }
+
         function reviewSpecialPrice(priceId, decision) {
             if (!canManagePricing()) return alert('Only Manager or Admin can approve/reject Special Price.');
             const rec = (state.specialPrices || []).find(x => x.id === priceId);
@@ -1203,10 +1299,31 @@
                 </tr>`;
             }).join('');
 
+            const freightQuoteRows = (state.freightQuotes || []).map(x => {
+                const creator = userMap[x.created_by] || { full_name: x.created_by };
+                const dateText = x.created_at ? new Date(x.created_at).toLocaleString() : '-';
+                return `<tr class="hover:bg-slate-50">
+                    <td class="p-3 font-mono text-blue-600 font-bold">${x.quote_id}</td>
+                    <td class="p-3 font-bold text-slate-700">${x.origin_port}</td>
+                    <td class="p-3 font-bold text-slate-700">${x.destination_port}</td>
+                    <td class="p-3 text-center text-slate-600">${x.container_size}</td>
+                    <td class="p-3 text-slate-900 font-bold">${x.shipping_line_or_forwarder}</td>
+                    <td class="p-3 text-right font-black text-emerald-700">USD ${Number(x.quoted_freight_usd_per_container || 0).toFixed(2)}</td>
+                    <td class="p-3 text-center text-slate-500 text-[10px]">${x.valid_until || '-'}</td>
+                    <td class="p-3 text-slate-600">${x.remark || '-'}</td>
+                    <td class="p-3 text-xs text-slate-500">${creator.full_name || x.created_by}</td>
+                    <td class="p-3 text-center text-slate-500 text-[10px]">${dateText}</td>
+                </tr>`;
+            }).join('');
+
             let actionBtn = '';
             if (tab === 'PRICE_NOTES') {
                 if (manager) {
                     actionBtn = `<button onclick="openAddPriceNoteModal()" class="px-3 py-2 rounded-lg bg-blue-600 text-white text-xs font-bold">Add Price Note</button>`;
+                }
+            } else if (tab === 'FREIGHT_QUOTES') {
+                if (canWriteFreightQuotes()) {
+                    actionBtn = `<button onclick="openAddFreightQuoteModal()" class="px-3 py-2 rounded-lg bg-blue-600 text-white text-xs font-bold">Add Freight Quote</button>`;
                 }
             } else {
                 actionBtn = `<button onclick="openRequestSpecialPrice()" class="px-3 py-2 rounded-lg bg-blue-600 text-white text-xs font-bold">Request Special Price</button>`;
@@ -1228,6 +1345,7 @@
                             <button onclick="setPricingTab('STANDARD')" class="px-4 py-2 rounded-lg text-xs font-bold ${tab === 'STANDARD' ? 'bg-blue-600 text-white' : 'bg-white text-slate-600 border border-slate-200'}">Standard Prices</button>
                             <button onclick="setPricingTab('SPECIAL')" class="px-4 py-2 rounded-lg text-xs font-bold ${tab === 'SPECIAL' ? 'bg-blue-600 text-white' : 'bg-white text-slate-600 border border-slate-200'}">Special Prices</button>
                             <button onclick="setPricingTab('PRICE_NOTES')" class="px-4 py-2 rounded-lg text-xs font-bold ${tab === 'PRICE_NOTES' ? 'bg-blue-600 text-white' : 'bg-white text-slate-600 border border-slate-200'}">Manager Price Notes</button>
+                            <button onclick="setPricingTab('FREIGHT_QUOTES')" class="px-4 py-2 rounded-lg text-xs font-bold ${tab === 'FREIGHT_QUOTES' ? 'bg-blue-600 text-white' : 'bg-white text-slate-600 border border-slate-200'}">Freight Quotes</button>
                         </div>
                         
                         ${tab === 'PRICE_NOTES' ? `
@@ -1266,6 +1384,26 @@
                             </thead>
                             <tbody class="divide-y divide-slate-200">
                                 ${priceNoteRows || '<tr><td colspan="9" class="p-6 text-center text-slate-400">No Price Notes</td></tr>'}
+                            </tbody>
+                        </table>
+                        ` : tab === 'FREIGHT_QUOTES' ? `
+                        <table class="ui-table w-full text-left text-xs">
+                            <thead class="bg-slate-100 text-slate-600 uppercase text-[10px] font-bold">
+                                <tr>
+                                    <th class="p-3">Quote ID</th>
+                                    <th class="p-3">Origin</th>
+                                    <th class="p-3">Destination</th>
+                                    <th class="p-3 text-center">Size</th>
+                                    <th class="p-3">Carrier / Forwarder</th>
+                                    <th class="p-3 text-right">Quoted USD/Container</th>
+                                    <th class="p-3 text-center">Valid Until</th>
+                                    <th class="p-3">Remark</th>
+                                    <th class="p-3">Created By</th>
+                                    <th class="p-3 text-center">Created At</th>
+                                </tr>
+                            </thead>
+                            <tbody class="divide-y divide-slate-200">
+                                ${freightQuoteRows || '<tr><td colspan="10" class="p-6 text-center text-slate-400">No Freight Quotes</td></tr>'}
                             </tbody>
                         </table>
                         ` : tab === 'STANDARD' ? `
