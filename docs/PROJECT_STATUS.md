@@ -296,7 +296,7 @@ Implemented:
 
 ### Phase 5D — Product / Spec D1 Migration
 
-**Status:** COMPLETE / MERGED PENDING (Feature branch: `feature/product-spec-d1`)
+**Status:** COMPLETE / MERGED / DEPLOYED / PRODUCTION VERIFIED
 
 Implemented backend:
 - D1 schema migration (`migrations/0003_product_specs.sql`) defining product category, product form, products, application maps, parameters, standard specs, standard items, customer specs, and customer overrides.
@@ -312,7 +312,23 @@ Implemented frontend:
 - Built Standard Spec UI (draft revisioning, active spec validation, items editor, copy-on-draft revisioning, activate/archive transitions).
 - Built Customer Spec UI (integrated within Customer Detail view, links to active base standard spec, override items editor, effective merged spec list, activate/archive transitions).
 
-All 111 unit, integration, route, and regression tests pass cleanly.
+All 115 unit, integration, route, and regression tests pass cleanly.
+
+Deployed to production:
+- PR #6
+- Merge Commit: `4fab5d4b5516f2f3c428bd76478052545584ad15`
+- Migration: `migrations/0003_product_specs.sql`
+- Production D1: `wcat-sales-db`
+- Worker: `wcat-sales-support`
+- Worker Version ID: `d493722d-21bf-4a4d-a4ac-4ba633fe52a0`
+
+Production smoke test results verified:
+- Product Master API/UI verified (Category, Form, and Product creation and deactivation)
+- Product create/edit validation verified
+- Standard Spec DRAFT/ACTIVE/revision copy-on-draft verified
+- One ACTIVE Standard Spec rule enforced
+- Customer Spec override editor and merged effective spec verified
+- Existing legacy modules (Auth, Customer, External Sales, User Admin) remain healthy and active.
 
 ---
 
@@ -320,19 +336,16 @@ All 111 unit, integration, route, and regression tests pass cleanly.
 
 ## STOPPED HERE — 2026-08-26
 
-Phase 5D implementation is fully complete on the feature branch.
+Phase 5D is fully closed and verified in production.
 Next Action:
-- Create PR to merge `feature/product-spec-d1` to `main`.
-- Deploy D1 migration to production database `wcat-sales-db`.
-- Deploy Worker code to production `wcat-sales-support`.
-- Perform production smoke test verification.
+- Prepare Phase 5E (Pricing) spec and implementation plans.
 
 ---
 
 # 4. NEXT STEP — Phase 5E — Pricing
 
 Next Action:
-- Prepare Phase 5E pricing spec and implementation plans.
+- Prepare Phase 5E pricing spec and plans.
 
 ---
 
@@ -354,12 +367,12 @@ Next Action:
 - [x] Edit User updates details and persists (Phase 5C)
 - [x] Reset Password invalidates active sessions (Phase 5C)
 - [x] Reset password generates new temporary password and forces password change on login (Phase 5C)
-- [ ] Products load successfully from production D1 (Phase 5D)
-- [ ] Add/Edit Product profiles (Phase 5D)
-- [ ] Create draft standard spec & edit items (Phase 5D)
-- [ ] Activate standard spec & verify copy-on-draft revisioning (Phase 5D)
-- [ ] Add customer spec draft referencing active standard spec (Phase 5D)
-- [ ] Modify customer overrides & verify effective specification resolution (Phase 5D)
+- [x] Products load successfully from production D1 (Phase 5D)
+- [x] Add/Edit Product profiles (Phase 5D)
+- [x] Create draft standard spec & edit items (Phase 5D)
+- [x] Activate standard spec & verify copy-on-draft revisioning (Phase 5D)
+- [x] Add customer spec draft referencing active standard spec (Phase 5D)
+- [x] Modify customer overrides & verify effective specification resolution (Phase 5D)
 
 ---
 
