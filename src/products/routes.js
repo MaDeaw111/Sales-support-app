@@ -30,6 +30,7 @@ export function createProductHandler({ repo, resolveUser, db }) {
 
     const isAdmin = caller.role === 'ADMIN';
     const isManager = caller.role === 'MANAGER';
+    const canManageDraftSpec = isAdmin || isManager || caller.role === 'SALES_SUPPORT';
 
     // GET /api/products
     if (path === '/api/products' && method === 'GET') {
@@ -211,6 +212,9 @@ export function createProductHandler({ repo, resolveUser, db }) {
 
     // POST /api/standard-specs
     if (path === '/api/standard-specs' && method === 'POST') {
+      if (!canManageDraftSpec) {
+        return json({ status: 'ERROR', message: 'Permission denied.' }, 403);
+      }
       const body = await readJson(request);
       if (!body || typeof body !== 'object' || Array.isArray(body)) {
         return json({ status: 'ERROR', message: 'Invalid request body.' }, 400);
@@ -245,6 +249,9 @@ export function createProductHandler({ repo, resolveUser, db }) {
 
       // PUT /api/standard-specs/:id
       if (method === 'PUT') {
+        if (!canManageDraftSpec) {
+          return json({ status: 'ERROR', message: 'Permission denied.' }, 403);
+        }
         const body = await readJson(request);
         if (!body || typeof body !== 'object' || Array.isArray(body) || !body.items) {
           return json({ status: 'ERROR', message: 'Invalid request body.' }, 400);
@@ -300,7 +307,7 @@ export function createProductHandler({ repo, resolveUser, db }) {
 
     // GET /api/customers/:customerId/specs
     const listCustomerSpecsMatch = path.match(/^\/api\/customers\/([^/]+)\/specs$/);
-    if (listCustomerSpecsMatch) {
+    if (listCustomerSpecsMatch && method === 'GET') {
       const customerId = listCustomerSpecsMatch[1];
       const prodQuery = url.searchParams.get('productId') || null;
       const appQuery = url.searchParams.get('application') || null;
@@ -310,6 +317,9 @@ export function createProductHandler({ repo, resolveUser, db }) {
 
     // POST /api/customer-specs
     if (path === '/api/customer-specs' && method === 'POST') {
+      if (!canManageDraftSpec) {
+        return json({ status: 'ERROR', message: 'Permission denied.' }, 403);
+      }
       const body = await readJson(request);
       if (!body || typeof body !== 'object' || Array.isArray(body)) {
         return json({ status: 'ERROR', message: 'Invalid request body.' }, 400);
@@ -346,6 +356,9 @@ export function createProductHandler({ repo, resolveUser, db }) {
 
       // PUT /api/customer-specs/:id
       if (method === 'PUT') {
+        if (!canManageDraftSpec) {
+          return json({ status: 'ERROR', message: 'Permission denied.' }, 403);
+        }
         const body = await readJson(request);
         if (!body || typeof body !== 'object' || Array.isArray(body) || !body.overrides) {
           return json({ status: 'ERROR', message: 'Invalid request body.' }, 400);

@@ -289,6 +289,31 @@ export function createProductRepository(db) {
       const frm = await this.findFormById(dto.formId);
       if (!frm) throw new Error('Form not found.');
 
+      const apps = dto.applications || [];
+      if (!Array.isArray(apps) || apps.length === 0) {
+        throw new Error('Product must retain at least one valid application.');
+      }
+
+      const existingApps = existing.applications || [];
+      const toAdd = apps.filter(x => !existingApps.includes(x));
+      const toRemove = existingApps.filter(x => !apps.includes(x));
+
+      for (const app of toRemove) {
+        const hasStdSpec = await db.prepare(`
+          SELECT 1 FROM standard_specs WHERE product_id = ? AND application = ? LIMIT 1
+        `).bind(id, app).first();
+        if (hasStdSpec) {
+          throw new Error(`Cannot remove ${app} because specification history exists for this product/application.`);
+        }
+
+        const hasCustSpec = await db.prepare(`
+          SELECT 1 FROM customer_specs WHERE product_id = ? AND application = ? LIMIT 1
+        `).bind(id, app).first();
+        if (hasCustSpec) {
+          throw new Error(`Cannot remove ${app} because specification history exists for this product/application.`);
+        }
+      }
+
       const statements = [];
       statements.push(db.prepare(`
         UPDATE products
@@ -296,15 +321,18 @@ export function createProductRepository(db) {
         WHERE product_id = ?
       `).bind(dto.name.trim(), dto.shortName.trim(), dto.categoryId, dto.formId, dto.hsCode || '', dto.defaultUnit || 'MT', dto.status, id));
 
-      statements.push(db.prepare('DELETE FROM product_applications WHERE product_id = ?').bind(id));
+      for (const app of toAdd) {
+        statements.push(db.prepare(`
+          INSERT INTO product_applications (product_id, application)
+          VALUES (?, ?)
+        `).bind(id, app));
+      }
 
-      if (dto.applications && Array.isArray(dto.applications)) {
-        for (const app of dto.applications) {
-          statements.push(db.prepare(`
-            INSERT INTO product_applications (product_id, application)
-            VALUES (?, ?)
-          `).bind(id, app));
-        }
+      for (const app of toRemove) {
+        statements.push(db.prepare(`
+          DELETE FROM product_applications
+          WHERE product_id = ? AND application = ?
+        `).bind(id, app));
       }
 
       try {
