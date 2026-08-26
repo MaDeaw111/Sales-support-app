@@ -62,6 +62,32 @@ export function createPriceNoteHandler({ repo, resolveUser, db }) {
       }
     }
 
+    // GET /api/freight-quotes
+    if (path === '/api/freight-quotes' && method === 'GET') {
+      const freightQuotes = await activeRepo.listFreightQuotes();
+      return json({ status: 'SUCCESS', data: { freightQuotes } });
+    }
+
+    // POST /api/freight-quotes
+    if (path === '/api/freight-quotes' && method === 'POST') {
+      const isSalesSupport = caller.role === 'SALES_SUPPORT';
+      if (!isAdmin && !isManager && !isSalesSupport) {
+        return json({ status: 'ERROR', message: 'Permission denied.' }, 403);
+      }
+
+      const body = await readJson(request);
+      if (!body || typeof body !== 'object' || Array.isArray(body)) {
+        return json({ status: 'ERROR', message: 'Invalid request body.' }, 400);
+      }
+
+      try {
+        const freightQuote = await activeRepo.createFreightQuote(body, caller.user_id);
+        return json({ status: 'SUCCESS', data: { freightQuote } });
+      } catch (err) {
+        return json({ status: 'ERROR', message: err.message }, 400);
+      }
+    }
+
     return json({ status: 'ERROR', message: 'Not found.' }, 404);
   };
 }

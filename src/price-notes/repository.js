@@ -101,6 +101,44 @@ export function createPriceNoteRepository(db) {
         created_by_manager_id: r.created_by_manager_id,
         created_at: r.created_at
       }));
+    },
+
+    async createFreightQuote(dto, creatorId) {
+      if (!dto.originPort || !dto.destinationPort || !dto.containerSize || !dto.shippingLineOrForwarder) {
+        throw new Error('originPort, destinationPort, containerSize, and shippingLineOrForwarder are required.');
+      }
+      if (typeof dto.quotedFreightUsdPerContainer !== 'number' || dto.quotedFreightUsdPerContainer <= 0) {
+        throw new Error('Quoted freight must be greater than zero.');
+      }
+
+      const id = dto.id || await nextId(db, 'freight_quotes', 'quote_id', 'FQ');
+
+      try {
+        await db.prepare(`
+          INSERT INTO freight_quotes (quote_id, origin_port, destination_port, container_size, shipping_line_or_forwarder, quoted_freight_usd_per_container, valid_until, remark, created_by)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `).bind(id, dto.originPort, dto.destinationPort, dto.containerSize, dto.shippingLineOrForwarder, dto.quotedFreightUsdPerContainer, dto.validUntil || null, dto.remark || null, creatorId).run();
+
+        const row = await db.prepare(`
+          SELECT quote_id, origin_port, destination_port, container_size, shipping_line_or_forwarder, quoted_freight_usd_per_container, valid_until, remark, created_by, created_at
+          FROM freight_quotes
+          WHERE quote_id = ?
+        `).bind(id).first();
+
+        return row;
+      } catch (err) {
+        throw err;
+      }
+    },
+
+    async listFreightQuotes() {
+      const { results } = await db.prepare(`
+        SELECT quote_id, origin_port, destination_port, container_size, shipping_line_or_forwarder, quoted_freight_usd_per_container, valid_until, remark, created_by, created_at
+        FROM freight_quotes
+        ORDER BY created_at DESC
+      `).all();
+
+      return results || [];
     }
   };
 }
