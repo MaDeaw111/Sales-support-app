@@ -400,6 +400,200 @@ export function createProductRepository(db) {
       `).bind(dto.name.trim(), dto.dataType, dto.defaultUnit || '', dto.status, dto.sortOrder || 0, id).run();
 
       return this.findParameterById(id);
+    },
+
+    async listStandardSpecs(productId, application) {
+      const { results } = await db.prepare(`
+        SELECT standard_spec_id, product_id, application, revision_no, status, effective_date, notes, created_by, created_at, updated_by, updated_at
+        FROM standard_specs
+        WHERE product_id = ? AND application = ?
+        ORDER BY revision_no DESC
+      `).bind(productId, application).all();
+
+      const list = [];
+      for (const r of (results || [])) {
+        const spec = await this.findStandardSpecById(r.standard_spec_id);
+        if (spec) list.push(spec);
+      }
+      return list;
+    },
+
+    async findStandardSpecById(id) {
+      const r = await db.prepare(`
+        SELECT standard_spec_id, product_id, application, revision_no, status, effective_date, notes, created_by, created_at, updated_by, updated_at
+        FROM standard_specs
+        WHERE standard_spec_id = ?
+        LIMIT 1
+      `).bind(id).first();
+
+      if (!r) return null;
+
+      const { results: itemRows } = await db.prepare(`
+        SELECT i.standard_spec_item_id, i.parameter_id, p.parameter_code, p.parameter_name, i.operator, i.numeric_value, i.numeric_value_to, i.text_value, i.unit, i.sort_order, i.notes
+        FROM standard_spec_items i
+        JOIN spec_parameters p ON i.parameter_id = p.parameter_id
+        WHERE i.standard_spec_id = ?
+        ORDER BY i.sort_order ASC, p.parameter_name ASC
+      `).bind(id).all();
+
+      return {
+        id: r.standard_spec_id,
+        productId: r.product_id,
+        application: r.application,
+        revisionNo: Number(r.revision_no),
+        status: r.status,
+        effectiveDate: r.effective_date,
+        notes: r.notes,
+        createdBy: r.created_by,
+        createdAt: r.created_at,
+        updatedBy: r.updated_by,
+        updatedAt: r.updated_at,
+        items: (itemRows || []).map(i => ({
+          itemId: i.standard_spec_item_id,
+          parameterId: i.parameter_id,
+          parameterCode: i.parameter_code,
+          parameterName: i.parameter_name,
+          operator: i.operator,
+          numericValue: i.numeric_value,
+          numericValueTo: i.numeric_value_to,
+          textValue: i.text_value,
+          unit: i.unit,
+          sortOrder: Number(i.sort_order),
+          notes: i.notes
+        }))
+      };
+    },
+
+    async createStandardSpecDraft(dto) {
+      if (!dto.productId || !dto.application || !dto.effectiveDate) {
+        throw new Error('Product, application, and effective date are required.');
+      }
+
+      // 1. Calculate next revision number
+      const row = await db.prepare(`
+        SELECT COALESCE(MAX(revision_no), -1) AS max_rev
+        FROM standard_specs
+        WHERE product_id = ? AND application = ?
+      `).bind(dto.productId, dto.application).first();
+      const nextRev = Number(row?.max_rev ?? -1) + 1;
+
+      // 2. Generate standard spec ID
+      const specId = await nextId(db, 'standard_specs', 'standard_spec_id', 'STD');
+
+      const statements = [];
+      statements.push(db.prepare(`
+        INSERT INTO standard_specs (standard_spec_id, product_id, application, revision_no, status, effective_date, notes, created_by, updated_by)
+        VALUES (?, ?, ?, ?, 'DRAFT', ?, ?, ?, ?)
+      `).bind(specId, dto.productId, dto.application, nextRev, dto.effectiveDate, dto.notes || '', dto.createdBy || null, dto.createdBy || null));
+
+      // 3. Copy items from current ACTIVE spec if it exists
+      const activeSpec = await db.prepare(`
+        SELECT standard_spec_id FROM standard_specs
+        WHERE product_id = ? AND application = ? AND status = 'ACTIVE'
+        LIMIT 1
+      `).bind(dto.productId, dto.application).first();
+
+      if (activeSpec) {
+        const { results: activeItems } = await db.prepare(`
+          SELECT parameter_id, operator, numeric_value, numeric_value_to, text_value, unit, sort_order, notes
+          FROM standard_spec_items
+          WHERE standard_spec_id = ?
+        `).bind(activeSpec.standard_spec_id).all();
+
+        for (const item of (activeItems || [])) {
+          const itemId = `STI-${crypto.randomUUID()}`;
+          statements.push(db.prepare(`
+            INSERT INTO standard_spec_items (standard_spec_item_id, standard_spec_id, parameter_id, operator, numeric_value, numeric_value_to, text_value, unit, sort_order, notes)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          `).bind(itemId, specId, item.parameter_id, item.operator, item.numeric_value, item.numeric_value_to, item.text_value, item.unit, item.sort_order, item.notes));
+        }
+      }
+
+      await db.batch(statements);
+      return this.findStandardSpecById(specId);
+    },
+
+    async updateStandardSpecDraftItems(specId, items, updatedBy) {
+      const existing = await this.findStandardSpecById(specId);
+      if (!existing) throw new Error('Standard specification not found.');
+      if (existing.status !== 'DRAFT') {
+        throw new Error('Cannot edit non-DRAFT specifications.');
+      }
+
+      const statements = [];
+      statements.push(db.prepare(`
+        DELETE FROM standard_spec_items WHERE standard_spec_id = ?
+      `).bind(specId));
+
+      for (const item of (items || [])) {
+        const itemId = `STI-${crypto.randomUUID()}`;
+        statements.push(db.prepare(`
+          INSERT INTO standard_spec_items (standard_spec_item_id, standard_spec_id, parameter_id, operator, numeric_value, numeric_value_to, text_value, unit, sort_order, notes)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `).bind(
+          itemId,
+          specId,
+          item.parameterId,
+          item.operator,
+          item.numericValue !== undefined ? item.numericValue : null,
+          item.numericValueTo !== undefined ? item.numericValueTo : null,
+          item.textValue !== undefined ? item.textValue : null,
+          item.unit || '',
+          item.sortOrder || 0,
+          item.notes || ''
+        ));
+      }
+
+      statements.push(db.prepare(`
+        UPDATE standard_specs
+        SET updated_by = ?, updated_at = CURRENT_TIMESTAMP
+        WHERE standard_spec_id = ?
+      `).bind(updatedBy || null, specId));
+
+      await db.batch(statements);
+      return this.findStandardSpecById(specId);
+    },
+
+    async activateStandardSpec(specId, userId) {
+      const existing = await this.findStandardSpecById(specId);
+      if (!existing) throw new Error('Standard specification not found.');
+      if (existing.status !== 'DRAFT') {
+        throw new Error('Only DRAFT specifications can be activated.');
+      }
+
+      const statements = [];
+      // Archive any existing active spec
+      statements.push(db.prepare(`
+        UPDATE standard_specs
+        SET status = 'ARCHIVED', updated_by = ?, updated_at = CURRENT_TIMESTAMP
+        WHERE product_id = ? AND application = ? AND status = 'ACTIVE'
+      `).bind(userId || null, existing.productId, existing.application));
+
+      // Activate target spec
+      statements.push(db.prepare(`
+        UPDATE standard_specs
+        SET status = 'ACTIVE', updated_by = ?, updated_at = CURRENT_TIMESTAMP
+        WHERE standard_spec_id = ?
+      `).bind(userId || null, specId));
+
+      await db.batch(statements);
+      return this.findStandardSpecById(specId);
+    },
+
+    async archiveStandardSpec(specId, userId) {
+      const existing = await this.findStandardSpecById(specId);
+      if (!existing) throw new Error('Standard specification not found.');
+      if (existing.status !== 'ACTIVE') {
+        throw new Error('Only ACTIVE specifications can be archived.');
+      }
+
+      await db.prepare(`
+        UPDATE standard_specs
+        SET status = 'ARCHIVED', updated_by = ?, updated_at = CURRENT_TIMESTAMP
+        WHERE standard_spec_id = ?
+      `).bind(userId || null, specId).run();
+
+      return this.findStandardSpecById(specId);
     }
   };
 }
