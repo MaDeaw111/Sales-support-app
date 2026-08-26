@@ -165,3 +165,129 @@ test('POST /api/shipments/:id/ensure rejects unauthorized roles with 403', async
   assert.equal(body.status, 'ERROR');
   assert.match(body.message, /permission denied/i);
 });
+
+test('POST /api/shipments/:id/ensure supports tri-state isOneContainer (1, 0, null)', async () => {
+  const { db, wrappedDb } = await setupTestDb();
+  await seedUserAndSession(db, 'U_MGR', 'MANAGER', 'token-mgr');
+
+  db.prepare("INSERT INTO customers (customer_id, customer_code, customer_name) VALUES ('C1', 'CUST1', 'Customer 1')").run();
+  db.prepare("INSERT INTO product_categories (category_id, category_code, category_name) VALUES ('CAT1', 'TAPIOCA', 'Tapioca')").run();
+  db.prepare("INSERT INTO product_forms (form_id, form_code, form_name) VALUES ('FRM1', 'PELLET', 'Pellet')").run();
+  db.prepare("INSERT INTO products (product_id, product_code, product_name, short_name, category_id, form_id) VALUES ('P1', 'THP-65', 'Tapioca 65%', 'THP65', 'CAT1', 'FRM1')").run();
+
+  // Case 1: explicit 1
+  const req1 = new Request('https://example.com/api/shipments/SH_1/ensure', {
+    method: 'POST',
+    headers: { 'cookie': 'wcat_session=token-mgr', 'content-type': 'application/json' },
+    body: JSON.stringify({ poId: 'PO_1', customerId: 'C1', productId: 'P1', incoterm: 'FOB', isOneContainer: 1 })
+  });
+  const res1 = await worker.fetch(req1, { DB: wrappedDb });
+  assert.equal(res1.status, 200);
+  const sh1 = db.prepare("SELECT * FROM shipments WHERE shipment_id = 'SH_1'").get();
+  assert.equal(sh1.is_one_container, 1);
+
+  // Case 2: explicit 0
+  const req2 = new Request('https://example.com/api/shipments/SH_2/ensure', {
+    method: 'POST',
+    headers: { 'cookie': 'wcat_session=token-mgr', 'content-type': 'application/json' },
+    body: JSON.stringify({ poId: 'PO_2', customerId: 'C1', productId: 'P1', incoterm: 'FOB', isOneContainer: 0 })
+  });
+  const res2 = await worker.fetch(req2, { DB: wrappedDb });
+  assert.equal(res2.status, 200);
+  const sh2 = db.prepare("SELECT * FROM shipments WHERE shipment_id = 'SH_2'").get();
+  assert.equal(sh2.is_one_container, 0);
+
+  // Case 3: omitted isOneContainer
+  const req3 = new Request('https://example.com/api/shipments/SH_3/ensure', {
+    method: 'POST',
+    headers: { 'cookie': 'wcat_session=token-mgr', 'content-type': 'application/json' },
+    body: JSON.stringify({ poId: 'PO_3', customerId: 'C1', productId: 'P1', incoterm: 'FOB' })
+  });
+  const res3 = await worker.fetch(req3, { DB: wrappedDb });
+  assert.equal(res3.status, 200);
+  const sh3 = db.prepare("SELECT * FROM shipments WHERE shipment_id = 'SH_3'").get();
+  assert.equal(sh3.is_one_container, null);
+});
+
+test('Shipment read routes deny EXTERNAL_SALES and PRODUCTION_WAREHOUSE with 403', async () => {
+  const { db, wrappedDb } = await setupTestDb();
+  await seedUserAndSession(db, 'U_SALES', 'EXTERNAL_SALES', 'token-sales');
+  await seedUserAndSession(db, 'U_WH', 'PRODUCTION_WAREHOUSE', 'token-wh');
+
+  db.prepare("INSERT INTO customers (customer_id, customer_code, customer_name) VALUES ('C1', 'CUST1', 'Customer 1')").run();
+  db.prepare("INSERT INTO product_categories (category_id, category_code, category_name) VALUES ('CAT1', 'TAPIOCA', 'Tapioca')").run();
+  db.prepare("INSERT INTO product_forms (form_id, form_code, form_name) VALUES ('FRM1', 'PELLET', 'Pellet')").run();
+  db.prepare("INSERT INTO products (product_id, product_code, product_name, short_name, category_id, form_id) VALUES ('P1', 'THP-65', 'Tapioca 65%', 'THP65', 'CAT1', 'FRM1')").run();
+  db.prepare("INSERT INTO pos (po_id, customer_id, product_id, incoterm, status) VALUES ('PO1', 'C1', 'P1', 'FOB', 'ACTIVE')").run();
+  db.prepare("INSERT INTO shipments (shipment_id, po_id, is_one_container) VALUES ('SH1', 'PO1', 1)").run();
+
+  const unauthorizedTokens = ['token-sales', 'token-wh'];
+  const endpoints = [
+    '/api/shipments/SH1',
+    '/api/shipments/SH1/expenses',
+    '/api/shipments/SH1/documents',
+    '/api/expense-categories'
+  ];
+
+  for (const token of unauthorizedTokens) {
+    for (const endpoint of endpoints) {
+      const req = new Request(`https://example.com${endpoint}`, {
+        method: 'GET',
+        headers: { 'cookie': `wcat_session=${token}` }
+      });
+      const res = await worker.fetch(req, { DB: wrappedDb });
+      assert.equal(res.status, 403, `Expected 403 for ${endpoint} with token ${token}, got: ${res.status}`);
+      const body = await res.json();
+      assert.equal(body.status, 'ERROR');
+      assert.match(body.message, /permission denied/i);
+    }
+  }
+});
+
+test('EXPORT role is allowed operational access to write shipment controls', async () => {
+  const { db, wrappedDb } = await setupTestDb();
+  await seedUserAndSession(db, 'U_EXP', 'EXPORT', 'token-export');
+
+  db.prepare("INSERT INTO customers (customer_id, customer_code, customer_name) VALUES ('C1', 'CUST1', 'Customer 1')").run();
+  db.prepare("INSERT INTO product_categories (category_id, category_code, category_name) VALUES ('CAT1', 'TAPIOCA', 'Tapioca')").run();
+  db.prepare("INSERT INTO product_forms (form_id, form_code, form_name) VALUES ('FRM1', 'PELLET', 'Pellet')").run();
+  db.prepare("INSERT INTO products (product_id, product_code, product_name, short_name, category_id, form_id) VALUES ('P1', 'THP-65', 'Tapioca 65%', 'THP65', 'CAT1', 'FRM1')").run();
+
+  // 1. Can create freight quote
+  const resQuote = await worker.fetch(new Request('https://example.com/api/freight-quotes', {
+    method: 'POST',
+    headers: { 'cookie': 'wcat_session=token-export', 'content-type': 'application/json' },
+    body: JSON.stringify({
+      originPort: 'Bangkok',
+      destinationPort: 'Rotterdam',
+      containerSize: "20'",
+      shippingLineOrForwarder: 'Maersk',
+      quotedFreightUsdPerContainer: 2500.00
+    })
+  }), { DB: wrappedDb });
+  assert.equal(resQuote.status, 200);
+
+  // 2. Can ensure shipment
+  const resEnsure = await worker.fetch(new Request('https://example.com/api/shipments/SH1/ensure', {
+    method: 'POST',
+    headers: { 'cookie': 'wcat_session=token-export', 'content-type': 'application/json' },
+    body: JSON.stringify({ poId: 'PO1', customerId: 'C1', productId: 'P1', incoterm: 'FOB', isOneContainer: 1 })
+  }), { DB: wrappedDb });
+  assert.equal(resEnsure.status, 200);
+
+  // 3. Can add expense
+  const resExpense = await worker.fetch(new Request('https://example.com/api/shipments/SH1/expenses', {
+    method: 'POST',
+    headers: { 'cookie': 'wcat_session=token-export', 'content-type': 'application/json' },
+    body: JSON.stringify({ expenseCategoryId: 'CAT-TRUCK', amount: 5000, currency: 'THB' })
+  }), { DB: wrappedDb });
+  assert.equal(resExpense.status, 200);
+
+  // 4. Can add document link
+  const resDoc = await worker.fetch(new Request('https://example.com/api/shipments/SH1/documents', {
+    method: 'POST',
+    headers: { 'cookie': 'wcat_session=token-export', 'content-type': 'application/json' },
+    body: JSON.stringify({ documentType: 'PO', title: 'PO Scan', driveUrl: 'https://drive.google.com/doc' })
+  }), { DB: wrappedDb });
+  assert.equal(resDoc.status, 200);
+});

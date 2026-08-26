@@ -28,7 +28,7 @@ CREATE TABLE shipments (
     shipment_id TEXT PRIMARY KEY,
     po_id TEXT NOT NULL REFERENCES pos(po_id),
     freight_quote_id TEXT REFERENCES freight_quotes(quote_id),
-    is_one_container INTEGER CHECK(is_one_container IN (0, 1)) DEFAULT 1,
+    is_one_container INTEGER CHECK(is_one_container IN (0, 1)) DEFAULT NULL,
     status TEXT
 );
 

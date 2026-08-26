@@ -73,7 +73,8 @@ export function createPriceNoteHandler({ repo, resolveUser, db }) {
     // POST /api/freight-quotes
     if (path === '/api/freight-quotes' && method === 'POST') {
       const isSalesSupport = caller.role === 'SALES_SUPPORT';
-      if (!isAdmin && !isManager && !isSalesSupport) {
+      const isExport = caller.role === 'EXPORT';
+      if (!isAdmin && !isManager && !isSalesSupport && !isExport) {
         return json({ status: 'ERROR', message: 'Permission denied.' }, 403);
       }
 
