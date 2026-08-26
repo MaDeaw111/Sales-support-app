@@ -58,6 +58,58 @@ export function createProductHandler({ repo, resolveUser, db }) {
       }
     }
 
+    // GET /api/product-categories
+    if (path === '/api/product-categories' && method === 'GET') {
+      const categories = await repo.listCategories();
+      return json({ status: 'SUCCESS', data: { categories } });
+    }
+
+    // POST /api/product-categories
+    if (path === '/api/product-categories' && method === 'POST') {
+      if (!isAdmin && !isManager) {
+        return json({ status: 'ERROR', message: 'Permission denied.' }, 403);
+      }
+      const body = await readJson(request);
+      if (!body || typeof body !== 'object' || Array.isArray(body)) {
+        return json({ status: 'ERROR', message: 'Invalid request body.' }, 400);
+      }
+      try {
+        const category = await repo.createCategory(body);
+        return json({ status: 'SUCCESS', data: { category } });
+      } catch (err) {
+        if (err.code === 'UNIQUE') {
+          return json({ status: 'ERROR', message: err.message }, 409);
+        }
+        return json({ status: 'ERROR', message: err.message }, 400);
+      }
+    }
+
+    // GET /api/product-forms
+    if (path === '/api/product-forms' && method === 'GET') {
+      const forms = await repo.listForms();
+      return json({ status: 'SUCCESS', data: { forms } });
+    }
+
+    // POST /api/product-forms
+    if (path === '/api/product-forms' && method === 'POST') {
+      if (!isAdmin && !isManager) {
+        return json({ status: 'ERROR', message: 'Permission denied.' }, 403);
+      }
+      const body = await readJson(request);
+      if (!body || typeof body !== 'object' || Array.isArray(body)) {
+        return json({ status: 'ERROR', message: 'Invalid request body.' }, 400);
+      }
+      try {
+        const form = await repo.createForm(body);
+        return json({ status: 'SUCCESS', data: { form } });
+      } catch (err) {
+        if (err.code === 'UNIQUE') {
+          return json({ status: 'ERROR', message: err.message }, 409);
+        }
+        return json({ status: 'ERROR', message: err.message }, 400);
+      }
+    }
+
     // GET /api/spec-parameters
     if (path === '/api/spec-parameters' && method === 'GET') {
       const parameters = await repo.listParameters();
