@@ -294,31 +294,45 @@ Implemented:
 - Self-lockout protection checks implemented in the repository/routes.
 - Security regression tests implemented.
 
+### Phase 5D — Product / Spec D1 Migration
+
+**Status:** COMPLETE / MERGED PENDING (Feature branch: `feature/product-spec-d1`)
+
+Implemented backend:
+- D1 schema migration (`migrations/0003_product_specs.sql`) defining product category, product form, products, application maps, parameters, standard specs, standard items, customer specs, and customer overrides.
+- Implemented robust repository CRUD methods in `src/products/repository.js` for categories, forms, products, spec parameters, standard specs, customer specs, and effective customer specification merging.
+- Spec validation helper (`src/products/validation.js`) enforcing type constraints, operator rules, and RANGE bounds.
+- Route controllers (`src/products/routes.js`) registering endpoints under `/api/products`, `/api/product-categories`, `/api/product-forms`, `/api/spec-parameters`, `/api/standard-specs`, and `/api/customer-specs` with RBAC authorization check.
+- Wired routes in API Gateway router (`src/index.js`).
+
+Implemented frontend:
+- Initialized empty arrays for products and specification master data in `public/index.html`.
+- Implemented backend loaders for products, categories, forms, and spec parameters.
+- Built Product Master UI (creation, editing, details display).
+- Built Standard Spec UI (draft revisioning, active spec validation, items editor, copy-on-draft revisioning, activate/archive transitions).
+- Built Customer Spec UI (integrated within Customer Detail view, links to active base standard spec, override items editor, effective merged spec list, activate/archive transitions).
+
+All 111 unit, integration, route, and regression tests pass cleanly.
+
 ---
 
 # 3. CURRENT CHECKPOINT
 
 ## STOPPED HERE — 2026-08-26
 
-Phase 5C is fully closed.
-Production deployment version `fba4f0a7-7dc8-488e-aa30-ef5e40283ed8` is fully verified.
+Phase 5D implementation is fully complete on the feature branch.
+Next Action:
+- Create PR to merge `feature/product-spec-d1` to `main`.
+- Deploy D1 migration to production database `wcat-sales-db`.
+- Deploy Worker code to production `wcat-sales-support`.
+- Perform production smoke test verification.
 
 ---
 
-# 4. NEXT STEP — Phase 5D — Product / Spec D1 Migration
+# 4. NEXT STEP — Phase 5E — Pricing
 
 Next Action:
-- Prepare Phase 5D: D1-backed Product Master Data and Standard Spec migration.
-
-Preparation Note:
-Phase 5D should cover:
-- Product master data
-- Standard Product Spec
-- separation from Actual COA / Lab Result
-- D1-backed Product / Spec API
-- frontend Product / Spec page migrated away from mock data
-- preserve existing product codes where practical
-- no Pricing / PO implementation in this phase
+- Prepare Phase 5E pricing spec and implementation plans.
 
 ---
 
@@ -340,6 +354,12 @@ Phase 5D should cover:
 - [x] Edit User updates details and persists (Phase 5C)
 - [x] Reset Password invalidates active sessions (Phase 5C)
 - [x] Reset password generates new temporary password and forces password change on login (Phase 5C)
+- [ ] Products load successfully from production D1 (Phase 5D)
+- [ ] Add/Edit Product profiles (Phase 5D)
+- [ ] Create draft standard spec & edit items (Phase 5D)
+- [ ] Activate standard spec & verify copy-on-draft revisioning (Phase 5D)
+- [ ] Add customer spec draft referencing active standard spec (Phase 5D)
+- [ ] Modify customer overrides & verify effective specification resolution (Phase 5D)
 
 ---
 
@@ -353,6 +373,8 @@ Customer CRM
 Customer Owner Directory
 Detailed Customer Edit
 External Sales
+Users / Roles Management
+Product & Spec Master Data
 ```
 
 Production truth must come from:
@@ -375,19 +397,211 @@ must not appear to save unless persistence is actually implemented.
 
 # 7. Recommended Next Development Order
 
-After Phase 5B smoke test passes:
+After Phase 5D production smoke test passes:
 
 ```text
-1. Confirm / clean Customer + External Sales production data
-2. Decide whether to migrate full Users / Roles management
-3. Product / Spec D1 migration
-4. Pricing
-5. PO Management
-6. Shipping / DI
-7. Operations Calendar
-8. Logistics Partners
-9. Payment Status
-10. Commission
+1. Pricing D1 Integration
+2. PO Management
+3. Shipping / DI
+4. Operations Calendar
+5. Logistics Partners
+6. Payment Status
+7. Commission
+```
+
+Continue using:
+
+```text
+bounded scope
+→ feature branch
+→ TDD
+→ full tests
+→ code review
+→ PR
+→ Cloudflare preview
+→ merge
+→ production deploy
+→ smoke test
+```
+
+PR #4 merge commit:
+
+```text
+efceacd607e21b94d71425bbd247278464481270
+```
+
+Cloudflare production deployment observed:
+
+```text
+Version ID: 91735047
+Merge pull request #4 — migrate External Sales management to D1
+```
+
+Production smoke test results:
+- Sira TTPagro created successfully through External Sales production UI
+- Sira persisted after refresh
+- MEELUNIE B.V. remained assigned after refresh
+- Customer Owner dropdown showed Sira
+- Detailed Customer Edit saved successfully with Sira as Owner
+- No "Owner user does not exist" error
+- No Apps Script-only External Sales save error
+- Sira authentication was tested successfully
+- Temporary-password reset required a manual D1 recovery during the smoke test
+- Final Sira user_id: USR-0002
+- must_change_password flow remains enabled for temporary credentials
+
+Important note:
+The manual temporary-password recovery exposed a production administration gap: there is currently no Admin UI/API flow to reset another user's password safely. This is the reason Phase 5C is next.
+
+---
+
+### Phase 5C — User Administration & Password Reset D1
+
+**Status:** COMPLETE / MERGED / DEPLOYED / PRODUCTION VERIFIED
+
+- Merged via PR #5
+- Merge commit: `07478f989676777119320190f978f833b62136ca`
+- 90 tests passed before merge
+- Customer scope compatibility fix completed
+- No migration required
+- Deployed to production (Worker: `wcat-sales-support`, Version ID: `fba4f0a7-7dc8-488e-aa30-ef5e40283ed8`, D1 binding `DB -> wcat-sales-db`, no migration performed, no manual D1 mutation performed)
+- Production smoke test verified successfully:
+  - Users / Roles page loaded successfully from D1
+  - Add User succeeded
+  - Customer Scope mapping displayed correctly
+  - Temporary password was generated and displayed once
+  - Newly created user could log in
+  - `must_change_password` flow forced password change
+  - Edit User persisted successfully
+  - Admin Reset Password succeeded
+  - Old password no longer worked after reset
+  - New temporary password worked
+  - Forced password change triggered again after reset
+  - Session invalidation behavior verified (all active sessions signed out on password reset)
+  - No manual SQL password recovery was required
+
+Implemented:
+- D1-backed User list (`GET /api/users`) and User detail (`GET /api/users/:id`).
+- Internal User Creation (`POST /api/users`) with secure temporary password generation.
+- User Profile Editing (`PUT /api/users/:id`).
+- Admin Password Reset endpoint (`POST /api/users/:id/reset-password`) with session invalidation.
+- UI migrated away from mockup `state.users` to D1-backed `state.adminUsers`.
+- Self-lockout protection checks implemented in the repository/routes.
+- Security regression tests implemented.
+
+### Phase 5D — Product / Spec D1 Migration
+
+**Status:** COMPLETE / MERGED PENDING (Feature branch: `feature/product-spec-d1`)
+
+Implemented backend:
+- D1 schema migration (`migrations/0003_product_specs.sql`) defining product category, product form, products, application maps, parameters, standard specs, standard items, customer specs, and customer overrides.
+- Implemented robust repository CRUD methods in `src/products/repository.js` for categories, forms, products, spec parameters, standard specs, customer specs, and effective customer specification merging.
+- Spec validation helper (`src/products/validation.js`) enforcing type constraints, operator rules, and RANGE bounds.
+- Route controllers (`src/products/routes.js`) registering endpoints under `/api/products`, `/api/product-categories`, `/api/product-forms`, `/api/spec-parameters`, `/api/standard-specs`, and `/api/customer-specs` with RBAC authorization check.
+- Wired routes in API Gateway router (`src/index.js`).
+
+Implemented frontend:
+- Initialized empty arrays for products and specification master data in `public/index.html`.
+- Implemented backend loaders for products, categories, forms, and spec parameters.
+- Built Product Master UI (creation, editing, details display).
+- Built Standard Spec UI (draft revisioning, active spec validation, items editor, copy-on-draft revisioning, activate/archive transitions).
+- Built Customer Spec UI (integrated within Customer Detail view, links to active base standard spec, override items editor, effective merged spec list, activate/archive transitions).
+
+All 111 unit, integration, route, and regression tests pass cleanly.
+
+---
+
+# 3. CURRENT CHECKPOINT
+
+## STOPPED HERE — 2026-08-26
+
+Phase 5D implementation is fully complete on the feature branch.
+Next Action:
+- Create PR to merge `feature/product-spec-d1` to `main`.
+- Deploy D1 migration to production database `wcat-sales-db`.
+- Deploy Worker code to production `wcat-sales-support`.
+- Perform production smoke test verification.
+
+---
+
+# 4. NEXT STEP — Phase 5E — Pricing
+
+Next Action:
+- Prepare Phase 5E pricing spec and implementation plans.
+
+---
+
+# 5. Smoke Test Checklist
+
+- [x] Sira created through production UI (Phase 5B)
+- [x] Temporary password captured (Phase 5B)
+- [x] Sira remains after refresh (Phase 5B)
+- [x] MEELUNIE remains assigned after refresh (Phase 5B)
+- [x] Customer Owner dropdown shows Sira (Phase 5B)
+- [x] Detailed Customer Edit saves with Sira (Phase 5B)
+- [x] Refresh keeps Owner assignment (Phase 5B)
+- [x] No Owner validation error (Phase 5B)
+- [x] No Apps Script save error (Phase 5B)
+- [x] Users / Roles page loads from D1 (Phase 5C)
+- [x] Add User succeeds with temporary password generated (Phase 5C)
+- [x] Customer Scope preview displays correctly (Phase 5C)
+- [x] New user can login and change password (Phase 5C)
+- [x] Edit User updates details and persists (Phase 5C)
+- [x] Reset Password invalidates active sessions (Phase 5C)
+- [x] Reset password generates new temporary password and forces password change on login (Phase 5C)
+- [ ] Products load successfully from production D1 (Phase 5D)
+- [ ] Add/Edit Product profiles (Phase 5D)
+- [ ] Create draft standard spec & edit items (Phase 5D)
+- [ ] Activate standard spec & verify copy-on-draft revisioning (Phase 5D)
+- [ ] Add customer spec draft referencing active standard spec (Phase 5D)
+- [ ] Modify customer overrides & verify effective specification resolution (Phase 5D)
+
+---
+
+# 6. Important Rules Going Forward
+
+For migrated modules:
+
+```text
+Auth
+Customer CRM
+Customer Owner Directory
+Detailed Customer Edit
+External Sales
+Users / Roles Management
+Product & Spec Master Data
+```
+
+Production truth must come from:
+
+```text
+Worker API + D1
+```
+
+Do not hide persistence bugs with manual D1 seed SQL.
+
+Fields marked:
+
+```text
+Prototype only
+```
+
+must not appear to save unless persistence is actually implemented.
+
+---
+
+# 7. Recommended Next Development Order
+
+After Phase 5D production smoke test passes:
+
+```text
+1. Pricing D1 Integration
+2. PO Management
+3. Shipping / DI
+4. Operations Calendar
+5. Logistics Partners
+6. Payment Status
+7. Commission
 ```
 
 Continue using:
@@ -410,5 +624,5 @@ bounded scope
 
 # 8. Quick Resume Note
 
-> Phase 5C is fully closed and production verified.
-> Next Action: Start Phase 5D — Product / Spec D1 Migration (DO NOT start implementation yet).
+> Phase 5D is fully complete on the feature branch `feature/product-spec-d1` and ready for PR.
+> Next Action: PR review, merge, deploy migrations to production, and smoke test.
