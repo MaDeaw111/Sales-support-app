@@ -103,6 +103,58 @@ export function createShipmentRepository(db) {
       `).bind(shipmentId).all();
 
       return results || [];
+    },
+
+    async addShipmentExpense(dto, creatorId) {
+      if (!dto.shipmentId || !dto.expenseCategoryId || !dto.amount || !dto.currency) {
+        throw new Error('shipmentId, expenseCategoryId, amount, and currency are required.');
+      }
+      if (dto.currency === 'USD' && (typeof dto.fxUsed !== 'number' || dto.fxUsed <= 0)) {
+        throw new Error('FX rate is required for USD expenses.');
+      }
+
+      const id = dto.id || await nextId(db, 'shipment_expenses', 'expense_id', 'EXP');
+      const now = new Date().toISOString();
+      const fxUsed = dto.currency === 'THB' ? null : dto.fxUsed;
+      const amountThb = dto.currency === 'THB' ? dto.amount : dto.amount * dto.fxUsed;
+
+      try {
+        await db.prepare(`
+          INSERT INTO shipment_expenses (expense_id, shipment_id, expense_category_id, amount, currency, fx_used, amount_thb, reference_no, shipment_document_link_id, remark, created_by, updated_by, created_at, updated_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `).bind(id, dto.shipmentId, dto.expenseCategoryId, dto.amount, dto.currency, fxUsed, amountThb, dto.referenceNo || null, dto.shipmentDocumentLinkId || null, dto.remark || null, creatorId, creatorId, now, now).run();
+
+        const row = await db.prepare(`
+          SELECT expense_id, shipment_id, expense_category_id, amount, currency, fx_used, amount_thb, reference_no, shipment_document_link_id, remark, created_by, updated_by, created_at, updated_at
+          FROM shipment_expenses
+          WHERE expense_id = ?
+        `).bind(id).first();
+
+        return row;
+      } catch (err) {
+        throw err;
+      }
+    },
+
+    async listShipmentExpenses(shipmentId) {
+      const { results } = await db.prepare(`
+        SELECT expense_id, shipment_id, expense_category_id, amount, currency, fx_used, amount_thb, reference_no, shipment_document_link_id, remark, created_by, updated_by, created_at, updated_at
+        FROM shipment_expenses
+        WHERE shipment_id = ?
+        ORDER BY created_at ASC
+      `).bind(shipmentId).all();
+
+      return results || [];
+    },
+
+    async getShipmentTotalActualExportCostThb(shipmentId) {
+      const row = await db.prepare(`
+        SELECT SUM(amount_thb) AS total
+        FROM shipment_expenses
+        WHERE shipment_id = ?
+      `).bind(shipmentId).first();
+
+      return row?.total || 0;
     }
   };
 }

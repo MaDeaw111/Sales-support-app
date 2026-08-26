@@ -58,6 +58,35 @@ export function createShipmentHandler({ repo, resolveUser, db }) {
       return json({ status: 'SUCCESS', data: { documentLinks } });
     }
 
+    // POST /api/shipments/:id/expenses
+    const expPostMatch = path.match(/^\/api\/shipments\/([^/]+)\/expenses$/);
+    if (expPostMatch && method === 'POST') {
+      const shipmentId = expPostMatch[1];
+      const body = await readJson(request);
+      if (!body || typeof body !== 'object' || Array.isArray(body)) {
+        return json({ status: 'ERROR', message: 'Invalid request body.' }, 400);
+      }
+
+      try {
+        const expense = await activeRepo.addShipmentExpense({
+          ...body,
+          shipmentId
+        }, caller.user_id);
+        return json({ status: 'SUCCESS', data: { expense } });
+      } catch (err) {
+        return json({ status: 'ERROR', message: err.message }, 400);
+      }
+    }
+
+    // GET /api/shipments/:id/expenses
+    const expGetMatch = path.match(/^\/api\/shipments\/([^/]+)\/expenses$/);
+    if (expGetMatch && method === 'GET') {
+      const shipmentId = expGetMatch[1];
+      const expenses = await activeRepo.listShipmentExpenses(shipmentId);
+      const totalActualExportCostThb = await activeRepo.getShipmentTotalActualExportCostThb(shipmentId);
+      return json({ status: 'SUCCESS', data: { expenses, totalActualExportCostThb } });
+    }
+
     return json({ status: 'ERROR', message: 'Not found.' }, 404);
   };
 }
