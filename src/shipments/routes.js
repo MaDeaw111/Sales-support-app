@@ -30,6 +30,12 @@ export function createShipmentHandler({ repo, resolveUser, db }) {
     const path = url.pathname;
     const method = request.method;
 
+    // GET /api/expense-categories
+    if (path === '/api/expense-categories' && method === 'GET') {
+      const categories = await activeRepo.listExpenseCategories();
+      return json({ status: 'SUCCESS', data: { categories } });
+    }
+
     // POST /api/shipments/:id/documents
     const docPostMatch = path.match(/^\/api\/shipments\/([^/]+)\/documents$/);
     if (docPostMatch && method === 'POST') {

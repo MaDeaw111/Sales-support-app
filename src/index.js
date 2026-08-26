@@ -59,7 +59,10 @@ export default {
       return createUserHandlerFromEnv(env)(request);
     }
 
-    if (url.pathname === '/api/shipments' || url.pathname.startsWith('/api/shipments/')) {
+    if (
+      url.pathname === '/api/shipments' || url.pathname.startsWith('/api/shipments/') ||
+      url.pathname === '/api/expense-categories' || url.pathname.startsWith('/api/expense-categories/')
+    ) {
       if (!env.DB) return jsonResponse({ status: 'ERROR', message: 'D1 DB binding is not configured.' }, 503);
       const { createShipmentHandlerFromEnv } = await import('./shipments/routes.js');
       return createShipmentHandlerFromEnv(env)(request);
