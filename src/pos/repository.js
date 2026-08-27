@@ -86,6 +86,34 @@ async function validateSpecReference(db, productId, specSource, specRevisionId) 
   }
 }
 
+async function matchManagerPriceNote(db, customerId, productId, incoterm, ownershipType, salesOwnerUserId) {
+  let note;
+  if (ownershipType === 'ASSIGNED_SALES') {
+    note = await db.prepare(`
+      SELECT note_id, offer_price_usd_per_mt 
+      FROM manager_price_notes 
+      WHERE sales_user_id = ? 
+        AND customer_id = ? 
+        AND product_id = ? 
+        AND incoterm = ?
+      ORDER BY created_at DESC 
+      LIMIT 1
+    `).bind(salesOwnerUserId, customerId, productId, incoterm).first();
+  } else {
+    note = await db.prepare(`
+      SELECT note_id, offer_price_usd_per_mt 
+      FROM manager_price_notes 
+      WHERE sales_user_id IS NULL 
+        AND customer_id = ? 
+        AND product_id = ? 
+        AND incoterm = ?
+      ORDER BY created_at DESC 
+      LIMIT 1
+    `).bind(customerId, productId, incoterm).first();
+  }
+  return note || null;
+}
+
 export function createPORepository(dbBinding) {
   const db = wrapDb(dbBinding);
   
@@ -435,7 +463,7 @@ export function createPORepository(dbBinding) {
 
     async createPORevisionLine(revisionId, dto) {
       // 1. Enforce status constraint
-      const revision = await db.prepare("SELECT status FROM po_revisions WHERE revision_id = ?").bind(revisionId).first();
+      const revision = await db.prepare("SELECT status, po_id, incoterm, ownership_type_snapshot, sales_owner_user_id_snapshot FROM po_revisions WHERE revision_id = ?").bind(revisionId).first();
       if (!revision) {
         throw new Error(`Revision not found: ${revisionId}`);
       }
@@ -464,10 +492,32 @@ export function createPORepository(dbBinding) {
         throw err;
       }
 
-      // 4. Validate unit price vs suggested price override reason
-      if (dto.suggestedPrice !== undefined && dto.suggestedPrice !== null && dto.unitPrice !== dto.suggestedPrice) {
+      // 4. Match Manager Price Note
+      const header = await db.prepare("SELECT customer_id FROM po_headers WHERE po_id = ?").bind(revision.po_id).first();
+      if (!header) {
+        throw new Error(`PO header not found for po_id: ${revision.po_id}`);
+      }
+
+      const note = await matchManagerPriceNote(
+        db,
+        header.customer_id,
+        dto.productId,
+        revision.incoterm,
+        revision.ownership_type_snapshot,
+        revision.sales_owner_user_id_snapshot
+      );
+
+      let suggestedPrice = null;
+      let sourcePriceNoteId = null;
+      if (note) {
+        suggestedPrice = note.offer_price_usd_per_mt;
+        sourcePriceNoteId = note.note_id;
+      }
+
+      // Validate unit price vs suggested price override reason
+      if (suggestedPrice !== null && dto.unitPrice !== suggestedPrice) {
         if (!dto.priceOverrideReason || !dto.priceOverrideReason.trim()) {
-          const err = new Error('Price override reason is required');
+          const err = new Error('Price override reason is required when price differs from suggested price');
           err.code = 'PO_PRICE_OVERRIDE_REASON_REQUIRED';
           throw err;
         }
@@ -504,8 +554,8 @@ export function createPORepository(dbBinding) {
         maxQty,
         dto.unitPrice,
         priceUnit,
-        dto.sourcePriceNoteId || null,
-        dto.suggestedPrice || null,
+        sourcePriceNoteId,
+        suggestedPrice,
         dto.priceOverrideReason || null,
         dto.packaging,
         dto.containerType,
@@ -526,7 +576,7 @@ export function createPORepository(dbBinding) {
         throw new Error(`Line not found: ${lineId}`);
       }
 
-      const revision = await db.prepare("SELECT status FROM po_revisions WHERE revision_id = ?").bind(existingLine.po_revision_id).first();
+      const revision = await db.prepare("SELECT status, po_id, incoterm, ownership_type_snapshot, sales_owner_user_id_snapshot FROM po_revisions WHERE revision_id = ?").bind(existingLine.po_revision_id).first();
       if (!revision) {
         throw new Error(`Revision not found: ${existingLine.po_revision_id}`);
       }
@@ -546,7 +596,6 @@ export function createPORepository(dbBinding) {
       const tolerancePct = dto.tolerancePct !== undefined ? dto.tolerancePct : existingLine.tolerance_pct;
       const unitPrice = dto.unitPrice !== undefined ? dto.unitPrice : existingLine.unit_price;
       const commissionRate = dto.commissionRateUsdMt !== undefined ? dto.commissionRateUsdMt : existingLine.commission_rate_usd_mt;
-      const suggestedPrice = dto.suggestedPrice !== undefined ? dto.suggestedPrice : existingLine.suggested_price;
       const priceOverrideReason = dto.priceOverrideReason !== undefined ? dto.priceOverrideReason : existingLine.price_override_reason;
 
       if (contractQty < 0) throw new Error('Contract quantity cannot be negative');
@@ -569,10 +618,32 @@ export function createPORepository(dbBinding) {
         }
       }
 
-      // 5. Validate unit price override reason
+      // 5. Match Manager Price Note
+      const header = await db.prepare("SELECT customer_id FROM po_headers WHERE po_id = ?").bind(revision.po_id).first();
+      if (!header) {
+        throw new Error(`PO header not found for po_id: ${revision.po_id}`);
+      }
+
+      const note = await matchManagerPriceNote(
+        db,
+        header.customer_id,
+        existingLine.product_id,
+        revision.incoterm,
+        revision.ownership_type_snapshot,
+        revision.sales_owner_user_id_snapshot
+      );
+
+      let suggestedPrice = null;
+      let sourcePriceNoteId = null;
+      if (note) {
+        suggestedPrice = note.offer_price_usd_per_mt;
+        sourcePriceNoteId = note.note_id;
+      }
+
+      // Validate price override reason
       if (suggestedPrice !== null && unitPrice !== suggestedPrice) {
         if (!priceOverrideReason || !priceOverrideReason.trim()) {
-          const err = new Error('Price override reason is required');
+          const err = new Error('Price override reason is required when price differs from suggested price');
           err.code = 'PO_PRICE_OVERRIDE_REASON_REQUIRED';
           throw err;
         }
@@ -592,8 +663,6 @@ export function createPORepository(dbBinding) {
         tolerancePct: 'tolerance_pct',
         unitPrice: 'unit_price',
         priceUnit: 'price_unit',
-        sourcePriceNoteId: 'source_price_note_id',
-        suggestedPrice: 'suggested_price',
         priceOverrideReason: 'price_override_reason',
         packaging: 'packaging',
         containerType: 'container_type',
@@ -604,8 +673,8 @@ export function createPORepository(dbBinding) {
         operationalLineNote: 'operational_line_note'
       };
 
-      const setClauses = ['min_qty_mt = ?', 'max_qty_mt = ?'];
-      const bindParams = [minQty, maxQty];
+      const setClauses = ['min_qty_mt = ?', 'max_qty_mt = ?', 'suggested_price = ?', 'source_price_note_id = ?'];
+      const bindParams = [minQty, maxQty, suggestedPrice, sourcePriceNoteId];
 
       for (const [dtoKey, sqlColumn] of Object.entries(fieldMappings)) {
         if (dto[dtoKey] !== undefined) {
