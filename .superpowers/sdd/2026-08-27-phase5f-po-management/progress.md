@@ -36,7 +36,7 @@
 ## SDD Progress Ledger
 
 - [x] **Task 1 — D1 Migration & Database Setup**
-- [ ] **Task 2 — PO Header & ID Sequence Generation**
+- [x] **Task 2 — PO Header & ID Sequence Generation**
 - [ ] **Task 3 — PO Revision Snapshotting & Cloning**
 - [ ] **Task 4 — Customer PO Number Uniqueness and History**
 - [ ] **Task 5 — Customer CRM Ownership & House Account Rules**
