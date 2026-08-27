@@ -35,8 +35,15 @@ function wrapDb(db) {
     },
     async batch(statements) {
       const results = [];
-      for (const stmt of statements) {
-        results.push(await stmt.run());
+      db.exec("BEGIN TRANSACTION");
+      try {
+        for (const stmt of statements) {
+          results.push(await stmt.run());
+        }
+        db.exec("COMMIT");
+      } catch (err) {
+        db.exec("ROLLBACK");
+        throw err;
       }
       return results;
     }
@@ -909,6 +916,164 @@ export function createPORepository(dbBinding) {
         err.code = 'PO_EVIDENCE_REQUIRED';
         throw err;
       }
+    },
+
+    async activateRevision(revisionId, approverId, approvalNote) {
+      // 1. Fetch and validate revision
+      const revision = await db.prepare("SELECT * FROM po_revisions WHERE revision_id = ?").bind(revisionId).first();
+      if (!revision) {
+        throw new Error(`Revision not found: ${revisionId}`);
+      }
+      if (revision.status !== 'DRAFT') {
+        throw new Error('Only draft revisions can be activated');
+      }
+
+      // 2. Fetch and validate PO Header
+      const header = await db.prepare("SELECT * FROM po_headers WHERE po_id = ?").bind(revision.po_id).first();
+      if (!header) {
+        throw new Error(`PO header not found: ${revision.po_id}`);
+      }
+
+      // 3. Ensure revision has at least one line item
+      const { results: lines } = await db.prepare("SELECT * FROM po_revision_lines WHERE po_revision_id = ?").bind(revisionId).all();
+      if (!lines || lines.length === 0) {
+        throw new Error('Revision must have at least one line item to activate');
+      }
+
+      // 4. Verify validity date
+      if (revision.valid_until) {
+        const today = new Date().toISOString().split('T')[0];
+        if (revision.valid_until < today) {
+          const err = new Error('PO revision validity has expired');
+          err.code = 'PO_VALIDITY_EXPIRED';
+          throw err;
+        }
+      }
+
+      // 5. Trigger spec validation
+      const specCheck = await this.validateRevisionSpecsForActivation(revisionId);
+
+      // 6. Trigger document validation
+      await this.validateRevisionDocumentsForActivation(revisionId);
+
+      // 7. For revisions other than Rev.0, verify revision note
+      if (revision.revision_no > 0) {
+        if (!revision.revision_note || !revision.revision_note.trim()) {
+          const err = new Error('Revision note is required for revision number > 0');
+          err.code = 'PO_REVISION_NOTE_REQUIRED';
+          throw err;
+        }
+      }
+
+      // 8. Fetch other info for approval snapshot
+      const customer = await db.prepare("SELECT * FROM customers WHERE customer_id = ?").bind(header.customer_id).first();
+      const { results: docs } = await db.prepare("SELECT * FROM po_revision_documents WHERE po_revision_id = ?").bind(revisionId).all();
+
+      const approvalSnapshot = {
+        header,
+        customer,
+        revision,
+        lines,
+        documents: docs
+      };
+      const approvalSummaryJson = JSON.stringify(approvalSnapshot);
+
+      // 9. Prepare atomic swap updates
+      const statements = [];
+
+      // A. Supersede any existing active revisions
+      const oldActive = await db.prepare("SELECT revision_id, revision_no FROM po_revisions WHERE po_id = ? AND status = 'ACTIVE'").bind(revision.po_id).first();
+      
+      statements.push(
+        db.prepare("UPDATE po_revisions SET status = 'SUPERSEDED' WHERE po_id = ? AND status = 'ACTIVE'").bind(revision.po_id)
+      );
+
+      // B. Log old revision superseded event if exists
+      if (oldActive) {
+        const supersededEventId = `EVT-${crypto.randomUUID()}`;
+        const supersededEventMetadata = JSON.stringify({ revision_no: oldActive.revision_no });
+        statements.push(
+          db.prepare(`
+            INSERT INTO po_audit_events (event_id, po_id, po_revision_id, event_type, actor_id, metadata_json)
+            VALUES (?, ?, ?, 'REVISION_SUPERSEDED', ?, ?)
+          `).bind(supersededEventId, revision.po_id, oldActive.revision_id, approverId, supersededEventMetadata)
+        );
+      }
+
+      // C. Activate current draft
+      statements.push(
+        db.prepare(`
+          UPDATE po_revisions 
+          SET status = 'ACTIVE',
+              approved_by = ?,
+              approved_at = datetime('now'),
+              approval_note = ?,
+              approval_summary_json = ?
+          WHERE revision_id = ?
+        `).bind(approverId, approvalNote || null, approvalSummaryJson, revisionId)
+      );
+
+      // D. Update PO Header
+      statements.push(
+        db.prepare(`
+          UPDATE po_headers 
+          SET current_active_revision_id = ?,
+              current_draft_revision_id = NULL
+          WHERE po_id = ?
+        `).bind(revisionId, revision.po_id)
+      );
+
+      // E. Mirror to legacy pos table (Ruling 01)
+      const firstLine = lines[0];
+      statements.push(
+        db.prepare(`
+          INSERT INTO pos (po_id, customer_id, product_id, incoterm, destination_port, po_date, status)
+          VALUES (?, ?, ?, ?, ?, ?, 'ACTIVE')
+          ON CONFLICT(po_id) DO UPDATE SET 
+            customer_id = excluded.customer_id, 
+            product_id = excluded.product_id, 
+            incoterm = excluded.incoterm, 
+            destination_port = excluded.destination_port, 
+            po_date = excluded.po_date, 
+            status = excluded.status
+        `).bind(
+          revision.po_id,
+          header.customer_id,
+          firstLine.product_id,
+          revision.incoterm,
+          revision.destination || null,
+          revision.po_date || null
+        )
+      );
+
+      // F. Log revision activated event
+      const activeEventId = `EVT-${crypto.randomUUID()}`;
+      const activeEventMetadata = JSON.stringify({ revision_no: revision.revision_no });
+      statements.push(
+        db.prepare(`
+          INSERT INTO po_audit_events (event_id, po_id, po_revision_id, event_type, actor_id, metadata_json)
+          VALUES (?, ?, ?, 'REVISION_ACTIVATED', ?, ?)
+        `).bind(activeEventId, revision.po_id, revisionId, approverId, activeEventMetadata)
+      );
+
+      // G. Log SPEC_OLD_REVISION_CONFIRMED for outdated specs
+      for (const outSpec of specCheck.outdatedSpecs) {
+        const specEventId = `EVT-${crypto.randomUUID()}`;
+        const specEventMetadata = JSON.stringify({
+          line_id: outSpec.line_id,
+          spec_source: outSpec.spec_source,
+          spec_revision_id: outSpec.spec_revision_id
+        });
+        statements.push(
+          db.prepare(`
+            INSERT INTO po_audit_events (event_id, po_id, po_revision_id, event_type, actor_id, metadata_json)
+            VALUES (?, ?, ?, 'SPEC_OLD_REVISION_CONFIRMED', ?, ?)
+          `).bind(specEventId, revision.po_id, revisionId, approverId, specEventMetadata)
+        );
+      }
+
+      // Execute transaction batch
+      await db.batch(statements);
     }
   };
 }
