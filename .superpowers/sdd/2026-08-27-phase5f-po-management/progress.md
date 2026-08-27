@@ -47,4 +47,4 @@
 - [x] **Task 10 — Revision Activation & Atomic Swapping**
 - [x] **Task 11 — PO Cancellation & Hard Delete Controls**
 - [x] **Task 12 — Audit Event Logging and Field Diff Generation**
-- [ ] **Task 13 — API Endpoints & RBAC Views Integration**
+- [x] **Task 13 — API Endpoints & RBAC Views Integration**

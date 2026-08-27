@@ -1264,6 +1264,44 @@ export function createPORepository(dbBinding) {
 
       // 4. Log PO_CANCELLED audit event
       await logPOAuditEvent(db, poId, header.current_active_revision_id, 'PO_CANCELLED', cancellerId, { reason });
+    },
+
+    async listPOs() {
+      const { results } = await db.prepare("SELECT * FROM po_headers ORDER BY created_at DESC").all();
+      return results || [];
+    },
+
+    async getPO(poId) {
+      const header = await db.prepare("SELECT * FROM po_headers WHERE po_id = ?").bind(poId).first();
+      if (!header) return null;
+
+      const { results: revisions } = await db.prepare("SELECT * FROM po_revisions WHERE po_id = ? ORDER BY revision_no ASC").bind(poId).all();
+      
+      const revsWithDetails = [];
+      for (const rev of revisions || []) {
+        const { results: lines } = await db.prepare("SELECT * FROM po_revision_lines WHERE po_revision_id = ? ORDER BY line_no ASC").bind(rev.revision_id).all();
+        const { results: docs } = await db.prepare("SELECT * FROM po_revision_documents WHERE po_revision_id = ?").bind(rev.revision_id).all();
+        revsWithDetails.push({
+          ...rev,
+          lines: lines || [],
+          documents: docs || []
+        });
+      }
+
+      const { results: auditEvents } = await db.prepare("SELECT * FROM po_audit_events WHERE po_id = ? ORDER BY created_at ASC").bind(poId).all();
+      const { results: fieldDiffs } = await db.prepare(`
+        SELECT fd.* 
+        FROM po_field_diffs fd
+        JOIN po_revisions r ON fd.po_revision_id = r.revision_id
+        WHERE r.po_id = ?
+      `).bind(poId).all();
+
+      return {
+        header,
+        revisions: revsWithDetails,
+        auditEvents: auditEvents || [],
+        fieldDiffs: fieldDiffs || []
+      };
     }
   };
 }

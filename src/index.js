@@ -89,6 +89,12 @@ export default {
       }, 501);
     }
 
+    if (url.pathname === '/api/pos' || url.pathname.startsWith('/api/pos/')) {
+      if (!env.DB) return jsonResponse({ status: 'ERROR', message: 'D1 DB binding is not configured.' }, 503);
+      const { createPOHandlerFromEnv } = await import('./pos/routes.js');
+      return createPOHandlerFromEnv(env)(request);
+    }
+
     if (url.pathname.startsWith('/api/')) {
       return jsonResponse({ status: 'ERROR', message: 'API route not found.' }, 404);
     }
