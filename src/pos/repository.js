@@ -62,6 +62,30 @@ async function checkCustomerPoNoUnique(db, customerId, poId, customerPoNo) {
   }
 }
 
+async function validateSpecReference(db, productId, specSource, specRevisionId) {
+  if (specSource === 'STANDARD') {
+    const spec = await db.prepare("SELECT product_id, status FROM standard_specs WHERE standard_spec_id = ?").bind(specRevisionId).first();
+    if (!spec) {
+      throw new Error('Specification not found');
+    }
+    if (spec.product_id !== productId) {
+      throw new Error('Product spec mismatch');
+    }
+    return spec;
+  } else if (specSource === 'CUSTOMER') {
+    const spec = await db.prepare("SELECT product_id, status FROM customer_specs WHERE customer_spec_id = ?").bind(specRevisionId).first();
+    if (!spec) {
+      throw new Error('Specification not found');
+    }
+    if (spec.product_id !== productId) {
+      throw new Error('Product spec mismatch');
+    }
+    return spec;
+  } else {
+    throw new Error('Invalid spec source');
+  }
+}
+
 export function createPORepository(dbBinding) {
   const db = wrapDb(dbBinding);
   
@@ -429,6 +453,9 @@ export function createPORepository(dbBinding) {
         throw new Error('Commission rate cannot be negative');
       }
 
+      // Validate specification reference and product match
+      await validateSpecReference(db, dto.productId, dto.specSource, dto.specRevisionId);
+
       // 3. Enforce line_no uniqueness
       const duplicate = await db.prepare("SELECT 1 FROM po_revision_lines WHERE po_revision_id = ? AND line_no = ?").bind(revisionId, dto.lineNo).first();
       if (duplicate) {
@@ -527,6 +554,11 @@ export function createPORepository(dbBinding) {
       if (unitPrice < 0) throw new Error('Unit price cannot be negative');
       if (commissionRate < 0) throw new Error('Commission rate cannot be negative');
 
+      // Validate specification reference and product match
+      const specSource = dto.specSource !== undefined ? dto.specSource : existingLine.spec_source;
+      const specRevisionId = dto.specRevisionId !== undefined ? dto.specRevisionId : existingLine.spec_revision_id;
+      await validateSpecReference(db, existingLine.product_id, specSource, specRevisionId);
+
       // 4. Enforce line_no uniqueness
       if (dto.lineNo !== undefined && dto.lineNo !== existingLine.line_no) {
         const duplicate = await db.prepare("SELECT 1 FROM po_revision_lines WHERE po_revision_id = ? AND line_no = ? AND line_id != ?").bind(existingLine.po_revision_id, dto.lineNo, lineId).first();
@@ -613,6 +645,56 @@ export function createPORepository(dbBinding) {
 
       // 2. Delete PO Line
       await db.prepare("DELETE FROM po_revision_lines WHERE line_id = ?").bind(lineId).run();
+    },
+
+    async validateRevisionSpecsForActivation(revisionId) {
+      const { results: lines } = await db.prepare("SELECT * FROM po_revision_lines WHERE po_revision_id = ?").bind(revisionId).all();
+      
+      let hasOutdated = false;
+      const outdatedSpecs = [];
+
+      for (const line of (lines || [])) {
+        const spec = await validateSpecReference(db, line.product_id, line.spec_source, line.spec_revision_id);
+        
+        if (spec.status === 'DRAFT') {
+          const err = new Error('Draft spec not allowed for activation');
+          err.code = 'PO_SPEC_REQUIRED';
+          throw err;
+        }
+
+        if (line.spec_source === 'STANDARD') {
+          const stdSpec = await db.prepare("SELECT application, revision_no FROM standard_specs WHERE standard_spec_id = ?").bind(line.spec_revision_id).first();
+          if (stdSpec) {
+            const activeSpec = await db.prepare("SELECT standard_spec_id FROM standard_specs WHERE product_id = ? AND application = ? AND status = 'ACTIVE' LIMIT 1").bind(line.product_id, stdSpec.application).first();
+            if (activeSpec && activeSpec.standard_spec_id !== line.spec_revision_id) {
+              hasOutdated = true;
+              outdatedSpecs.push({
+                line_id: line.line_id,
+                spec_source: line.spec_source,
+                spec_revision_id: line.spec_revision_id
+              });
+            }
+          }
+        } else if (line.spec_source === 'CUSTOMER') {
+          const custSpec = await db.prepare("SELECT customer_id, application FROM customer_specs WHERE customer_spec_id = ?").bind(line.spec_revision_id).first();
+          if (custSpec) {
+            const activeCustSpec = await db.prepare("SELECT customer_spec_id FROM customer_specs WHERE customer_id = ? AND product_id = ? AND application = ? AND status = 'ACTIVE' LIMIT 1").bind(custSpec.customer_id, line.product_id, custSpec.application).first();
+            if (activeCustSpec && activeCustSpec.customer_spec_id !== line.spec_revision_id) {
+              hasOutdated = true;
+              outdatedSpecs.push({
+                line_id: line.line_id,
+                spec_source: line.spec_source,
+                spec_revision_id: line.spec_revision_id
+              });
+            }
+          }
+        }
+      }
+
+      return {
+        hasOutdated,
+        outdatedSpecs
+      };
     }
   };
 }

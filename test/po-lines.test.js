@@ -29,6 +29,8 @@ test('PO Line Commercial Model and Tolerance Calculations', async () => {
   db.prepare("INSERT INTO product_forms (form_id, form_code, form_name) VALUES ('FRM1', 'PELLET', 'Pellet')").run();
   db.prepare("INSERT INTO products (product_id, product_code, product_name, short_name, category_id, form_id) VALUES ('P1', 'THP-65', 'Tapioca Pellet 65%', 'THP65', 'CAT1', 'FRM1')").run();
   db.prepare("INSERT INTO products (product_id, product_code, product_name, short_name, category_id, form_id) VALUES ('P2', 'THP-70', 'Tapioca Pellet 70%', 'THP70', 'CAT1', 'FRM1')").run();
+  db.prepare("INSERT INTO product_applications (product_id, application) VALUES ('P1', 'FEED_GRADE')").run();
+  db.prepare("INSERT INTO standard_specs (standard_spec_id, product_id, application, revision_no, status, effective_date) VALUES ('SPEC-REV-1', 'P1', 'FEED_GRADE', 0, 'ACTIVE', '2026-08-27')").run();
 
   const repo = createPORepository(db);
 
@@ -74,7 +76,7 @@ test('PO Line Commercial Model and Tolerance Calculations', async () => {
   await assert.rejects(async () => {
     await repo.createPORevisionLine(revisionId, {
       lineNo: 10,
-      productId: 'P2',
+      productId: 'P1',
       specSource: 'STANDARD',
       specRevisionId: 'SPEC-REV-1',
       contractQtyMt: 200.0,
