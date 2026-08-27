@@ -38,7 +38,7 @@
 - [x] **Task 1 — D1 Migration & Database Setup**
 - [x] **Task 2 — PO Header & ID Sequence Generation**
 - [x] **Task 3 — PO Revision Snapshotting & Cloning**
-- [ ] **Task 4 — Customer PO Number Uniqueness and History**
+- [x] **Task 4 — Customer PO Number Uniqueness and History**
 - [ ] **Task 5 — Customer CRM Ownership & House Account Rules**
 - [ ] **Task 6 — PO Line Commercial Model and Tolerance Calculations**
 - [ ] **Task 7 — Spec Resolution Logic**

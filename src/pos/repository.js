@@ -43,6 +43,25 @@ function wrapDb(db) {
   };
 }
 
+async function checkCustomerPoNoUnique(db, customerId, poId, customerPoNo) {
+  if (!customerPoNo || !customerPoNo.trim()) return;
+  const duplicate = await db.prepare(`
+    SELECT 1 
+    FROM po_revisions r
+    JOIN po_headers h ON r.po_id = h.po_id
+    WHERE h.customer_id = ?
+      AND h.po_id != ?
+      AND r.customer_po_no = ?
+    LIMIT 1
+  `).bind(customerId, poId || '', customerPoNo).first();
+  
+  if (duplicate) {
+    const err = new Error(`Duplicate customer PO number: ${customerPoNo}`);
+    err.code = 'PO_CUSTOMER_PO_DUPLICATE';
+    throw err;
+  }
+}
+
 export function createPORepository(dbBinding) {
   const db = wrapDb(dbBinding);
   
@@ -110,6 +129,11 @@ export function createPORepository(dbBinding) {
       
       const nextSeq = (row?.max_seq || 0) + 1;
       const poId = `PO-${year}-${String(nextSeq).padStart(3, '0')}`;
+      
+      // Validate customer PO number uniqueness
+      if (dto.customerPoNo) {
+        await checkCustomerPoNoUnique(db, dto.customerId, poId, dto.customerPoNo);
+      }
       
       // 3. Set Defaults & values from DTO
       const revisionId = `REV-${crypto.randomUUID()}`;
@@ -319,6 +343,70 @@ export function createPORepository(dbBinding) {
       // Return the newly created revision
       const clonedRevision = await db.prepare("SELECT * FROM po_revisions WHERE revision_id = ?").bind(newRevId).first();
       return clonedRevision;
+    },
+
+    async updateRevisionOverview(revisionId, dto) {
+      // Fetch revision
+      const revision = await db.prepare("SELECT * FROM po_revisions WHERE revision_id = ?").bind(revisionId).first();
+      if (!revision) {
+        throw new Error(`Revision not found: ${revisionId}`);
+      }
+
+      // Enforce status constraint
+      if (revision.status !== 'DRAFT') {
+        const err = new Error('Cannot edit active or superseded revision');
+        err.code = 'PO_ACTIVE_IMMUTABLE';
+        throw err;
+      }
+
+      // Fetch customer_id from po_headers
+      const header = await db.prepare("SELECT customer_id FROM po_headers WHERE po_id = ?").bind(revision.po_id).first();
+      if (!header) {
+        throw new Error(`PO header not found for po_id: ${revision.po_id}`);
+      }
+
+      // If customerPoNo is updated, validate uniqueness
+      const newCustomerPoNo = dto.customerPoNo !== undefined ? dto.customerPoNo : revision.customer_po_no;
+      if (dto.customerPoNo !== undefined && dto.customerPoNo !== revision.customer_po_no) {
+        await checkCustomerPoNoUnique(db, header.customer_id, revision.po_id, newCustomerPoNo);
+      }
+
+      // Build update statement dynamically
+      const fieldMappings = {
+        customerPoNo: 'customer_po_no',
+        poDate: 'po_date',
+        buyerReference: 'buyer_reference',
+        currency: 'currency',
+        incoterm: 'incoterm',
+        destination: 'destination',
+        deliveryStart: 'delivery_start',
+        deliveryEnd: 'delivery_end',
+        validUntil: 'valid_until',
+        paymentTermSnapshot: 'payment_term_snapshot',
+        commercialTerms: 'commercial_terms',
+        operationalNote: 'operational_note',
+        revisionNote: 'revision_note'
+      };
+
+      const setClauses = [];
+      const bindParams = [];
+
+      for (const [dtoKey, sqlColumn] of Object.entries(fieldMappings)) {
+        if (dto[dtoKey] !== undefined) {
+          setClauses.push(`${sqlColumn} = ?`);
+          bindParams.push(dto[dtoKey]);
+        }
+      }
+
+      if (setClauses.length > 0) {
+        const query = `UPDATE po_revisions SET ${setClauses.join(', ')} WHERE revision_id = ?`;
+        bindParams.push(revisionId);
+        await db.prepare(query).bind(...bindParams).run();
+      }
+
+      // Return the updated revision
+      const updatedRevision = await db.prepare("SELECT * FROM po_revisions WHERE revision_id = ?").bind(revisionId).first();
+      return updatedRevision;
     }
   };
 }
