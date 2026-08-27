@@ -16,6 +16,8 @@ async function setupTestDb() {
   db.exec(commercialSql);
   const poSql = await readFile(new URL('../migrations/0005_po_management.sql', import.meta.url), 'utf8');
   db.exec(poSql);
+  const ownSql = await readFile(new URL('../migrations/0006_customer_ownership_type.sql', import.meta.url), 'utf8');
+  db.exec(ownSql);
   return db;
 }
 
@@ -28,9 +30,10 @@ test('PO Header & ID Sequence Generation', async () => {
   db.prepare("INSERT INTO users (user_id, email, role, status, full_name, password_hash, password_salt) VALUES ('U_INACTIVE', 'inactive@example.com', 'EXTERNAL_SALES', 'INACTIVE', 'Inactive Person', 'hash', 'salt')").run();
   
   // Create customers: C1 has active owner, C2 has NULL owner, C4 has inactive owner
-  db.prepare("INSERT INTO customers (customer_id, customer_code, customer_name, owner_user_id) VALUES ('C1', 'CUST1', 'Assigned Sales Customer', 'U1')").run();
-  db.prepare("INSERT INTO customers (customer_id, customer_code, customer_name, owner_user_id) VALUES ('C2', 'CUST2', 'House Account Customer', NULL)").run();
-  db.prepare("INSERT INTO customers (customer_id, customer_code, customer_name, owner_user_id) VALUES ('C4', 'CUST4', 'Inactive Owner Customer', 'U_INACTIVE')").run();
+  db.prepare("INSERT INTO customers (customer_id, customer_code, customer_name, owner_user_id, ownership_type) VALUES ('C1', 'CUST1', 'Assigned Sales Customer', 'U1', 'ASSIGNED_SALES')").run();
+  db.prepare("INSERT INTO customers (customer_id, customer_code, customer_name, owner_user_id, ownership_type) VALUES ('C2', 'CUST2', 'House Account Customer', NULL, 'HOUSE_ACCOUNT')").run();
+  db.prepare("INSERT INTO customers (customer_id, customer_code, customer_name, owner_user_id, ownership_type) VALUES ('C4', 'CUST4', 'Inactive Owner Customer', 'U_INACTIVE', 'ASSIGNED_SALES')").run();
+  db.prepare("INSERT INTO customers (customer_id, customer_code, customer_name, owner_user_id, ownership_type) VALUES ('C5', 'CUST5', 'Assigned Sales Customer No Owner', NULL, 'ASSIGNED_SALES')").run();
 
   const repo = createPORepository(db);
 
@@ -120,10 +123,9 @@ test('PO Header & ID Sequence Generation', async () => {
     return err.code === 'PO_CUSTOMER_OWNER_REQUIRED' || err.message.toLowerCase().includes('owner required');
   }, 'Should reject if CRM owner is inactive');
 
-  // 6. Test ASSIGNED_SALES owner validation - missing owner (forced ASSIGNED_SALES via DTO but NULL owner)
+  // 6. Test ASSIGNED_SALES owner validation - missing owner (customer has ASSIGNED_SALES in CRM but NULL owner)
   const dto6 = {
-    customerId: 'C2', // C2 has NULL owner
-    ownershipType: 'ASSIGNED_SALES',
+    customerId: 'C5', // C5 has NULL owner and ASSIGNED_SALES
     poDate: '2026-08-27',
     currency: 'USD',
     incoterm: 'FOB',

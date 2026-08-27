@@ -16,6 +16,8 @@ async function setupTestDb() {
   db.exec(commercialSql);
   const poSql = await readFile(new URL('../migrations/0005_po_management.sql', import.meta.url), 'utf8');
   db.exec(poSql);
+  const ownSql = await readFile(new URL('../migrations/0006_customer_ownership_type.sql', import.meta.url), 'utf8');
+  db.exec(ownSql);
   return db;
 }
 
@@ -27,17 +29,17 @@ test('Customer CRM Ownership & House Account Rules', async () => {
   db.prepare("INSERT INTO users (user_id, email, role, status, full_name, password_hash, password_salt) VALUES ('USR_INACTIVE_SALES', 'inactive_sales@example.com', 'EXTERNAL_SALES', 'INACTIVE', 'Inactive Sales', 'hash', 'salt')").run();
 
   // Create customers
-  db.prepare("INSERT INTO customers (customer_id, customer_code, customer_name, owner_user_id) VALUES ('CUST_WITH_ACTIVE', 'C_ACT', 'Customer with Active Owner', 'USR_ACTIVE_SALES')").run();
-  db.prepare("INSERT INTO customers (customer_id, customer_code, customer_name, owner_user_id) VALUES ('CUST_WITH_INACTIVE', 'C_INACT', 'Customer with Inactive Owner', 'USR_INACTIVE_SALES')").run();
-  db.prepare("INSERT INTO customers (customer_id, customer_code, customer_name, owner_user_id) VALUES ('CUST_HOUSE_ACCOUNT', 'C_HOUSE', 'Customer House Account', NULL)").run();
+  db.prepare("INSERT INTO customers (customer_id, customer_code, customer_name, owner_user_id, ownership_type) VALUES ('CUST_WITH_ACTIVE', 'C_ACT', 'Customer with Active Owner', 'USR_ACTIVE_SALES', 'ASSIGNED_SALES')").run();
+  db.prepare("INSERT INTO customers (customer_id, customer_code, customer_name, owner_user_id, ownership_type) VALUES ('CUST_WITH_INACTIVE', 'C_INACT', 'Customer with Inactive Owner', 'USR_INACTIVE_SALES', 'ASSIGNED_SALES')").run();
+  db.prepare("INSERT INTO customers (customer_id, customer_code, customer_name, owner_user_id, ownership_type) VALUES ('CUST_HOUSE_ACCOUNT', 'C_HOUSE', 'Customer House Account', NULL, 'HOUSE_ACCOUNT')").run();
+  db.prepare("INSERT INTO customers (customer_id, customer_code, customer_name, owner_user_id, ownership_type) VALUES ('CUST_ASSIGNED_NO_OWNER', 'C_ANO', 'Customer Assigned No Owner', NULL, 'ASSIGNED_SALES')").run();
 
   const repo = createPORepository(db);
 
-  // 1. Creating a PO for a customer with no sales owner throws PO_CUSTOMER_OWNER_REQUIRED when ownershipType is ASSIGNED_SALES
+  // 1. Creating a PO for a customer with no sales owner throws PO_CUSTOMER_OWNER_REQUIRED
   await assert.rejects(async () => {
     await repo.createDraftPO({
-      customerId: 'CUST_HOUSE_ACCOUNT',
-      ownershipType: 'ASSIGNED_SALES',
+      customerId: 'CUST_ASSIGNED_NO_OWNER',
       poDate: '2026-08-27',
       currency: 'USD',
       incoterm: 'FOB',

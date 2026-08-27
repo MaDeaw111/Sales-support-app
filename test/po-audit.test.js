@@ -16,6 +16,8 @@ async function setupTestDb() {
   db.exec(commercialSql);
   const poSql = await readFile(new URL('../migrations/0005_po_management.sql', import.meta.url), 'utf8');
   db.exec(poSql);
+  const ownSql = await readFile(new URL('../migrations/0006_customer_ownership_type.sql', import.meta.url), 'utf8');
+  db.exec(ownSql);
   return db;
 }
 

@@ -16,6 +16,8 @@ async function setupTestDb() {
   db.exec(commercialSql);
   const poSql = await readFile(new URL('../migrations/0005_po_management.sql', import.meta.url), 'utf8');
   db.exec(poSql);
+  const ownSql = await readFile(new URL('../migrations/0006_customer_ownership_type.sql', import.meta.url), 'utf8');
+  db.exec(ownSql);
   return db;
 }
 
@@ -25,6 +27,7 @@ test('PO Line Manager Price Note Matching', async () => {
   // Seed reference data
   db.prepare("INSERT INTO users (user_id, email, role, status, full_name, password_hash, password_salt) VALUES ('USR_SALES', 'sales@example.com', 'EXTERNAL_SALES', 'ACTIVE', 'Sales Person', 'hash', 'salt')").run();
   db.prepare("INSERT INTO customers (customer_id, customer_code, customer_name, owner_user_id) VALUES ('C1', 'CUST1', 'Assigned Customer', 'USR_SALES')").run();
+  db.prepare("INSERT INTO customers (customer_id, customer_code, customer_name, owner_user_id) VALUES ('C2', 'CUST2', 'House Customer', NULL)").run();
   db.prepare("INSERT INTO product_categories (category_id, category_code, category_name) VALUES ('CAT1', 'TAPIOCA', 'Tapioca Product')").run();
   db.prepare("INSERT INTO product_forms (form_id, form_code, form_name) VALUES ('FRM1', 'PELLET', 'Pellet')").run();
   db.prepare("INSERT INTO products (product_id, product_code, product_name, short_name, category_id, form_id) VALUES ('P1', 'THP-65', 'Tapioca Pellet 65%', 'THP65', 'CAT1', 'FRM1')").run();
@@ -41,7 +44,7 @@ test('PO Line Manager Price Note Matching', async () => {
   // 2. Matched note for HOUSE_ACCOUNT
   db.prepare(`
     INSERT INTO manager_price_notes (note_id, sales_user_id, customer_id, product_id, incoterm, offer_price_usd_per_mt, created_by_manager_id)
-    VALUES ('NOTE_HOUSE', NULL, 'C1', 'P1', 'FOB', 340.00, 'USR_SALES')
+    VALUES ('NOTE_HOUSE', NULL, 'C2', 'P1', 'FOB', 340.00, 'USR_SALES')
   `).run();
 
   const repo = createPORepository(db);
@@ -116,7 +119,7 @@ test('PO Line Manager Price Note Matching', async () => {
 
   // --- HOUSE_ACCOUNT Test ---
   const po2 = await repo.createDraftPO({
-    customerId: 'C1',
+    customerId: 'C2',
     ownershipType: 'HOUSE_ACCOUNT',
     poDate: '2026-08-27',
     currency: 'USD',

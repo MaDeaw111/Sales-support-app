@@ -16,6 +16,8 @@ async function setupTestDb() {
   db.exec(commercialSql);
   const poSql = await readFile(new URL('../migrations/0005_po_management.sql', import.meta.url), 'utf8');
   db.exec(poSql);
+  const ownSql = await readFile(new URL('../migrations/0006_customer_ownership_type.sql', import.meta.url), 'utf8');
+  db.exec(ownSql);
   return db;
 }
 
@@ -96,12 +98,9 @@ test('PO Revision Activation & Atomic Swapping', async () => {
   assert.equal(headerActive.current_active_revision_id, rev0Id);
   assert.equal(headerActive.current_draft_revision_id, null);
 
-  // Legacy pos table check
+  // Legacy pos table check - should not mirror anymore (Ruling 01)
   const legacyPo = db.prepare("SELECT * FROM pos WHERE po_id = ?").get(po.header.po_id);
-  assert.ok(legacyPo);
-  assert.equal(legacyPo.customer_id, 'C1');
-  assert.equal(legacyPo.product_id, 'P1');
-  assert.equal(legacyPo.status, 'ACTIVE');
+  assert.ok(!legacyPo);
 
   // Verify Audit Log
   const auditLogs = db.prepare("SELECT * FROM po_audit_events WHERE event_type = 'REVISION_ACTIVATED'").all();
@@ -226,7 +225,7 @@ test('PO Revision Activation & Atomic Swapping', async () => {
   }, 'U1');
 
   const revOutdatedSpecId = poOutdatedSpec.revision.revision_id;
-  await repo.createPORevisionLine(revOutdatedSpecId, {
+  const lineOutdated = await repo.createPORevisionLine(revOutdatedSpecId, {
     lineNo: 10,
     productId: 'P1',
     specSource: 'STANDARD',
@@ -244,9 +243,80 @@ test('PO Revision Activation & Atomic Swapping', async () => {
     url: 'https://example.com/po.pdf'
   }, 'U1');
 
-  await repo.activateRevision(revOutdatedSpecId, 'M1', 'Approve outdated spec');
+  // Must block if not confirmed
+  await assert.rejects(async () => {
+    await repo.activateRevision(revOutdatedSpecId, 'M1', 'Approve outdated spec');
+  }, (err) => err.code === 'PO_SPEC_OUTDATED');
+
+  // Must succeed when confirmed
+  await repo.activateRevision(revOutdatedSpecId, 'M1', 'Approve outdated spec', [lineOutdated.line_id]);
   
   const outdatedAuditLogs = db.prepare("SELECT * FROM po_audit_events WHERE event_type = 'SPEC_OLD_REVISION_CONFIRMED'").all();
   assert.equal(outdatedAuditLogs.length, 1);
   assert.equal(outdatedAuditLogs[0].po_revision_id, revOutdatedSpecId);
+});
+
+test('PO Activation: Blocked when overview fields contain empty/blank strings', async () => {
+  const db = await setupTestDb();
+  
+  db.prepare("INSERT INTO users (user_id, email, role, status, full_name, password_hash, password_salt) VALUES ('U1', 'sales@example.com', 'EXTERNAL_SALES', 'ACTIVE', 'Sales Person', 'hash', 'salt')").run();
+  db.prepare("INSERT INTO users (user_id, email, role, status, full_name, password_hash, password_salt) VALUES ('M1', 'manager@example.com', 'MANAGER', 'ACTIVE', 'Manager Person', 'hash', 'salt')").run();
+  db.prepare("INSERT INTO customers (customer_id, customer_code, customer_name, owner_user_id, ownership_type) VALUES ('C1', 'CUST1', 'Customer 1', 'U1', 'ASSIGNED_SALES')").run();
+  db.prepare("INSERT INTO product_categories (category_id, category_code, category_name) VALUES ('CAT1', 'TAPIOCA', 'Tapioca Product')").run();
+  db.prepare("INSERT INTO product_forms (form_id, form_code, form_name) VALUES ('FRM1', 'PELLET', 'Pellet')").run();
+  db.prepare("INSERT INTO products (product_id, product_code, product_name, short_name, category_id, form_id) VALUES ('P1', 'THP-65', 'Tapioca Pellet 65%', 'THP65', 'CAT1', 'FRM1')").run();
+  db.prepare("INSERT INTO product_applications (product_id, application) VALUES ('P1', 'FEED_GRADE')").run();
+  db.prepare("INSERT INTO standard_specs (standard_spec_id, product_id, application, status, revision_no, effective_date) VALUES ('STD2', 'P1', 'FEED_GRADE', 'ACTIVE', 0, '2026-08-01')").run();
+
+  const repo = createPORepository(db);
+
+  let counter = 0;
+  async function makeDraft(overrides = {}) {
+    counter++;
+    const defaultDto = {
+      customerId: 'C1',
+      customerPoNo: `PO-123456-${counter}`,
+      poDate: '2026-08-27',
+      currency: 'USD',
+      incoterm: 'FOB',
+      deliveryStart: '2026-09-01',
+      deliveryEnd: '2026-09-30',
+      validUntil: '2999-12-31'
+    };
+    const po = await repo.createDraftPO({ ...defaultDto, ...overrides }, 'U1');
+    const revId = po.revision.revision_id;
+
+    await repo.createPORevisionLine(revId, {
+      lineNo: 10,
+      productId: 'P1',
+      specSource: 'STANDARD',
+      specRevisionId: 'STD2',
+      contractQtyMt: 100,
+      tolerancePct: 10,
+      unitPrice: 350.00,
+      packaging: 'Jumbo Bag',
+      containerType: '20GP',
+      loadingPattern: 'Palletized'
+    });
+
+    await repo.createPORevisionDocument(revId, {
+      documentType: 'CUSTOMER_PO',
+      label: 'Customer PO file',
+      url: 'https://example.com/po.pdf'
+    }, 'U1');
+
+    return revId;
+  }
+
+  // A. Block on blank customerPoNo
+  const revBlankPoNo = await makeDraft({ customerPoNo: ' ' });
+  await assert.rejects(async () => {
+    await repo.activateRevision(revBlankPoNo, 'M1', 'Approve');
+  }, (err) => err.code === 'PO_REQUIRED_FIELD_MISSING' && err.message.includes('Customer PO Number is required'));
+
+  // B. Block on expired validity
+  const revExpiredValidity = await makeDraft({ validUntil: '2020-01-01' });
+  await assert.rejects(async () => {
+    await repo.activateRevision(revExpiredValidity, 'M1', 'Approve');
+  }, (err) => err.code === 'PO_VALIDITY_EXPIRED');
 });

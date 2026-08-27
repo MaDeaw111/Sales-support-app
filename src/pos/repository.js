@@ -188,12 +188,12 @@ function validateUrl(url) {
   }
 }
 
-async function generateAndLogFieldDiffs(db, poId, newRevisionId, oldRevisionId, statements) {
+async function computeMaterialDiff(db, oldRevisionId, newRevisionId) {
+  const diffs = [];
   const oldRev = await db.prepare("SELECT * FROM po_revisions WHERE revision_id = ?").bind(oldRevisionId).first();
   const newRev = await db.prepare("SELECT * FROM po_revisions WHERE revision_id = ?").bind(newRevisionId).first();
-  if (!oldRev || !newRev) return;
+  if (!oldRev || !newRev) return diffs;
 
-  // 1. Compare overview fields
   const overviewFields = [
     'customer_po_no', 'po_date', 'buyer_reference', 'currency', 'incoterm',
     'destination', 'delivery_start', 'delivery_end', 'valid_until',
@@ -203,25 +203,20 @@ async function generateAndLogFieldDiffs(db, poId, newRevisionId, oldRevisionId, 
   for (const field of overviewFields) {
     const oldVal = oldRev[field];
     const newVal = newRev[field];
-
     const normalizedOld = oldVal === undefined ? null : oldVal;
     const normalizedNew = newVal === undefined ? null : newVal;
 
     if (normalizedOld !== normalizedNew) {
-      const diffId = `DIFF-${crypto.randomUUID()}`;
-      const oldStr = normalizedOld !== null ? String(normalizedOld) : null;
-      const newStr = normalizedNew !== null ? String(normalizedNew) : null;
-
-      statements.push(
-        db.prepare(`
-          INSERT INTO po_field_diffs (diff_id, po_revision_id, entity_type, entity_id, field_name, old_value, new_value)
-          VALUES (?, ?, 'REVISION', ?, ?, ?, ?)
-        `).bind(diffId, newRevisionId, newRevisionId, field, oldStr, newStr)
-      );
+      diffs.push({
+        entity_type: 'REVISION',
+        entity_id: newRevisionId,
+        field_name: field,
+        old_value: normalizedOld !== null ? String(normalizedOld) : null,
+        new_value: normalizedNew !== null ? String(normalizedNew) : null
+      });
     }
   }
 
-  // 2. Compare line fields
   const { results: oldLines } = await db.prepare("SELECT * FROM po_revision_lines WHERE po_revision_id = ?").bind(oldRevisionId).all();
   const { results: newLines } = await db.prepare("SELECT * FROM po_revision_lines WHERE po_revision_id = ?").bind(newRevisionId).all();
 
@@ -240,46 +235,55 @@ async function generateAndLogFieldDiffs(db, poId, newRevisionId, oldRevisionId, 
       for (const field of lineFields) {
         const oldVal = oldLine[field];
         const newVal = newLine[field];
-
         const normalizedOld = oldVal === undefined ? null : oldVal;
         const normalizedNew = newVal === undefined ? null : newVal;
 
         if (normalizedOld !== normalizedNew) {
-          const diffId = `DIFF-${crypto.randomUUID()}`;
-          const oldStr = normalizedOld !== null ? String(normalizedOld) : null;
-          const newStr = normalizedNew !== null ? String(normalizedNew) : null;
-
-          statements.push(
-            db.prepare(`
-              INSERT INTO po_field_diffs (diff_id, po_revision_id, entity_type, entity_id, field_name, old_value, new_value)
-              VALUES (?, ?, 'LINE', ?, ?, ?, ?)
-            `).bind(diffId, newRevisionId, newLine.line_id, field, oldStr, newStr)
-          );
+          diffs.push({
+            entity_type: 'LINE',
+            entity_id: newLine.line_id,
+            field_name: field,
+            old_value: normalizedOld !== null ? String(normalizedOld) : null,
+            new_value: normalizedNew !== null ? String(normalizedNew) : null
+          });
         }
       }
     } else {
-      // New line added
-      const diffId = `DIFF-${crypto.randomUUID()}`;
-      statements.push(
-        db.prepare(`
-          INSERT INTO po_field_diffs (diff_id, po_revision_id, entity_type, entity_id, field_name, old_value, new_value)
-          VALUES (?, ?, 'LINE', ?, 'line_added', NULL, ?)
-        `).bind(diffId, newRevisionId, newLine.line_id, String(newLine.line_no))
-      );
+      diffs.push({
+        entity_type: 'LINE',
+        entity_id: newLine.line_id,
+        field_name: 'line_added',
+        old_value: null,
+        new_value: String(newLine.line_no)
+      });
     }
   }
 
   for (const oldLine of oldLines || []) {
     if (!newLinesMapByPrevId.has(oldLine.line_id)) {
-      // Line removed
-      const diffId = `DIFF-${crypto.randomUUID()}`;
-      statements.push(
-        db.prepare(`
-          INSERT INTO po_field_diffs (diff_id, po_revision_id, entity_type, entity_id, field_name, old_value, new_value)
-          VALUES (?, ?, 'LINE', ?, 'line_removed', ?, NULL)
-        `).bind(diffId, newRevisionId, oldLine.line_id, String(oldLine.line_no))
-      );
+      diffs.push({
+        entity_type: 'LINE',
+        entity_id: oldLine.line_id,
+        field_name: 'line_removed',
+        old_value: String(oldLine.line_no),
+        new_value: null
+      });
     }
+  }
+
+  return diffs;
+}
+
+async function generateAndLogFieldDiffs(db, poId, newRevisionId, oldRevisionId, statements) {
+  const diffs = await computeMaterialDiff(db, oldRevisionId, newRevisionId);
+  for (const d of diffs) {
+    const diffId = `DIFF-${crypto.randomUUID()}`;
+    statements.push(
+      db.prepare(`
+        INSERT INTO po_field_diffs (diff_id, po_revision_id, entity_type, entity_id, field_name, old_value, new_value)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+      `).bind(diffId, newRevisionId, d.entity_type, d.entity_id, d.field_name, d.old_value, d.new_value)
+    );
   }
 }
 
@@ -293,23 +297,13 @@ export function createPORepository(dbBinding) {
       }
 
       // 1. CRM Ownership validation logic:
-      const customer = await db.prepare("SELECT owner_user_id FROM customers WHERE customer_id = ?").bind(dto.customerId).first();
+      const customer = await db.prepare("SELECT owner_user_id, ownership_type FROM customers WHERE customer_id = ?").bind(dto.customerId).first();
       if (!customer) {
         throw new Error(`Customer not found for customer_id: ${dto.customerId}`);
       }
       
-      let ownership_type_snapshot = 'HOUSE_ACCOUNT';
-      let sales_owner_user_id_snapshot = null;
-      
-      let ownerUserId = customer.owner_user_id;
-      let ownershipType = ownerUserId ? 'ASSIGNED_SALES' : 'HOUSE_ACCOUNT';
-      
-      if (dto.ownershipType) {
-        ownershipType = dto.ownershipType;
-      }
-      if (dto.salesOwnerUserId !== undefined) {
-        ownerUserId = dto.salesOwnerUserId;
-      }
+      const ownershipType = customer.ownership_type || (customer.owner_user_id ? 'ASSIGNED_SALES' : 'HOUSE_ACCOUNT');
+      const ownerUserId = customer.owner_user_id;
       
       if (ownershipType === 'ASSIGNED_SALES') {
         if (!ownerUserId) {
@@ -325,12 +319,10 @@ export function createPORepository(dbBinding) {
           err.code = 'PO_CUSTOMER_OWNER_REQUIRED';
           throw err;
         }
-        ownership_type_snapshot = 'ASSIGNED_SALES';
-        sales_owner_user_id_snapshot = ownerUserId;
-      } else {
-        ownership_type_snapshot = 'HOUSE_ACCOUNT';
-        sales_owner_user_id_snapshot = null;
       }
+      
+      const ownership_type_snapshot = ownershipType;
+      const sales_owner_user_id_snapshot = ownershipType === 'ASSIGNED_SALES' ? ownerUserId : null;
       
       // 2. ID Sequence Generation:
       let year = new Date().getFullYear();
@@ -358,8 +350,8 @@ export function createPORepository(dbBinding) {
       
       // 3. Set Defaults & values from DTO
       const revisionId = `REV-${crypto.randomUUID()}`;
-      const customerPoNo = dto.customerPoNo || null;
-      const poDate = dto.poDate || new Date().toISOString().split('T')[0];
+      const customerPoNo = dto.customerPoNo !== undefined ? dto.customerPoNo : 'DRAFT-PO';
+      const poDate = dto.poDate !== undefined ? dto.poDate : new Date().toISOString().split('T')[0];
       const buyerReference = dto.buyerReference || null;
       const customerContactId = dto.customerContactId || null;
       
@@ -391,8 +383,8 @@ export function createPORepository(dbBinding) {
       const headerStmt = db.prepare(`
         INSERT INTO po_headers (
           po_id, customer_id, header_status, current_active_revision_id, current_draft_revision_id, created_by
-        ) VALUES (?, ?, ?, NULL, NULL, ?)
-      `).bind(poId, dto.customerId, 'OPEN', creatorId);
+        ) VALUES (?, ?, 'OPEN', NULL, NULL, ?)
+      `).bind(poId, dto.customerId, creatorId);
       
       // B. Insert Revision referencing the Header
       const revisionStmt = db.prepare(`
@@ -416,8 +408,21 @@ export function createPORepository(dbBinding) {
         WHERE po_id = ?
       `).bind(revisionId, poId);
 
+      // Audit logs for PO creation and Revision 0 creation
+      const poCreatedEventId = `EVT-${crypto.randomUUID()}`;
+      const logPoCreatedStmt = db.prepare(`
+        INSERT INTO po_audit_events (event_id, po_id, po_revision_id, event_type, actor_id)
+        VALUES (?, ?, ?, 'PO_CREATED', ?)
+      `).bind(poCreatedEventId, poId, revisionId, creatorId);
+
+      const revCreatedEventId = `EVT-${crypto.randomUUID()}`;
+      const logRevCreatedStmt = db.prepare(`
+        INSERT INTO po_audit_events (event_id, po_id, po_revision_id, event_type, actor_id, metadata_json)
+        VALUES (?, ?, ?, 'REVISION_CREATED', ?, ?)
+      `).bind(revCreatedEventId, poId, revisionId, creatorId, JSON.stringify({ revision_no: 0 }));
+
       // Batch execute insertion & updates
-      await db.batch([headerStmt, revisionStmt, updateHeaderStmt]);
+      await db.batch([headerStmt, revisionStmt, updateHeaderStmt, logPoCreatedStmt, logRevCreatedStmt]);
       
       // Retrieve the newly created objects to return
       const createdHeader = await db.prepare("SELECT * FROM po_headers WHERE po_id = ?").bind(poId).first();
@@ -432,7 +437,7 @@ export function createPORepository(dbBinding) {
     async createNextRevision(poId, creatorId) {
       // 1. Validation queries
       await enforceNotCancelledByPoId(db, poId);
-      const header = await db.prepare("SELECT current_draft_revision_id, current_active_revision_id FROM po_headers WHERE po_id = ?").bind(poId).first();
+      const header = await db.prepare("SELECT customer_id, current_draft_revision_id, current_active_revision_id FROM po_headers WHERE po_id = ?").bind(poId).first();
       if (!header) {
         throw new Error(`PO not found: ${poId}`);
       }
@@ -453,6 +458,15 @@ export function createPORepository(dbBinding) {
         throw new Error(`Active revision not found: ${header.current_active_revision_id}`);
       }
 
+      // Fetch current customer CRM details for snapshotting
+      const customer = await db.prepare("SELECT owner_user_id, ownership_type FROM customers WHERE customer_id = ?").bind(header.customer_id).first();
+      if (!customer) {
+        throw new Error(`Customer not found for customer_id: ${header.customer_id}`);
+      }
+      
+      const ownershipType = customer.ownership_type || (customer.owner_user_id ? 'ASSIGNED_SALES' : 'HOUSE_ACCOUNT');
+      const ownerUserId = customer.owner_user_id;
+
       const newRevId = `REV-${crypto.randomUUID()}`;
       const newRevNo = activeRevision.revision_no + 1;
 
@@ -465,7 +479,7 @@ export function createPORepository(dbBinding) {
           currency, incoterm, destination, delivery_start, delivery_end, valid_until,
           payment_term_snapshot, commercial_terms, operational_note, revision_note,
           approved_by, approved_at, approval_note, approval_summary_json, created_by
-        ) VALUES (?, ?, ?, 'DRAFT', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, NULL, NULL, ?)
+        ) VALUES (?, ?, ?, 'DRAFT', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, NULL, ?)
       `).bind(
         newRevId,
         poId,
@@ -473,8 +487,8 @@ export function createPORepository(dbBinding) {
         activeRevision.customer_po_no,
         activeRevision.po_date,
         activeRevision.buyer_reference,
-        activeRevision.ownership_type_snapshot,
-        activeRevision.sales_owner_user_id_snapshot,
+        ownershipType,
+        ownershipType === 'ASSIGNED_SALES' ? ownerUserId : null,
         activeRevision.customer_contact_id,
         activeRevision.customer_contact_snapshot_json,
         activeRevision.currency,
@@ -486,6 +500,7 @@ export function createPORepository(dbBinding) {
         activeRevision.payment_term_snapshot,
         activeRevision.commercial_terms,
         activeRevision.operational_note,
+        null, // revision_note
         creatorId
       );
 
@@ -554,12 +569,20 @@ export function createPORepository(dbBinding) {
         WHERE po_id = ?
       `).bind(newRevId, poId);
 
+      // Audit log for Revision created
+      const auditEventId = `EVT-${crypto.randomUUID()}`;
+      const logRevCreatedStmt = db.prepare(`
+        INSERT INTO po_audit_events (event_id, po_id, po_revision_id, event_type, actor_id, metadata_json)
+        VALUES (?, ?, ?, 'REVISION_CREATED', ?, ?)
+      `).bind(auditEventId, poId, newRevId, creatorId, JSON.stringify({ revision_no: newRevNo }));
+
       // 3. Batch execute
       await db.batch([
         insertRevStmt,
         ...insertLineStmts,
         ...insertDocStmts,
-        updateHeaderStmt
+        updateHeaderStmt,
+        logRevCreatedStmt
       ]);
 
       // Return the newly created revision
@@ -632,7 +655,7 @@ export function createPORepository(dbBinding) {
       return updatedRevision;
     },
 
-    async createPORevisionLine(revisionId, dto) {
+    async createPORevisionLine(revisionId, dto, actorId = null) {
       await enforceNotCancelledByRevisionId(db, revisionId);
       // 1. Enforce status constraint
       const revision = await db.prepare("SELECT status, po_id, incoterm, ownership_type_snapshot, sales_owner_user_id_snapshot FROM po_revisions WHERE revision_id = ?").bind(revisionId).first();
@@ -737,6 +760,14 @@ export function createPORepository(dbBinding) {
         dto.commercialLineTerm || null,
         dto.operationalLineNote || null
       ).run();
+
+      // Log PO_LINE_ADDED audit event
+      if (actorId) {
+        await logPOAuditEvent(db, revision.po_id, revisionId, 'PO_LINE_ADDED', actorId, {
+          lineNo: dto.lineNo,
+          productId: dto.productId
+        });
+      }
 
       return await db.prepare("SELECT * FROM po_revision_lines WHERE line_id = ?").bind(lineId).first();
     },
@@ -868,7 +899,7 @@ export function createPORepository(dbBinding) {
       return await db.prepare("SELECT * FROM po_revision_lines WHERE line_id = ?").bind(lineId).first();
     },
 
-    async deletePORevisionLine(lineId) {
+    async deletePORevisionLine(lineId, actorId = null) {
       await enforceNotCancelledByLineId(db, lineId);
       // 1. Fetch line and parent status
       const existingLine = await db.prepare("SELECT * FROM po_revision_lines WHERE line_id = ?").bind(lineId).first();
@@ -876,7 +907,7 @@ export function createPORepository(dbBinding) {
         throw new Error(`Line not found: ${lineId}`);
       }
 
-      const revision = await db.prepare("SELECT status FROM po_revisions WHERE revision_id = ?").bind(existingLine.po_revision_id).first();
+      const revision = await db.prepare("SELECT status, po_id FROM po_revisions WHERE revision_id = ?").bind(existingLine.po_revision_id).first();
       if (!revision) {
         throw new Error(`Revision not found: ${existingLine.po_revision_id}`);
       }
@@ -888,6 +919,14 @@ export function createPORepository(dbBinding) {
 
       // 2. Delete PO Line
       await db.prepare("DELETE FROM po_revision_lines WHERE line_id = ?").bind(lineId).run();
+
+      // Log PO_LINE_REMOVED audit event
+      if (actorId) {
+        await logPOAuditEvent(db, revision.po_id, existingLine.po_revision_id, 'PO_LINE_REMOVED', actorId, {
+          lineNo: existingLine.line_no,
+          productId: existingLine.product_id
+        });
+      }
     },
 
     async validateRevisionSpecsForActivation(revisionId) {
@@ -1051,7 +1090,7 @@ export function createPORepository(dbBinding) {
       }
     },
 
-    async activateRevision(revisionId, approverId, approvalNote) {
+    async activateRevision(revisionId, approverId, approvalNote, confirmedOutdatedLineIds = []) {
       await enforceNotCancelledByRevisionId(db, revisionId);
       // 1. Fetch and validate revision
       const revision = await db.prepare("SELECT * FROM po_revisions WHERE revision_id = ?").bind(revisionId).first();
@@ -1074,18 +1113,76 @@ export function createPORepository(dbBinding) {
         throw new Error('Revision must have at least one line item to activate');
       }
 
-      // 4. Verify validity date
-      if (revision.valid_until) {
-        const today = new Date().toISOString().split('T')[0];
-        if (revision.valid_until < today) {
-          const err = new Error('PO revision validity has expired');
-          err.code = 'PO_VALIDITY_EXPIRED';
-          throw err;
-        }
+      // 4. Validator: Required Overview fields
+      if (!revision.customer_po_no || !revision.customer_po_no.trim()) {
+        const err = new Error('Customer PO Number is required');
+        err.code = 'PO_REQUIRED_FIELD_MISSING';
+        throw err;
+      }
+      if (!revision.po_date || !revision.po_date.trim()) {
+        const err = new Error('PO Date is required');
+        err.code = 'PO_REQUIRED_FIELD_MISSING';
+        throw err;
+      }
+      if (!revision.currency || !revision.currency.trim()) {
+        const err = new Error('Currency is required');
+        err.code = 'PO_REQUIRED_FIELD_MISSING';
+        throw err;
+      }
+      if (!revision.incoterm || !revision.incoterm.trim()) {
+        const err = new Error('Incoterm is required');
+        err.code = 'PO_REQUIRED_FIELD_MISSING';
+        throw err;
+      }
+      if (!revision.delivery_start || !revision.delivery_start.trim()) {
+        const err = new Error('Delivery Start Date is required');
+        err.code = 'PO_REQUIRED_FIELD_MISSING';
+        throw err;
+      }
+      if (!revision.delivery_end || !revision.delivery_end.trim()) {
+        const err = new Error('Delivery End Date is required');
+        err.code = 'PO_REQUIRED_FIELD_MISSING';
+        throw err;
+      }
+      if (!revision.valid_until || !revision.valid_until.trim()) {
+        const err = new Error('Valid Until Date is required');
+        err.code = 'PO_REQUIRED_FIELD_MISSING';
+        throw err;
+      }
+      if (revision.delivery_start > revision.delivery_end) {
+        const err = new Error('Delivery start date must be before or equal to delivery end date');
+        err.code = 'PO_REQUIRED_FIELD_MISSING';
+        throw err;
+      }
+
+      // Verify validity date
+      const today = new Date().toISOString().split('T')[0];
+      if (revision.valid_until < today) {
+        const err = new Error('PO revision validity has expired');
+        err.code = 'PO_VALIDITY_EXPIRED';
+        throw err;
+      }
+
+      // Validate ownership snapshots
+      if (revision.ownership_type_snapshot === 'ASSIGNED_SALES' && !revision.sales_owner_user_id_snapshot) {
+        const err = new Error('Sales owner user required for ASSIGNED_SALES');
+        err.code = 'PO_CUSTOMER_OWNER_REQUIRED';
+        throw err;
       }
 
       // 5. Trigger spec validation
       const specCheck = await this.validateRevisionSpecsForActivation(revisionId);
+      if (specCheck.hasOutdated) {
+        const unconfirmed = specCheck.outdatedSpecs.filter(
+          out => !confirmedOutdatedLineIds.includes(out.line_id)
+        );
+        if (unconfirmed.length > 0) {
+          const err = new Error('Outdated spec reference requires confirmation');
+          err.code = 'PO_SPEC_OUTDATED';
+          err.details = specCheck.outdatedSpecs;
+          throw err;
+        }
+      }
 
       // 6. Trigger document validation
       await this.validateRevisionDocumentsForActivation(revisionId);
@@ -1139,10 +1236,10 @@ export function createPORepository(dbBinding) {
         db.prepare(`
           UPDATE po_revisions 
           SET status = 'ACTIVE',
-              approved_by = ?,
-              approved_at = datetime('now'),
-              approval_note = ?,
-              approval_summary_json = ?
+               approved_by = ?,
+               approved_at = datetime('now'),
+               approval_note = ?,
+               approval_summary_json = ?
           WHERE revision_id = ?
         `).bind(approverId, approvalNote || null, approvalSummaryJson, revisionId)
       );
@@ -1157,29 +1254,6 @@ export function createPORepository(dbBinding) {
         `).bind(revisionId, revision.po_id)
       );
 
-      // E. Mirror to legacy pos table (Ruling 01)
-      const firstLine = lines[0];
-      statements.push(
-        db.prepare(`
-          INSERT INTO pos (po_id, customer_id, product_id, incoterm, destination_port, po_date, status)
-          VALUES (?, ?, ?, ?, ?, ?, 'ACTIVE')
-          ON CONFLICT(po_id) DO UPDATE SET 
-            customer_id = excluded.customer_id, 
-            product_id = excluded.product_id, 
-            incoterm = excluded.incoterm, 
-            destination_port = excluded.destination_port, 
-            po_date = excluded.po_date, 
-            status = excluded.status
-        `).bind(
-          revision.po_id,
-          header.customer_id,
-          firstLine.product_id,
-          revision.incoterm,
-          revision.destination || null,
-          revision.po_date || null
-        )
-      );
-
       // F. Log revision activated event
       const activeEventId = `EVT-${crypto.randomUUID()}`;
       const activeEventMetadata = JSON.stringify({ revision_no: revision.revision_no });
@@ -1192,21 +1266,43 @@ export function createPORepository(dbBinding) {
 
       // G. Log SPEC_OLD_REVISION_CONFIRMED for outdated specs
       for (const outSpec of specCheck.outdatedSpecs) {
-        const specEventId = `EVT-${crypto.randomUUID()}`;
-        const specEventMetadata = JSON.stringify({
-          line_id: outSpec.line_id,
-          spec_source: outSpec.spec_source,
-          spec_revision_id: outSpec.spec_revision_id
-        });
-        statements.push(
-          db.prepare(`
-            INSERT INTO po_audit_events (event_id, po_id, po_revision_id, event_type, actor_id, metadata_json)
-            VALUES (?, ?, ?, 'SPEC_OLD_REVISION_CONFIRMED', ?, ?)
-          `).bind(specEventId, revision.po_id, revisionId, approverId, specEventMetadata)
-        );
+        if (confirmedOutdatedLineIds.includes(outSpec.line_id)) {
+          const specEventId = `EVT-${crypto.randomUUID()}`;
+          const specEventMetadata = JSON.stringify({
+            line_id: outSpec.line_id,
+            spec_source: outSpec.spec_source,
+            spec_revision_id: outSpec.spec_revision_id
+          });
+          statements.push(
+            db.prepare(`
+              INSERT INTO po_audit_events (event_id, po_id, po_revision_id, event_type, actor_id, metadata_json)
+              VALUES (?, ?, ?, 'SPEC_OLD_REVISION_CONFIRMED', ?, ?)
+            `).bind(specEventId, revision.po_id, revisionId, approverId, specEventMetadata)
+          );
+        }
       }
 
-      // H. If there was an old active revision, generate and log field diffs
+      // H. Log PRICE_OVERRIDE_USED for lines with pricing overrides
+      for (const line of lines) {
+        if (line.suggested_price !== null && line.unit_price !== line.suggested_price) {
+          const overrideEventId = `EVT-${crypto.randomUUID()}`;
+          const overrideMetadata = JSON.stringify({
+            line_id: line.line_id,
+            line_no: line.line_no,
+            suggested_price: line.suggested_price,
+            unit_price: line.unit_price,
+            price_override_reason: line.price_override_reason
+          });
+          statements.push(
+            db.prepare(`
+              INSERT INTO po_audit_events (event_id, po_id, po_revision_id, event_type, actor_id, metadata_json)
+              VALUES (?, ?, ?, 'PRICE_OVERRIDE_USED', ?, ?)
+            `).bind(overrideEventId, revision.po_id, revisionId, approverId, overrideMetadata)
+          );
+        }
+      }
+
+      // I. If there was an old active revision, generate and log field diffs
       if (oldActive) {
         await generateAndLogFieldDiffs(db, revision.po_id, revisionId, oldActive.revision_id, statements);
       }
@@ -1301,6 +1397,132 @@ export function createPORepository(dbBinding) {
         revisions: revsWithDetails,
         auditEvents: auditEvents || [],
         fieldDiffs: fieldDiffs || []
+      };
+    },
+
+    async updateOperationalNote(revisionId, operationalNote, actorId) {
+      await enforceNotCancelledByRevisionId(db, revisionId);
+      const revision = await enforceNotSuperseded(db, revisionId);
+      
+      const oldNote = revision.operational_note || null;
+      const newNote = operationalNote || null;
+
+      await db.prepare("UPDATE po_revisions SET operational_note = ? WHERE revision_id = ?").bind(newNote, revisionId).run();
+
+      await logPOAuditEvent(db, revision.po_id, revisionId, 'OPERATIONAL_NOTE_UPDATED', actorId, {
+        level: 'REVISION',
+        old_value: oldNote,
+        new_value: newNote
+      });
+
+      return await db.prepare("SELECT * FROM po_revisions WHERE revision_id = ?").bind(revisionId).first();
+    },
+
+    async updateLineOperationalNote(lineId, operationalLineNote, actorId) {
+      await enforceNotCancelledByLineId(db, lineId);
+      const existingLine = await db.prepare("SELECT * FROM po_revision_lines WHERE line_id = ?").bind(lineId).first();
+      if (!existingLine) {
+        throw new Error(`Line not found: ${lineId}`);
+      }
+
+      const revision = await enforceNotSuperseded(db, existingLine.po_revision_id);
+
+      const oldNote = existingLine.operational_line_note || null;
+      const newNote = operationalLineNote || null;
+
+      await db.prepare("UPDATE po_revision_lines SET operational_line_note = ? WHERE line_id = ?").bind(newNote, lineId).run();
+
+      await logPOAuditEvent(db, revision.po_id, existingLine.po_revision_id, 'OPERATIONAL_NOTE_UPDATED', actorId, {
+        level: 'LINE',
+        line_id: lineId,
+        line_no: existingLine.line_no,
+        old_value: oldNote,
+        new_value: newNote
+      });
+
+      return await db.prepare("SELECT * FROM po_revision_lines WHERE line_id = ?").bind(lineId).first();
+    },
+
+    async getPORevisionReview(revisionId) {
+      const revision = await db.prepare("SELECT * FROM po_revisions WHERE revision_id = ?").bind(revisionId).first();
+      if (!revision) {
+        throw new Error(`Revision not found: ${revisionId}`);
+      }
+
+      const header = await db.prepare("SELECT * FROM po_headers WHERE po_id = ?").bind(revision.po_id).first();
+      const customer = await db.prepare("SELECT * FROM customers WHERE customer_id = ?").bind(header.customer_id).first();
+      const { results: lines } = await db.prepare("SELECT * FROM po_revision_lines WHERE po_revision_id = ? ORDER BY line_no ASC").bind(revisionId).all();
+      const { results: docs } = await db.prepare("SELECT * FROM po_revision_documents WHERE po_revision_id = ?").bind(revisionId).all();
+
+      const specCheck = await this.validateRevisionSpecsForActivation(revisionId);
+
+      const outdatedSpecsDetails = [];
+      if (specCheck.hasOutdated) {
+        for (const out of specCheck.outdatedSpecs) {
+          const line = (lines || []).find(l => l.line_id === out.line_id);
+          let latestActiveSpecId = null;
+          let latestActiveRevisionNo = null;
+
+          if (out.spec_source === 'STANDARD') {
+            const stdSpec = await db.prepare("SELECT application FROM standard_specs WHERE standard_spec_id = ?").bind(out.spec_revision_id).first();
+            if (stdSpec) {
+              const activeSpec = await db.prepare("SELECT standard_spec_id, revision_no FROM standard_specs WHERE product_id = ? AND application = ? AND status = 'ACTIVE' LIMIT 1").bind(line.product_id, stdSpec.application).first();
+              if (activeSpec) {
+                latestActiveSpecId = activeSpec.standard_spec_id;
+                latestActiveRevisionNo = activeSpec.revision_no;
+              }
+            }
+          } else if (out.spec_source === 'CUSTOMER') {
+            const custSpec = await db.prepare("SELECT customer_id, application FROM customer_specs WHERE customer_spec_id = ?").bind(out.spec_revision_id).first();
+            if (custSpec) {
+              const activeCustSpec = await db.prepare("SELECT customer_spec_id, revision_no FROM customer_specs WHERE customer_id = ? AND product_id = ? AND application = ? AND status = 'ACTIVE' LIMIT 1").bind(custSpec.customer_id, line.product_id, custSpec.application).first();
+              if (activeCustSpec) {
+                latestActiveSpecId = activeCustSpec.customer_spec_id;
+                latestActiveRevisionNo = activeCustSpec.revision_no;
+              }
+            }
+          }
+
+          let currentRevisionNo = null;
+          if (out.spec_source === 'STANDARD') {
+            const s = await db.prepare("SELECT revision_no FROM standard_specs WHERE standard_spec_id = ?").bind(out.spec_revision_id).first();
+            currentRevisionNo = s?.revision_no;
+          } else if (out.spec_source === 'CUSTOMER') {
+            const s = await db.prepare("SELECT revision_no FROM customer_specs WHERE customer_spec_id = ?").bind(out.spec_revision_id).first();
+            currentRevisionNo = s?.revision_no;
+          }
+
+          outdatedSpecsDetails.push({
+            lineId: out.line_id,
+            lineNo: line?.line_no,
+            productId: line?.product_id,
+            specSource: out.spec_source,
+            selectedSpecRevisionId: out.spec_revision_id,
+            selectedRevisionNo: currentRevisionNo,
+            latestActiveSpecRevisionId: latestActiveSpecId,
+            latestActiveRevisionNo: latestActiveRevisionNo
+          });
+        }
+      }
+
+      let materialDiff = [];
+      if (revision.status === 'DRAFT' && header.current_active_revision_id) {
+        materialDiff = await computeMaterialDiff(db, header.current_active_revision_id, revisionId);
+      }
+
+      const reviewSummary = {
+        header,
+        customer,
+        revision,
+        lines: lines || [],
+        documents: docs || []
+      };
+
+      return {
+        reviewSummary,
+        materialDiff,
+        hasOutdatedSpecs: specCheck.hasOutdated,
+        outdatedSpecs: outdatedSpecsDetails
       };
     }
   };

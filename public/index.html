@@ -879,8 +879,55 @@
             return all;
         }
         function getScopedPOs() {
+            const list = [];
+            for (const po of (state.pos || [])) {
+                if (po.id && !po.header) {
+                    list.push(po);
+                    continue;
+                }
+                const header = po.header;
+                if (!header) continue;
+                
+                const activeRev = po.revisions.find(r => r.status === 'ACTIVE');
+                const draftRev = po.revisions.find(r => r.status === 'DRAFT');
+                
+                let displayRev = activeRev || draftRev || po.revisions[po.revisions.length - 1];
+                const isInternal = ['ADMIN', 'MANAGER', 'SALES_SUPPORT'].includes(state.currentUser.role);
+                if (isInternal && draftRev) {
+                    displayRev = draftRev;
+                }
+                if (!displayRev) continue;
+
+                const firstLine = displayRev.lines?.[0] || {};
+                list.push({
+                    id: header.po_id,
+                    customerId: header.customer_id,
+                    customerPoNo: displayRev.customer_po_no,
+                    poDate: displayRev.po_date,
+                    deliveryStart: displayRev.delivery_start || '',
+                    deliveryEnd: displayRev.delivery_end || '',
+                    productId: firstLine.product_id || '',
+                    contractQtyMt: firstLine.contract_qty_mt || 0,
+                    tolerancePct: firstLine.tolerance_pct || 0,
+                    maxInvoiceQtyMt: firstLine.max_qty_mt || 0,
+                    incoterm: displayRev.incoterm,
+                    destinationPort: displayRev.destination || '',
+                    shipmentType: firstLine.container_type ? 'Container' : 'Bulk Vessel',
+                    containerType: firstLine.container_type || '-',
+                    packaging: firstLine.packaging || '',
+                    packageWeightKg: firstLine.package_weight_kg || 0,
+                    unitsPerContainer: firstLine.units_per_container || 0,
+                    totalWeightPerContainerMt: firstLine.total_weight_per_container_mt || 0,
+                    poCurrency: displayRev.currency || 'USD',
+                    sellingPrice: firstLine.unit_price || 0,
+                    commercialApprovalStatus: displayRev.status === 'ACTIVE' ? 'APPROVED' : 'NEEDS_APPROVAL',
+                    poStatus: header.header_status,
+                    rawHeader: header,
+                    rawRevisions: po.revisions
+                });
+            }
             const allowed = new Set(getScopedCustomers().map(c => c.id));
-            return (state.pos || []).filter(po => state.currentUser.role !== 'EXTERNAL_SALES' || allowed.has(po.customerId));
+            return list.filter(po => state.currentUser.role !== 'EXTERNAL_SALES' || allowed.has(po.customerId));
         }
         function getScopedDIRecords() {
             const allowedPO = new Set(getScopedPOs().map(po => po.id));
@@ -3329,213 +3376,125 @@
                 .savePODocument(token, { po_id:poId, drive_url:url, file_name:'Customer PO' });
         }
 
+        // --- REAL D1-BACKED PO ENGINE FRONTEND IMPLEMENTATION ---
+
+        state.poFilters = state.poFilters || { search: '', customerId: 'ALL', status: 'ALL' };
+        state.poDetailTab = state.poDetailTab || 'overview';
+        state.selectedRevisionId = state.selectedRevisionId || null;
+
+        async function loadPOsFromApi() {
+            try {
+                const res = await fetch('/api/pos');
+                const data = await res.json();
+                if (data && data.status === 'SUCCESS' && data.data.pos) {
+                    state.pos = data.data.pos;
+                    renderView();
+                }
+            } catch (err) {
+                console.error('Failed to load POs:', err);
+            }
+        }
+
+        async function loadSinglePOFromApi(poId) {
+            try {
+                const res = await fetch(`/api/pos/${poId}`);
+                const data = await res.json();
+                if (data && data.status === 'SUCCESS' && data.data.po) {
+                    const idx = state.pos.findIndex(p => p.header?.po_id === poId);
+                    if (idx !== -1) {
+                        state.pos[idx] = data.data.po;
+                    } else {
+                        state.pos.push(data.data.po);
+                    }
+                    renderView();
+                }
+            } catch (err) {
+                console.error('Failed to load single PO:', err);
+            }
+        }
+
+        function canWritePO() {
+            return ['ADMIN', 'MANAGER', 'SALES_SUPPORT'].includes(state.currentUser.role);
+        }
+        function canEditPO() {
+            return ['ADMIN', 'SALES_SUPPORT'].includes(state.currentUser.role);
+        }
+
         function renderPOEngine(container) {
-            const selectedPo = state.selectedPoId ? getScopedPOs().find(p => p.id === state.selectedPoId) : null;
+            const selectedPo = state.selectedPoId ? state.pos.find(p => (p.header?.po_id === state.selectedPoId || p.id === state.selectedPoId)) : null;
 
             container.innerHTML = `
                 <div class="space-y-6">
                     <div class="flex justify-between items-center">
                         <div>
                             <h2 class="text-xl font-bold text-slate-900">จัดการ PO & ปรับปรุงสัญญา (PO Engine)</h2>
-                            <p class="text-xs text-slate-500">ตรวจสอบรายละเอียดสัญญา ใบสั่งซื้อ แผนการส่งมอบ และเปิด/แก้ไขสัญญา PO</p>
+                            <p class="text-xs text-slate-500">ตรวจสอบรายละเอียดสัญญา ใบสั่งซื้อ แผนการส่งมอบ และเปิด/แก้ไขสัญญา PO แบบ Real-time</p>
                         </div>
                         <div class="flex items-center space-x-3">
                             ${selectedPo ? `
-                                <button onclick="state.selectedPoId=null; renderView();" class="text-xs font-bold text-slate-600 hover:text-slate-900 bg-white px-3 py-2 rounded-lg border border-slate-200 shadow-sm flex items-center space-x-1">
+                                <button onclick="state.selectedPoId=null; state.selectedRevisionId=null; renderView();" class="text-xs font-bold text-slate-600 hover:text-slate-900 bg-white px-3 py-2 rounded-lg border border-slate-200 shadow-sm flex items-center space-x-1">
                                     <i data-lucide="list" class="w-4 h-4"></i>
                                     <span>ดูรายการ PO ทั้งหมด</span>
                                 </button>
                             ` : ''}
-                            ${canCreatePO() ? `<button onclick="openNewPOModal()" class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-xs font-semibold flex items-center space-x-2 shadow-sm transition-colors"><i data-lucide="plus-circle" class="w-4 h-4"></i><span>สร้าง PO ใหม่ (New PO)</span></button>` : ''}
+                            ${canWritePO() ? `<button onclick="openNewPOModal()" class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-xs font-semibold flex items-center space-x-2 shadow-sm transition-colors"><i data-lucide="plus-circle" class="w-4 h-4"></i><span>สร้าง PO ใหม่ (New PO)</span></button>` : ''}
                         </div>
                     </div>
 
-                    ${selectedPo ? renderPODetailCard(selectedPo) : renderPOListTable()}
+                    ${selectedPo ? renderRealPODetailCard(selectedPo) : renderRealPOListTable()}
                 </div>
             `;
             lucide.createIcons();
-            loadPODocuments();
         }
 
-        function renderPODetailCard(po) {
-            const customer = (state.customers || []).find(c => c.id === po.customerId);
-            const product = (state.products || []).find(p => p.id === po.productId);
-            const contractMt = parseFloat(po.contractQtyMt) || 0;
-            const tolerancePct = po.tolerancePct != null ? parseFloat(po.tolerancePct) : 5;
-            const maxAllowedMt = parseFloat(po.maxInvoiceQtyMt) || (contractMt * (1 + (tolerancePct / 100)));
-
-            const poDIs = (state.diRecords || []).filter(di => di.poId === po.id);
-            const activeDIs = poDIs.filter(di => di.status !== 'CANCELLED');
-            const plannedQtyForDI = (di) => ((parseFloat(di.packageWeightKg) || 0) * (parseFloat(di.bagsPerContainer) || 0) * (parseFloat(di.plannedContainers) || 0)) / 1000;
-            const actualQtyForDI = (di) => (state.loadingEvents || [])
-                .filter(ev => ev.diId === di.id)
-                .reduce((sum, ev) => sum + (((parseFloat(ev.actualBags) || 0) * (parseFloat(di.packageWeightKg) || 0)) / 1000), 0);
-
-            const allocatedMt = activeDIs.reduce((sum, di) => sum + plannedQtyForDI(di), 0);
-            const actualShippedMt = activeDIs.reduce((sum, di) => sum + actualQtyForDI(di), 0);
-            const availableToAllocateMt = Math.max(0, contractMt - allocatedMt);
-            const availableInclToleranceMt = Math.max(0, maxAllowedMt - allocatedMt);
-            const remainingToShipMt = Math.max(0, contractMt - actualShippedMt);
-            const allocationPct = contractMt > 0 ? Math.min(100, (allocatedMt / contractMt) * 100) : 0;
-            const shippedPct = contractMt > 0 ? Math.min(100, (actualShippedMt / contractMt) * 100) : 0;
-
-            return `
-                <div class="space-y-6">
-                    <!-- PO Header -->
-                    <div class="bg-white rounded-xl border border-blue-200 p-6 shadow-sm">
-                        <div class="flex flex-col lg:flex-row justify-between lg:items-center gap-4">
-                            <div>
-                                <div class="flex flex-wrap items-center gap-2">
-                                    <span class="bg-blue-600 text-white font-mono font-black text-sm px-3 py-1.5 rounded-lg">${po.customerPoNo || po.id}</span>
-                                    <span class="text-[10px] font-mono text-slate-400">${po.id}</span>
-                                    <span class="px-2.5 py-1 rounded text-[10px] font-black ${po.poStatus === 'COMPLETED' ? 'bg-emerald-100 text-emerald-800' : 'bg-blue-100 text-blue-800'}">${po.poStatus || 'IN_PROGRESS'}</span>
-                                </div>
-                                <h2 class="text-xl font-black text-slate-900 mt-2">${customer ? customer.name : po.customerId}</h2>
-                                <div class="text-xs text-slate-500 mt-1 flex flex-wrap gap-x-4 gap-y-1">
-                                    <span>Product: <strong class="text-slate-800">${product ? (product.shortName || product.name) : po.productId}</strong></span>
-                                    <span>PO Date: <strong class="text-slate-800">${po.poDate || '-'}</strong></span>
-                                    <span>Incoterm: <strong class="text-slate-800">${po.incoterm || 'FOB'}</strong></span>
-                                    <span>Destination: <strong class="text-slate-800">${po.destinationPort || '-'}</strong></span>
-                                    <span>Delivery Period: <strong class="text-violet-700">${formatDeliveryPeriod(po.deliveryStart, po.deliveryEnd)}</strong></span>
-                                </div>
-                            </div>
-                            <div class="flex items-center gap-2">
-                                <button onclick="openCreateDIPrototype('${po.id}')" class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-xs font-black flex items-center gap-2 shadow-sm">
-                                    <i data-lucide="plus-circle" class="w-4 h-4"></i><span>Create DI</span>
-                                </button>
-                                <button onclick="openEditPOModal('${po.id}')" class="bg-white hover:bg-slate-50 text-slate-700 border border-slate-300 px-4 py-2 rounded-lg text-xs font-bold flex items-center gap-2">
-                                    <i data-lucide="edit" class="w-4 h-4"></i><span>Edit PO</span>
-                                </button>
-                            </div>
-                        </div>
-                    </div>
-
-                    ${['ADMIN','MANAGER','SALES_SUPPORT','EXTERNAL_SALES'].includes(state.currentUser.role) ? `<div class="bg-white rounded-xl border border-fuchsia-200 p-4 shadow-sm">
-                        <div class="flex justify-between items-start gap-4"><div><h3 class="text-sm font-black text-slate-900">Commission</h3><p class="text-[10px] text-slate-500">1 recipient per PO · rate is USD / MT</p></div>${state.currentUser.role === 'SALES_SUPPORT' ? `<button onclick="requestCommissionRateChange('${po.id}')" class="px-3 py-2 rounded-lg bg-fuchsia-600 text-white text-xs font-bold">Request Rate Change</button>` : ''}</div>
-                        <div class="grid grid-cols-2 gap-3 mt-3 text-xs"><div><span class="text-slate-400">Recipient</span><div class="font-bold">${(state.users||[]).find(u=>u.id===po.commissionRecipientId)?.name || '-'}</div></div><div><span class="text-slate-400">Active Rate</span><div class="font-black text-fuchsia-700">USD ${Number(po.commissionRateUsdPerMt||0).toFixed(2)} / MT</div></div></div>
-                    </div>` : ''}
-
-                    <!-- Quantity Control -->
-                    <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
-                        <div class="p-4 border-b border-slate-200 bg-slate-50/70 flex justify-between items-center">
-                            <div><h3 class="text-sm font-black text-slate-900">Quantity Control</h3><p class="text-[10px] text-slate-500">แยกยอดวางแผน DI ออกจากยอดส่งจริง</p></div>
-                            <div class="text-[10px] font-bold text-slate-500">Tolerance ±${tolerancePct}% · Max ${maxAllowedMt.toFixed(3)} MT</div>
-                        </div>
-                        <div class="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-px bg-slate-200">
-                            ${[
-                                ['Contract Qty', contractMt, 'text-slate-900'],
-                                ['Allocated to DI', allocatedMt, 'text-blue-700'],
-                                ['Available to Allocate', availableToAllocateMt, 'text-amber-700'],
-                                ['Actual Shipped', actualShippedMt, 'text-emerald-700'],
-                                ['Remaining to Ship', remainingToShipMt, 'text-orange-700'],
-                                ['Available incl. Tolerance', availableInclToleranceMt, 'text-purple-700']
-                            ].map(([label,val,cls]) => `<div class="bg-white p-4"><div class="text-[10px] uppercase font-bold text-slate-400">${label}</div><div class="text-lg font-black ${cls} mt-1">${Number(val).toFixed(3)} <span class="text-[10px] text-slate-400">MT</span></div></div>`).join('')}
-                        </div>
-                        <div class="p-4 grid md:grid-cols-2 gap-5 text-xs">
-                            <div>
-                                <div class="flex justify-between mb-1"><span class="font-bold text-slate-700">DI Allocation</span><span class="font-black text-blue-700">${allocatedMt.toFixed(3)} / ${contractMt.toFixed(3)} MT</span></div>
-                                <div class="h-2.5 bg-slate-100 rounded-full overflow-hidden"><div class="h-full bg-blue-600 rounded-full" style="width:${allocationPct.toFixed(1)}%"></div></div>
-                                <div class="text-[10px] text-slate-400 mt-1">${allocationPct.toFixed(1)}% ของ Contract Qty ถูกจัดสรรเข้า DI แล้ว</div>
-                            </div>
-                            <div>
-                                <div class="flex justify-between mb-1"><span class="font-bold text-slate-700">Actual Shipment</span><span class="font-black text-emerald-700">${actualShippedMt.toFixed(3)} / ${contractMt.toFixed(3)} MT</span></div>
-                                <div class="h-2.5 bg-slate-100 rounded-full overflow-hidden"><div class="h-full bg-emerald-600 rounded-full" style="width:${shippedPct.toFixed(1)}%"></div></div>
-                                <div class="text-[10px] text-slate-400 mt-1">คำนวณจาก Actual Bags ใน Loading Events × Fixed Package Weight</div>
-                            </div>
-                        </div>
-                    </div>
-
-                    <!-- DI Allocation Table -->
-                    <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
-                        <div class="p-4 border-b border-slate-200 bg-slate-50/70 flex flex-col md:flex-row md:items-center justify-between gap-3">
-                            <div>
-                                <h3 class="text-sm font-black text-slate-900">DI Allocation Table</h3>
-                                <p class="text-[10px] text-slate-500">${poDIs.length} DI · Active Allocated ${allocatedMt.toFixed(3)} MT · Available ${availableToAllocateMt.toFixed(3)} MT</p>
-                            </div>
-                            <button onclick="openCreateDIPrototype('${po.id}')" class="bg-blue-600 hover:bg-blue-700 text-white px-3 py-2 rounded-lg text-xs font-black flex items-center gap-1.5 self-start md:self-auto"><i data-lucide="plus" class="w-4 h-4"></i>Create DI</button>
-                        </div>
-                        ${poDIs.length === 0 ? `<div class="p-10 text-center text-xs text-slate-400">ยังไม่มี DI สำหรับ PO นี้</div>` : `
-                        <div class="overflow-x-auto">
-                            <table class="ui-table w-full text-left text-xs min-w-[1050px]">
-                                <thead class="bg-slate-100 text-slate-600 uppercase text-[10px] font-bold border-b border-slate-200">
-                                    <tr><th class="p-3">DI No.</th><th class="p-3">WCAT / INV</th><th class="p-3">Container Plan</th><th class="p-3 text-right">DI Qty</th><th class="p-3 text-right">Actual</th><th class="p-3 text-right">Remaining</th><th class="p-3">Stage</th><th class="p-3 text-right">Action</th></tr>
-                                </thead>
-                                <tbody class="divide-y divide-slate-200">
-                                    ${poDIs.map(di => {
-                                        const diQty = plannedQtyForDI(di);
-                                        const actual = actualQtyForDI(di);
-                                        const remaining = Math.max(0, diQty - actual);
-                                        const isCancelled = di.status === 'CANCELLED';
-                                        return `<tr class="${isCancelled ? 'bg-slate-50 opacity-60' : 'hover:bg-blue-50/40'}">
-                                            <td class="p-3"><button onclick="viewDIDetail('${di.id}')" class="font-black text-blue-600 hover:underline">${di.diNo}</button><div class="text-[9px] text-slate-400 font-mono">${di.id}</div></td>
-                                            <td class="p-3 font-mono font-bold ${di.wcatNo ? 'text-slate-800' : 'text-amber-600'}">${di.wcatNo || 'Waiting WCAT'}</td>
-                                            <td class="p-3"><div class="font-bold text-slate-800">${di.plannedContainers} × ${di.containerType}</div><div class="text-[10px] text-slate-500">${di.bagsPerContainer} bags × ${di.packageWeightKg} kg</div></td>
-                                            <td class="p-3 text-right font-black text-slate-900">${diQty.toFixed(3)}</td>
-                                            <td class="p-3 text-right font-black text-emerald-700">${actual.toFixed(3)}</td>
-                                            <td class="p-3 text-right font-black ${remaining > 0 ? 'text-amber-700' : 'text-slate-400'}">${remaining.toFixed(3)}</td>
-                                            <td class="p-3"><span class="px-2 py-1 rounded text-[10px] font-black ${isCancelled ? 'bg-slate-200 text-slate-600' : 'bg-blue-100 text-blue-700'}">${di.status}</span></td>
-                                            <td class="p-3 text-right"><button onclick="viewDIDetail('${di.id}')" class="text-blue-600 font-bold hover:underline">View DI</button></td>
-                                        </tr>`;
-                                    }).join('')}
-                                </tbody>
-                            </table>
-                        </div>`}
-                    </div>
-
-                    <!-- Commercial / Delivery Details -->
-                    <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
-                        <div class="p-4 border-b bg-slate-50/70"><h3 class="text-sm font-black text-slate-900">Commercial / Delivery Details</h3></div>
-                        <div class="grid md:grid-cols-2 lg:grid-cols-4 gap-px bg-slate-200 text-xs">
-                            <div class="bg-white p-4"><div class="text-[10px] text-slate-400 font-bold uppercase">Selling Price</div><div class="font-black text-emerald-700 mt-1">${po.poCurrency || 'USD'} ${Number(po.sellingPrice || 0).toFixed(2)} / MT</div></div>
-                            <div class="bg-white p-4"><div class="text-[10px] text-slate-400 font-bold uppercase">Shipment Type</div><div class="font-bold text-slate-800 mt-1">${po.shipmentType || 'Container'} ${po.containerType ? `(${po.containerType})` : ''}</div></div>
-                            <div class="bg-white p-4"><div class="text-[10px] text-slate-400 font-bold uppercase">Default Packaging</div><div class="font-bold text-slate-800 mt-1">${po.packaging || '-'}</div><div class="text-[10px] text-slate-500">${po.packageWeightKg || 0} kg × ${po.unitsPerContainer || 0} units</div></div>
-                            <div class="bg-white p-4"><div class="text-[10px] text-slate-400 font-bold uppercase">Approval</div><div class="font-bold text-slate-800 mt-1">${po.commercialApprovalStatus || 'APPROVED'}</div><div class="text-[10px] text-slate-500">Max ${maxAllowedMt.toFixed(3)} MT</div></div>
-                        </div>
-                    </div>
-                </div>
-            `;
-        }
-
-        function updatePOFilter(key, value) {
-            if (!state.poFilters) state.poFilters = { search: '', customerId: 'ALL', productId: 'ALL', status: 'ALL', year: 'ALL' };
-            state.poFilters[key] = value;
-            renderView();
-        }
-
-        function resetPOFilters() {
-            state.poFilters = { search: '', customerId: 'ALL', productId: 'ALL', status: 'ALL', year: 'ALL' };
-            renderView();
-        }
-
-        function renderPOListTable() {
-            const filters = state.poFilters || { search: '', customerId: 'ALL', productId: 'ALL', status: 'ALL', year: 'ALL' };
-            const allPOs = getScopedPOs();
-            const years = [...new Set(allPOs.map(po => String(po.poDate || '').slice(0, 4)).filter(Boolean))].sort((a, b) => b.localeCompare(a));
+        function renderRealPOListTable() {
+            const filters = state.poFilters;
             const searchText = String(filters.search || '').trim().toLowerCase();
 
-            const filteredPOs = allPOs.filter(po => {
-                const customer = (state.customers || []).find(c => c.id === po.customerId);
-                const product = (state.products || []).find(p => p.id === po.productId);
-                const poYear = String(po.poDate || '').slice(0, 4);
+            const filteredPOs = (state.pos || []).filter(po => {
+                const header = po.header || po;
+                const poId = header.po_id || po.id || '';
+                const customerId = header.customer_id || po.customerId || '';
+                const customer = (state.customers || []).find(c => c.id === customerId);
+                const headerStatus = header.header_status || po.poStatus || 'OPEN';
+
+                let customerPoNo = '';
+                let productCode = '';
+                let productName = '';
+                if (po.revisions) {
+                    const activeRev = po.revisions.find(r => r.status === 'ACTIVE');
+                    const draftRev = po.revisions.find(r => r.status === 'DRAFT');
+                    const displayRev = activeRev || draftRev || po.revisions[po.revisions.length - 1];
+                    if (displayRev) {
+                        customerPoNo = displayRev.customer_po_no || '';
+                        const firstLine = displayRev.lines?.[0];
+                        if (firstLine) {
+                            const p = (state.products || []).find(x => x.id === firstLine.product_id);
+                            productCode = p ? p.code : '';
+                            productName = p ? (p.shortName || p.name) : '';
+                        }
+                    }
+                } else {
+                    customerPoNo = po.customerPoNo || '';
+                    const p = (state.products || []).find(x => x.id === po.productId);
+                    productCode = p ? p.code : '';
+                    productName = p ? (p.shortName || p.name) : '';
+                }
+
                 const haystack = [
-                    po.id,
-                    po.customerPoNo,
+                    poId,
+                    customerPoNo,
                     customer ? customer.name : '',
                     customer ? customer.code : '',
-                    product ? product.name : '',
-                    product ? product.shortName : '',
-                    product ? product.code : ''
+                    productName,
+                    productCode
                 ].join(' ').toLowerCase();
 
                 if (searchText && !haystack.includes(searchText)) return false;
-                if (filters.customerId !== 'ALL' && po.customerId !== filters.customerId) return false;
-                if (filters.productId !== 'ALL' && po.productId !== filters.productId) return false;
-                if (filters.status !== 'ALL' && po.poStatus !== filters.status) return false;
-                if (filters.year !== 'ALL' && poYear !== filters.year) return false;
+                if (filters.customerId !== 'ALL' && customerId !== filters.customerId) return false;
+                if (filters.status !== 'ALL' && headerStatus !== filters.status) return false;
                 return true;
             });
-
-            const totalContractMt = filteredPOs.reduce((sum, po) => sum + (parseFloat(po.contractQtyMt) || 0), 0);
 
             return `
                 <div class="space-y-3">
@@ -3546,126 +3505,113 @@
                                 <label class="block text-[10px] uppercase font-bold text-slate-400 mb-1">Search</label>
                                 <div class="relative">
                                     <i data-lucide="search" class="w-4 h-4 text-slate-400 absolute left-3 top-2.5"></i>
-                                    <input id="poFilterSearch" type="text" value="${filters.search || ''}" oninput="updatePOFilter('search', this.value)" placeholder="Search PO / Customer / Product..." class="w-full border border-slate-300 rounded-lg py-2 pl-9 pr-3 text-xs outline-none focus:border-blue-500">
+                                    <input id="poFilterSearch" type="text" value="${filters.search || ''}" oninput="state.poFilters.search = this.value; renderView();" placeholder="Search PO / Customer PO / Customer..." class="w-full border border-slate-300 rounded-lg py-2 pl-9 pr-3 text-xs outline-none focus:border-blue-500">
                                 </div>
                             </div>
 
                             <div class="min-w-[180px]">
                                 <label class="block text-[10px] uppercase font-bold text-slate-400 mb-1">Customer</label>
-                                <select id="poFilterCustomer" onchange="updatePOFilter('customerId', this.value)" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-xs bg-white outline-none focus:border-blue-500">
+                                <select onchange="state.poFilters.customerId = this.value; renderView();" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-xs bg-white outline-none focus:border-blue-500">
                                     <option value="ALL">All Customers</option>
                                     ${getScopedCustomers().map(c => `<option value="${c.id}" ${filters.customerId === c.id ? 'selected' : ''}>${c.name}</option>`).join('')}
                                 </select>
                             </div>
 
-                            <div class="min-w-[180px]">
-                                <label class="block text-[10px] uppercase font-bold text-slate-400 mb-1">Product</label>
-                                <select id="poFilterProduct" onchange="updatePOFilter('productId', this.value)" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-xs bg-white outline-none focus:border-blue-500">
-                                    <option value="ALL">All Products</option>
-                                    ${(state.products || []).map(p => `<option value="${p.id}" ${filters.productId === p.id ? 'selected' : ''}>${p.shortName || p.name}</option>`).join('')}
-                                </select>
-                            </div>
-
                             <div class="min-w-[150px]">
                                 <label class="block text-[10px] uppercase font-bold text-slate-400 mb-1">Status</label>
-                                <select id="poFilterStatus" onchange="updatePOFilter('status', this.value)" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-xs bg-white outline-none focus:border-blue-500">
+                                <select onchange="state.poFilters.status = this.value; renderView();" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-xs bg-white outline-none focus:border-blue-500">
                                     <option value="ALL">All Status</option>
-                                    ${['IN_PROGRESS','COMPLETED','CANCELLED'].map(st => `<option value="${st}" ${filters.status === st ? 'selected' : ''}>${st}</option>`).join('')}
+                                    ${['OPEN', 'CLOSED', 'CANCELLED'].map(st => `<option value="${st}" ${filters.status === st ? 'selected' : ''}>${st}</option>`).join('')}
                                 </select>
                             </div>
 
-                            <div class="min-w-[120px]">
-                                <label class="block text-[10px] uppercase font-bold text-slate-400 mb-1">Year</label>
-                                <select id="poFilterYear" onchange="updatePOFilter('year', this.value)" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-xs bg-white outline-none focus:border-blue-500">
-                                    <option value="ALL">All Years</option>
-                                    ${years.map(y => `<option value="${y}" ${filters.year === y ? 'selected' : ''}>${y}</option>`).join('')}
-                                </select>
-                            </div>
-
-                            <button onclick="resetPOFilters()" class="h-[34px] px-3 border border-slate-300 rounded-lg text-xs font-bold text-slate-600 hover:bg-slate-50 flex items-center justify-center gap-1.5">
+                            <button onclick="state.poFilters = { search: '', customerId: 'ALL', status: 'ALL' }; renderView();" class="h-[34px] px-3 border border-slate-300 rounded-lg text-xs font-bold text-slate-600 hover:bg-slate-50 flex items-center justify-center gap-1.5">
                                 <i data-lucide="rotate-ccw" class="w-3.5 h-3.5"></i> Reset
                             </button>
-                        </div>
-
-                        <div class="mt-3 pt-3 border-t border-slate-100 flex flex-wrap items-center gap-x-5 gap-y-1 text-[10px] text-slate-500">
-                            <span>Showing <strong class="text-slate-900">${filteredPOs.length}</strong> of ${allPOs.length} PO</span>
-                            <span>Filtered Contract Qty: <strong class="text-blue-700">${totalContractMt.toLocaleString(undefined,{minimumFractionDigits:0, maximumFractionDigits:3})} MT</strong></span>
                         </div>
                     </div>
 
                     <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
                         <div class="overflow-x-auto">
-                            <table class="ui-table w-full text-left text-xs min-w-[1280px]">
+                            <table class="ui-table w-full text-left text-xs min-w-[1000px]">
                                 <thead class="bg-slate-100 text-slate-600 uppercase text-[10px] font-bold border-b border-slate-200">
                                     <tr>
-                                        <th class="p-3">เลขที่ PO / วันที่</th>
-                                        <th class="p-3">ลูกค้า</th>
-                                        <th class="p-3">สินค้า (Products)</th>
-                                        <th class="p-3">Shipment / Package</th>
-                                        <th class="p-3 text-right">ยอดสัญญา (MT)</th>
-                                        <th class="p-3 text-right">Max INV (MT)</th>
-                                        <th class="p-3 text-right">ราคา/ตัน</th>
-                                        <th class="p-3 text-center">สถานะ</th>
-                                        <th class="p-3 text-center">PO Link</th>
+                                        <th class="p-3">เลขที่ PO / วันที่เปิด</th>
+                                        <th class="p-3">ลูกค้า (Customer)</th>
+                                        <th class="p-3">สินค้าหลัก</th>
+                                        <th class="p-3 text-right">ยอดรวม (MT)</th>
+                                        <th class="p-3 text-center">Active Revision</th>
+                                        <th class="p-3 text-center">Draft Revision</th>
+                                        <th class="p-3 text-center">สถานะ PO</th>
                                         <th class="p-3 text-right">จัดการ</th>
                                     </tr>
                                 </thead>
                                 <tbody class="divide-y divide-slate-200">
                                     ${filteredPOs.length === 0 ? `
-                                        <tr><td colspan="10" class="p-10 text-center text-slate-400">
+                                        <tr><td colspan="8" class="p-10 text-center text-slate-400">
                                             <i data-lucide="search-x" class="w-8 h-8 mx-auto mb-2 opacity-50"></i>
                                             <div class="font-bold text-slate-500">ไม่พบ PO ที่ตรงกับตัวกรอง</div>
-                                            <button onclick="resetPOFilters()" class="mt-2 text-blue-600 font-bold hover:underline">Reset Filters</button>
                                         </td></tr>
                                     ` : filteredPOs.map(po => {
-                                        const customer = (state.customers || []).find(c => c.id === po.customerId);
-                                        const product = (state.products || []).find(p => p.id === po.productId);
-                                        const contractMt = po.contractQtyMt || 0;
-                                        const maxInvMt = po.maxInvoiceQtyMt || (contractMt * 1.05);
+                                        const header = po.header || po;
+                                        const poId = header.po_id || po.id;
+                                        const customerId = header.customer_id || po.customerId;
+                                        const customer = (state.customers || []).find(c => c.id === customerId);
+
+                                        let activeRevNo = '-';
+                                        let draftRevNo = '-';
+                                        let poDateStr = '-';
+                                        let mainProduct = '-';
+                                        let totalQty = 0;
+
+                                        if (po.revisions) {
+                                            const activeRev = po.revisions.find(r => r.status === 'ACTIVE');
+                                            const draftRev = po.revisions.find(r => r.status === 'DRAFT');
+                                            if (activeRev) {
+                                                activeRevNo = `Rev. ${activeRev.revision_no}`;
+                                                poDateStr = activeRev.po_date;
+                                                totalQty = (activeRev.lines || []).reduce((sum, l) => sum + (l.contract_qty_mt || 0), 0);
+                                                const p = (state.products || []).find(x => x.id === activeRev.lines?.[0]?.product_id);
+                                                mainProduct = p ? (p.shortName || p.name) : '-';
+                                            }
+                                            if (draftRev) {
+                                                draftRevNo = `Rev. ${draftRev.revision_no}`;
+                                                if (activeRevNo === '-') {
+                                                    poDateStr = draftRev.po_date;
+                                                    totalQty = (draftRev.lines || []).reduce((sum, l) => sum + (l.contract_qty_mt || 0), 0);
+                                                    const p = (state.products || []).find(x => x.id === draftRev.lines?.[0]?.product_id);
+                                                    mainProduct = p ? (p.shortName || p.name) : '-';
+                                                }
+                                            }
+                                        } else {
+                                            poDateStr = po.poDate;
+                                            totalQty = po.contractQtyMt || 0;
+                                            const p = (state.products || []).find(x => x.id === po.productId);
+                                            mainProduct = p ? (p.shortName || p.name) : '-';
+                                        }
+
                                         return `
                                             <tr class="hover:bg-slate-50">
                                                 <td class="p-3">
-                                                    <button onclick="goToPODetail('${po.id}')" class="font-bold text-blue-600 hover:underline text-left">${po.customerPoNo || po.id}</button>
-                                                    <div class="text-[10px] text-slate-400 font-mono">${po.poDate || '-'}</div>
+                                                    <button onclick="state.selectedPoId='${poId}'; renderView();" class="font-bold text-blue-600 hover:underline text-left">${poId}</button>
+                                                    <div class="text-[10px] text-slate-400 font-mono">${poDateStr}</div>
                                                 </td>
-                                                <td class="p-3 font-semibold text-slate-800">${customer ? customer.name : po.customerId}</td>
-                                                <td class="p-3 font-medium text-slate-700">
-                                                    <div class="font-bold text-slate-900">${product ? (product.shortName || product.name) : po.productId}</div>
-                                                    <div class="text-[10px] text-slate-400 font-mono">${product ? product.code : ''}</div>
+                                                <td class="p-3 font-semibold text-slate-800">
+                                                    ${customer ? customer.name : customerId}
+                                                    ${customer?.ownership_type === 'HOUSE_ACCOUNT' ? `<span class="ml-2 px-1.5 py-0.5 text-[9px] bg-slate-100 text-slate-600 font-bold border rounded">HOUSE ACCOUNT</span>` : ''}
                                                 </td>
-                                                <td class="p-3 text-slate-600">
-                                                    <div class="font-medium">${po.shipmentType || 'Container'} ${po.shipmentType === 'Container' && po.containerType ? `(${po.containerType})` : ''}</div>
-                                                    <div class="text-[10px] text-slate-400">${po.packaging || 'In Bulk'}</div>
+                                                <td class="p-3 font-medium text-slate-700">${mainProduct}</td>
+                                                <td class="p-3 text-right font-bold text-slate-900">${totalQty.toLocaleString()} MT</td>
+                                                <td class="p-3 text-center">
+                                                    ${activeRevNo !== '-' ? `<span class="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-100 text-emerald-800">${activeRevNo}</span>` : '<span class="text-slate-400">-</span>'}
                                                 </td>
-                                                <td class="p-3 text-right font-bold text-slate-900">${contractMt.toLocaleString()} MT</td>
-                                                <td class="p-3 text-right font-bold text-blue-600 font-mono">${maxInvMt.toFixed(1)} MT</td>
-                                                <td class="p-3 text-right font-mono font-bold text-slate-700">${canViewCommercialFields() ? `$${po.sellingPrice || 0}` : '<span class="text-slate-400">Restricted</span>'}</td>
-                                                <td class="p-3 text-center"><span class="px-2 py-0.5 rounded text-[10px] font-bold ${po.poStatus === 'COMPLETED' ? 'bg-emerald-100 text-emerald-800' : po.poStatus === 'CANCELLED' ? 'bg-slate-200 text-slate-600' : 'bg-blue-100 text-blue-800'}">${po.poStatus}</span></td>
-                                                <td class="p-3 text-center">${renderPODocumentButton(po)}</td>
+                                                <td class="p-3 text-center">
+                                                    ${draftRevNo !== '-' ? `<span class="px-2 py-0.5 rounded text-[10px] font-bold bg-amber-100 text-amber-800">${draftRevNo}</span>` : '<span class="text-slate-400">-</span>'}
+                                                </td>
+                                                <td class="p-3 text-center">
+                                                    <span class="px-2 py-0.5 rounded text-[10px] font-bold ${(header.header_status || po.poStatus) === 'OPEN' ? 'bg-blue-100 text-blue-800' : 'bg-slate-200 text-slate-600'}">${header.header_status || po.poStatus || 'OPEN'}</span>
+                                                </td>
                                                 <td class="p-3 text-right space-x-2">
-                                                    <button onclick="goToPODetail('${po.id}')" class="text-blue-600 font-bold hover:underline">ดูข้อมูล</button>
-                                                    ${canEditPO() ? `<span class="text-slate-300">|</span><button onclick="openEditPOModal('${po.id}')" class="text-amber-600 font-bold hover:underline">แก้ไข</button>` : ''}
-                                                </td>
-                                            </tr>
-                                        `;
-                                    }).join('')}
-                                </tbody>
-                            </table>
-                        </div>
-                    </div>
-                </div>
-            `;
-        }
-
-        // --- NEW PO MODAL ---
-        function getNextPOCode() {
-            const currentYear = new Date().getFullYear();
-            let maxNum = 0;
-            (state.pos || []).forEach(p => {
-                const match = p.id && p.id.match(/PO-\d{4}-(\d+)/i);
-                if (match) {
-                    const num = parseInt(match[1], 10);
-                    if (num > maxNum) maxNum = num;
                 }
             });
             const nextNum = maxNum + 1;
@@ -4006,18 +3952,7 @@
             updateNewPOReview();
         }
 
-        function handleNewShipmentTypeChange(shipmentType) {
-            const wrapper = document.getElementById('newContainerTypeWrapper');
-            const pkgSelect = document.getElementById('newPoPackagingSelect');
-            if (wrapper) {
-                if (shipmentType === 'Container') wrapper.classList.remove('hidden');
-                else wrapper.classList.add('hidden');
-            }
-            if ((shipmentType === 'Bulk Vessel' || shipmentType === 'Truck') && pkgSelect) {
-                pkgSelect.value = 'NONE';
-                handleNewPackagingSelectChange('NONE');
-            }
-        }
+        // Obsolete mock PO functions removed.
 
         function handleNewPackagingSelectChange(val) {
             const customInput = document.getElementById('newPoPackagingCustom');
@@ -4078,240 +4013,6 @@
             }
             updateNewPOReview();
         }
-
-        function handleNewPOSubmit(e, poId) {
-            e.preventDefault();
-            const pkgSelect = document.getElementById('newPoPackagingSelect').value;
-            const pkgCustom = document.getElementById('newPoPackagingCustom').value;
-            let finalPackaging = pkgSelect;
-            if (pkgSelect === 'CUSTOM') finalPackaging = pkgCustom.trim() || 'Custom Package';
-            else if (pkgSelect === 'NONE') finalPackaging = 'ไม่มีบรรจุภัณฑ์ (In Bulk)';
-
-            const contractQty = parseFloat(document.getElementById('newPoQty').value) || 0;
-            const tolerancePct = parseFloat(document.getElementById('newPoTolerancePct').value) || 0;
-            const maxInvQty = parseFloat(document.getElementById('newPoMaxInvQty').value) || (contractQty * 1.05);
-            const deliveryStart = document.getElementById('newPoDeliveryStart')?.value || '';
-            const deliveryEnd = document.getElementById('newPoDeliveryEnd')?.value || '';
-            const deliveryCheck = validateNewPODeliveryPeriod(deliveryStart, deliveryEnd);
-            const selectedProduct = (state.products || []).find(p => p.id === document.getElementById('newPoProductId').value);
-            const sellingPrice = parseFloat(document.getElementById('newPoPrice').value) || 0;
-            const priceSuggestion = getSuggestedSellingPrice(document.getElementById('newPoCustomerId').value, document.getElementById('newPoProductId').value, document.getElementById('newPoDate').value || getTodayIso());
-            const priceNeedsApproval = priceSuggestion.price > 0 && sellingPrice < priceSuggestion.price;
-            if (!deliveryCheck.valid) { alert(deliveryCheck.message); return; }
-            if (!isProductReadyForPO(selectedProduct)) { alert('Product นี้ยังไม่มี Active Standard Spec ที่พร้อมใช้ จึงยังเปิด PO ไม่ได้'); return; }
-            if (contractQty <= 0) { alert('Contract Qty ต้องมากกว่า 0'); return; }
-            if (sellingPrice <= 0) { alert('Selling Price ต้องมากกว่า 0'); return; }
-
-            const newPo = {
-                id: poId,
-                customerId: document.getElementById('newPoCustomerId').value,
-                customerPoNo: document.getElementById('newPoNo').value,
-                poDate: document.getElementById('newPoDate').value,
-                deliveryStart,
-                deliveryEnd,
-                productId: document.getElementById('newPoProductId').value,
-                contractQtyMt: contractQty,
-                tolerancePct: tolerancePct,
-                maxInvoiceQtyMt: maxInvQty,
-                shipmentType: document.getElementById('newPoShipmentType').value,
-                containerType: document.getElementById('newPoShipmentType').value === 'Container' ? document.getElementById('newPoContainerType').value : '-',
-                packaging: finalPackaging,
-                packageWeightKg: pkgSelect === 'NONE' ? 0 : (parseFloat(document.getElementById('newPoPackageWeightKg').value) || 0),
-                unitsPerContainer: pkgSelect === 'NONE' ? 0 : (parseFloat(document.getElementById('newPoUnitsPerCont').value) || 0),
-                totalWeightPerContainerMt: parseFloat(document.getElementById('newPoTotalWeightMt').value) || 0,
-                poCurrency: 'USD',
-                sellingPrice,
-                commissionRecipientId: document.getElementById('newPoCommissionRecipient')?.value || '',
-                commissionRateUsdPerMt: parseFloat(document.getElementById('newPoCommissionRate')?.value) || 0,
-                incoterm: document.getElementById('newPoIncoterm').value,
-                destinationPort: document.getElementById('newPoPort').value,
-                commercialApprovalStatus: 'APPROVED',
-                poStatus: document.getElementById('newPoStatus').value
-            };
-
-            callBackend('UPDATE_PO', {
-                action_type: 'CREATE',
-                po_id: newPo.id,
-                customerId: newPo.customerId,
-                customerPoNo: newPo.customerPoNo,
-                poDate: newPo.poDate,
-                productId: newPo.productId,
-                contractQtyMt: newPo.contractQtyMt,
-                tolerancePct: newPo.tolerancePct,
-                maxInvoiceQtyMt: newPo.maxInvoiceQtyMt,
-                incoterm: newPo.incoterm,
-                destinationPort: newPo.destinationPort,
-                shipmentType: newPo.shipmentType,
-                containerType: newPo.containerType,
-                packaging: newPo.packaging,
-                packageWeightKg: newPo.packageWeightKg,
-                unitsPerContainer: newPo.unitsPerContainer,
-                totalWeightPerContainerMt: newPo.totalWeightPerContainerMt,
-                poCurrency: newPo.poCurrency,
-                sellingPrice: newPo.sellingPrice,
-                commercialApprovalStatus: newPo.commercialApprovalStatus,
-                poStatus: newPo.poStatus,
-                deliveryStart: newPo.deliveryStart,
-                deliveryEnd: newPo.deliveryEnd,
-                commissionRecipientId: newPo.commissionRecipientId,
-                commissionRateUsdPerMt: newPo.commissionRateUsdPerMt
-            }, () => {
-                state.pos.push(newPo);
-                closeModal();
-                goToPODetail(newPo.id);
-            }, msg => alert('Create PO failed: ' + msg));
-        }
-
-        // --- EDIT PO MODAL ---
-        function openEditPOModal(poId) {
-            const po = (state.pos || []).find(p => p.id === poId);
-            if (!po) return;
-
-            const standardPackages = [
-                'NONE',
-                'Jumbo Bag 850 kg',
-                'Jumbo Bag 950 kg',
-                'Bulk Container',
-                'Bulk Container + Liner'
-            ];
-
-            let currentPkg = po.packaging || 'Jumbo Bag 850 kg';
-            if (currentPkg === 'ไม่มี' || currentPkg === 'NONE' || currentPkg === 'In Bulk' || currentPkg === 'ไม่มีบรรจุภัณฑ์ (In Bulk)') {
-                currentPkg = 'NONE';
-            }
-
-            const isStandardPkg = standardPackages.includes(currentPkg);
-            const selectedPkgValue = isStandardPkg ? currentPkg : 'CUSTOM';
-            const customPkgValue = isStandardPkg ? '' : currentPkg;
-
-            const curShipmentType = po.shipmentType || 'Container';
-            const curContainerType = po.containerType || "20'";
-            const curTolerancePct = po.tolerancePct != null ? po.tolerancePct : 5;
-            const curPkgWeightKg = po.packageWeightKg != null ? po.packageWeightKg : 850;
-            const curUnitsPerCont = po.unitsPerContainer != null ? po.unitsPerContainer : 32;
-            const curTotalWeightMt = po.totalWeightPerContainerMt != null ? po.totalWeightPerContainerMt : 27.2;
-
-            openModal(`
-                <div class="space-y-4">
-                    <div class="flex justify-between items-center border-b border-slate-200 pb-3">
-                        <div>
-                            <h3 class="text-base font-bold text-slate-900">แก้ไขข้อมูลสัญญา PO & เงื่อนไขการโหลด</h3>
-                            <p class="text-[11px] text-slate-500 font-mono">PO ID: ${po.id}</p>
-                        </div>
-                        <button onclick="closeModal()" class="text-slate-400 hover:text-slate-600"><i data-lucide="x" class="w-5 h-5"></i></button>
-                    </div>
-
-                    <form onsubmit="saveEditPO(event, '${po.id}')" class="space-y-3 text-xs">
-                        <div class="grid grid-cols-2 gap-3">
-                            <div>
-                                <label class="font-semibold text-slate-700">เลขที่ PO ลูกค้า (Customer PO No.) *</label>
-                                <input type="text" id="editPoNo" required value="${po.customerPoNo || ''}" class="w-full border border-slate-300 rounded p-2 mt-1 outline-none font-bold text-slate-900">
-                            </div>
-                            <div>
-                                <label class="font-semibold text-slate-700">วันที่เปิดสัญญา PO *</label>
-                                <input type="date" id="editPoDate" required value="${po.poDate || ''}" class="w-full border border-slate-300 rounded p-2 mt-1 outline-none">
-                            </div>
-                        </div>
-
-                        <div class="grid grid-cols-2 gap-3">
-                            <div>
-                                <label class="font-semibold text-slate-700">ลูกค้า (Customer) *</label>
-                                <select id="editPoCustomerId" class="w-full border border-slate-300 rounded p-2 mt-1 outline-none">
-                                    ${getScopedCustomers().map(c => `<option value="${c.id}" ${c.id === po.customerId ? 'selected' : ''}>${c.name} (${c.code})</option>`).join('')}
-                                </select>
-                            </div>
-                            <div>
-                                <label class="font-semibold text-slate-700">สินค้า & สเปก (อ้างอิงจาก Products) *</label>
-                                <select id="editPoProductId" class="w-full border border-slate-300 rounded p-2 mt-1 outline-none bg-blue-50/50 font-medium text-slate-800">
-                                    ${(state.products || []).map(p => `<option value="${p.id}" ${p.id === po.productId ? 'selected' : ''}>${p.shortName || p.name} [${p.code}]</option>`).join('')}
-                                </select>
-                            </div>
-                        </div>
-
-                        <!-- Contract Qty & +/- Tolerance Setting -->
-                        <div class="p-3 bg-amber-50/50 rounded-lg border border-amber-200 space-y-2">
-                            <div class="font-bold text-amber-900 flex items-center justify-between">
-                                <span class="flex items-center space-x-1.5"><i data-lucide="scale" class="w-4 h-4 text-amber-600"></i><span>ปริมาณสัญญา & เกณฑ์บวกลบ (+/- Tolerance)</span></span>
-                                <span class="text-[11px] text-amber-700 font-normal">สำหรับตัดยอด Invoice และสินค้าเทกอง Bulk</span>
-                            </div>
-                            <div class="grid grid-cols-3 gap-3">
-                                <div>
-                                    <label class="font-semibold text-slate-700">ยอดสัญญาหลัก (Contract MT) *</label>
-                                    <input type="number" id="editPoQty" required step="any" value="${po.contractQtyMt || 0}" oninput="recalcTolerance()" class="w-full border border-slate-300 bg-white rounded p-2 mt-1 outline-none font-bold text-slate-900">
-                                </div>
-                                <div>
-                                    <label class="font-semibold text-slate-700">Tolerance (+/- %)</label>
-                                    <select id="editPoTolerancePct" onchange="recalcTolerance()" class="w-full border border-slate-300 bg-white rounded p-2 mt-1 outline-none font-bold text-amber-800">
-                                        <option value="0" ${curTolerancePct == 0 ? 'selected' : ''}>0% (ตรงตามสัญญาเป๊ะ)</option>
-                                        <option value="5" ${curTolerancePct == 5 ? 'selected' : ''}>+/- 5% (มาตรฐาน Bulk/FCL)</option>
-                                        <option value="10" ${curTolerancePct == 10 ? 'selected' : ''}>+/- 10% (Bulk Vessel)</option>
-                                    </select>
-                                </div>
-                                <div>
-                                    <label class="font-semibold text-slate-700">เพดาน Max INV (MT) [+%]</label>
-                                    <input type="number" id="editPoMaxInvQty" readonly value="${(po.maxInvoiceQtyMt || (po.contractQtyMt * 1.05)).toFixed(1)}" class="w-full border border-blue-300 bg-blue-50 font-mono font-bold text-blue-800 rounded p-2 mt-1 outline-none cursor-not-allowed">
-                                </div>
-                            </div>
-                        </div>
-
-                        <!-- Shipment Type & Container Type -->
-                        <div class="grid grid-cols-2 gap-3 p-3 bg-slate-50 rounded-lg border border-slate-200">
-                            <div>
-                                <label class="font-semibold text-slate-700">ประเภทการขนส่ง (Shipment Type) *</label>
-                                <select id="editPoShipmentType" onchange="handleShipmentTypeChange(this.value)" class="w-full border border-slate-300 bg-white rounded p-2 mt-1 outline-none font-semibold text-slate-800">
-                                    <option value="Container" ${curShipmentType === 'Container' ? 'selected' : ''}>Container (ตู้คอนเทนเนอร์)</option>
-                                    <option value="Bulk Vessel" ${curShipmentType === 'Bulk Vessel' ? 'selected' : ''}>Bulk Vessel (เรือเทกอง)</option>
-                                    <option value="Truck" ${curShipmentType === 'Truck' ? 'selected' : ''}>Truck (รถบรรทุก)</option>
-                                </select>
-                            </div>
-                            <div id="containerTypeWrapper" class="${curShipmentType === 'Container' ? '' : 'hidden'}">
-                                <label class="font-semibold text-slate-700">ขนาดตู้คอนเทนเนอร์ (Container Type) *</label>
-                                <select id="editPoContainerType" class="w-full border border-slate-300 bg-white rounded p-2 mt-1 outline-none font-semibold text-slate-800">
-                                    <option value="20'" ${curContainerType === "20'" ? 'selected' : ''}>20' (ตู้สั้น 20 ฟุต)</option>
-                                    <option value="40'" ${curContainerType === "40'" ? 'selected' : ''}>40' (ตู้ยาว 40 ฟุต)</option>
-                                    <option value="40'HQ" ${curContainerType === "40'HQ" ? 'selected' : ''}>40'HQ (ตู้สูง High Cube)</option>
-                                </select>
-                            </div>
-                        </div>
-
-                        <!-- Packaging & Dynamic Loading Calculator -->
-                        <div class="p-3 bg-blue-50/40 rounded-lg border border-blue-200 space-y-3">
-                            <div class="font-bold text-blue-900 flex items-center space-x-1.5">
-                                <i data-lucide="package-check" class="w-4 h-4 text-blue-600"></i>
-                                <span>รูปแบบบรรจุภัณฑ์ & คำนวณน้ำหนักต่อตู้ (Packaging & Loading Calculation)</span>
-                            </div>
-
-                            <div class="grid grid-cols-2 gap-3">
-                                <div>
-                                    <label class="font-semibold text-slate-700">รูปแบบบรรจุภัณฑ์ (Packaging) *</label>
-                                    <select id="editPoPackagingSelect" onchange="handlePackagingSelectChange(this.value)" class="w-full border border-slate-300 bg-white rounded p-2 mt-1 outline-none font-semibold text-slate-800">
-                                        <option value="NONE" ${selectedPkgValue === 'NONE' ? 'selected' : ''}>ไม่มีบรรจุภัณฑ์ (In Bulk / Loose Cargo)</option>
-                                        <option value="Jumbo Bag 850 kg" ${selectedPkgValue === 'Jumbo Bag 850 kg' ? 'selected' : ''}>Jumbo Bag 850 kg</option>
-                                        <option value="Jumbo Bag 950 kg" ${selectedPkgValue === 'Jumbo Bag 950 kg' ? 'selected' : ''}>Jumbo Bag 950 kg</option>
-                                        <option value="Bulk Container" ${selectedPkgValue === 'Bulk Container' ? 'selected' : ''}>Bulk Container</option>
-                                        <option value="Bulk Container + Liner" ${selectedPkgValue === 'Bulk Container + Liner' ? 'selected' : ''}>Bulk Container + Liner</option>
-                                        <option value="CUSTOM" ${selectedPkgValue === 'CUSTOM' ? 'selected' : ''}>+ กำหนดเอง / เพิ่มเติม (Custom Packaging)</option>
-                                    </select>
-                                    <input type="text" id="editPoPackagingCustom" value="${customPkgValue}" placeholder="ระบุรูปแบบบรรจุภัณฑ์เพิ่มเติม เช่น 50 kg PP Bag" class="w-full border border-amber-300 bg-amber-50/50 rounded p-2 mt-1.5 outline-none ${selectedPkgValue === 'CUSTOM' ? '' : 'hidden'}">
-                                </div>
-                                <div id="pkgWeightWrapper" class="${selectedPkgValue === 'NONE' ? 'hidden' : ''}">
-                                    <label class="font-semibold text-slate-700">น้ำหนักต่อหน่วย/ถุง (kg/unit) *</label>
-                                    <input type="number" step="any" id="editPoPackageWeightKg" value="${curPkgWeightKg}" oninput="recalcContainerWeight()" class="w-full border border-slate-300 bg-white rounded p-2 mt-1 outline-none font-bold text-slate-800">
-                                </div>
-                            </div>
-
-                            <div class="grid grid-cols-2 gap-3 pt-1 border-t border-blue-100">
-                                <div id="pkgUnitsWrapper" class="${selectedPkgValue === 'NONE' ? 'hidden' : ''}">
-                                    <label class="font-semibold text-slate-700">จำนวน/ตู้ (Units / Container) *</label>
-                                    <input type="number" step="any" id="editPoUnitsPerCont" value="${curUnitsPerCont}" oninput="recalcContainerWeight()" class="w-full border border-slate-300 bg-white rounded p-2 mt-1 outline-none font-bold text-slate-900" placeholder="e.g. 30, 32">
-                                </div>
-                                <div id="totalWeightWrapper" class="${selectedPkgValue === 'NONE' ? 'col-span-2' : ''}">
-                                    <label class="font-semibold text-slate-700" id="lblTotalWeight">น้ำหนักเป้าหมายต่อตู้/เที่ยว (MT / Load)</label>
-                                    <input type="number" step="any" id="editPoTotalWeightMt" value="${curTotalWeightMt}" class="w-full border border-emerald-300 bg-emerald-50 font-mono font-bold text-emerald-800 rounded p-2 mt-1 outline-none">
-                                    <div class="text-[10px] text-slate-500 mt-1 font-medium" id="txtWeightHelp">* คำนวณอัตโนมัติจาก (น้ำหนักต่อหน่วย kg × จำนวน) ÷ 1,000</div>
-                                </div>
-                            </div>
-                        </div>
 
                         <div class="grid grid-cols-2 gap-3">
                             <div>
