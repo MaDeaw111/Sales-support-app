@@ -152,6 +152,36 @@ async function enforceNotSupersededByDocId(db, documentId) {
   return { revisionId: doc.po_revision_id, poId: revision.po_id };
 }
 
+async function enforceNotCancelledByPoId(db, poId) {
+  const header = await db.prepare("SELECT header_status FROM po_headers WHERE po_id = ?").bind(poId).first();
+  if (header && header.header_status === 'CANCELLED') {
+    const err = new Error('PO is already cancelled');
+    err.code = 'PO_ALREADY_CANCELLED';
+    throw err;
+  }
+}
+
+async function enforceNotCancelledByRevisionId(db, revisionId) {
+  const revision = await db.prepare("SELECT po_id FROM po_revisions WHERE revision_id = ?").bind(revisionId).first();
+  if (revision) {
+    await enforceNotCancelledByPoId(db, revision.po_id);
+  }
+}
+
+async function enforceNotCancelledByLineId(db, lineId) {
+  const line = await db.prepare("SELECT po_revision_id FROM po_revision_lines WHERE line_id = ?").bind(lineId).first();
+  if (line) {
+    await enforceNotCancelledByRevisionId(db, line.po_revision_id);
+  }
+}
+
+async function enforceNotCancelledByDocId(db, documentId) {
+  const doc = await db.prepare("SELECT po_revision_id FROM po_revision_documents WHERE document_id = ?").bind(documentId).first();
+  if (doc) {
+    await enforceNotCancelledByRevisionId(db, doc.po_revision_id);
+  }
+}
+
 function validateUrl(url) {
   if (!url || (!url.startsWith('http://') && !url.startsWith('https://'))) {
     throw new Error('Invalid document URL: must begin with http:// or https://');
@@ -306,6 +336,7 @@ export function createPORepository(dbBinding) {
 
     async createNextRevision(poId, creatorId) {
       // 1. Validation queries
+      await enforceNotCancelledByPoId(db, poId);
       const header = await db.prepare("SELECT current_draft_revision_id, current_active_revision_id FROM po_headers WHERE po_id = ?").bind(poId).first();
       if (!header) {
         throw new Error(`PO not found: ${poId}`);
@@ -442,6 +473,7 @@ export function createPORepository(dbBinding) {
     },
 
     async updateRevisionOverview(revisionId, dto) {
+      await enforceNotCancelledByRevisionId(db, revisionId);
       // Fetch revision
       const revision = await db.prepare("SELECT * FROM po_revisions WHERE revision_id = ?").bind(revisionId).first();
       if (!revision) {
@@ -506,6 +538,7 @@ export function createPORepository(dbBinding) {
     },
 
     async createPORevisionLine(revisionId, dto) {
+      await enforceNotCancelledByRevisionId(db, revisionId);
       // 1. Enforce status constraint
       const revision = await db.prepare("SELECT status, po_id, incoterm, ownership_type_snapshot, sales_owner_user_id_snapshot FROM po_revisions WHERE revision_id = ?").bind(revisionId).first();
       if (!revision) {
@@ -614,6 +647,7 @@ export function createPORepository(dbBinding) {
     },
 
     async updatePORevisionLine(lineId, dto) {
+      await enforceNotCancelledByLineId(db, lineId);
       // 1. Fetch line and parent status
       const existingLine = await db.prepare("SELECT * FROM po_revision_lines WHERE line_id = ?").bind(lineId).first();
       if (!existingLine) {
@@ -740,6 +774,7 @@ export function createPORepository(dbBinding) {
     },
 
     async deletePORevisionLine(lineId) {
+      await enforceNotCancelledByLineId(db, lineId);
       // 1. Fetch line and parent status
       const existingLine = await db.prepare("SELECT * FROM po_revision_lines WHERE line_id = ?").bind(lineId).first();
       if (!existingLine) {
@@ -811,6 +846,7 @@ export function createPORepository(dbBinding) {
     },
 
     async createPORevisionDocument(revisionId, dto, creatorId) {
+      await enforceNotCancelledByRevisionId(db, revisionId);
       // 1. Enforce superseded constraint
       const revision = await enforceNotSuperseded(db, revisionId);
 
@@ -842,6 +878,7 @@ export function createPORepository(dbBinding) {
     },
 
     async updatePORevisionDocument(documentId, dto, updaterId) {
+      await enforceNotCancelledByDocId(db, documentId);
       // 1. Enforce superseded constraint
       const { revisionId, poId } = await enforceNotSupersededByDocId(db, documentId);
 
@@ -880,6 +917,7 @@ export function createPORepository(dbBinding) {
     },
 
     async deletePORevisionDocument(documentId, updaterId) {
+      await enforceNotCancelledByDocId(db, documentId);
       // 1. Enforce superseded constraint
       const { revisionId, poId } = await enforceNotSupersededByDocId(db, documentId);
 
@@ -919,6 +957,7 @@ export function createPORepository(dbBinding) {
     },
 
     async activateRevision(revisionId, approverId, approvalNote) {
+      await enforceNotCancelledByRevisionId(db, revisionId);
       // 1. Fetch and validate revision
       const revision = await db.prepare("SELECT * FROM po_revisions WHERE revision_id = ?").bind(revisionId).first();
       if (!revision) {
@@ -1074,6 +1113,57 @@ export function createPORepository(dbBinding) {
 
       // Execute transaction batch
       await db.batch(statements);
+    },
+
+    async deleteDraftPO(poId) {
+      // 1. Fetch PO Header
+      const header = await db.prepare("SELECT * FROM po_headers WHERE po_id = ?").bind(poId).first();
+      if (!header) {
+        throw new Error(`PO not found: ${poId}`);
+      }
+
+      // 2. Check if it has ever had an active revision
+      if (header.current_active_revision_id !== null) {
+        const err = new Error('Cannot delete PO with active history');
+        err.code = 'PO_ACTIVE_IMMUTABLE';
+        throw err;
+      }
+
+      const revCheck = await db.prepare("SELECT COUNT(*) as count FROM po_revisions WHERE po_id = ? AND status IN ('ACTIVE', 'SUPERSEDED')").bind(poId).first();
+      if (revCheck && revCheck.count > 0) {
+        const err = new Error('Cannot delete PO with active history');
+        err.code = 'PO_ACTIVE_IMMUTABLE';
+        throw err;
+      }
+
+      // 3. Execute hard delete on po_headers (cascades)
+      await db.prepare("DELETE FROM po_headers WHERE po_id = ?").bind(poId).run();
+    },
+
+    async cancelPO(poId, cancellerId, reason) {
+      // 1. Validate reason
+      if (!reason || !reason.trim()) {
+        throw new Error('Cancellation reason is required');
+      }
+
+      // 2. Fetch PO Header
+      const header = await db.prepare("SELECT * FROM po_headers WHERE po_id = ?").bind(poId).first();
+      if (!header) {
+        throw new Error(`PO not found: ${poId}`);
+      }
+
+      // 3. Update header status to CANCELLED
+      await db.prepare(`
+        UPDATE po_headers 
+        SET header_status = 'CANCELLED',
+            cancelled_by = ?,
+            cancelled_at = datetime('now'),
+            cancellation_reason = ?
+        WHERE po_id = ?
+      `).bind(cancellerId, reason, poId).run();
+
+      // 4. Log PO_CANCELLED audit event
+      await logPOAuditEvent(db, poId, header.current_active_revision_id, 'PO_CANCELLED', cancellerId, { reason });
     }
   };
 }

@@ -45,6 +45,6 @@
 - [x] **Task 8 — Manager Price Note Matching**
 - [x] **Task 9 — PO Documents Links Management**
 - [x] **Task 10 — Revision Activation & Atomic Swapping**
-- [ ] **Task 11 — PO Cancellation & Hard Delete Controls**
+- [x] **Task 11 — PO Cancellation & Hard Delete Controls**
 - [ ] **Task 12 — Audit Event Logging and Field Diff Generation**
 - [ ] **Task 13 — API Endpoints & RBAC Views Integration**
