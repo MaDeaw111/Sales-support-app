@@ -332,7 +332,7 @@ Production smoke test results verified:
 
 ### Phase 5E — Commercial & Shipment Control
 
-**Status:** COMPLETE / MERGED / DEPLOYMENT PENDING
+**Status:** COMPLETE / MERGED / DEPLOYED / PRODUCTION VERIFIED
 
 Implemented backend:
 - D1 schema migration (`migrations/0004_commercial_shipment_control.sql`) defining pos, shipments, freight quotes, expense categories, price notes, shipment document links, and shipment expenses.
@@ -350,20 +350,38 @@ All 151 unit, integration, route, and regression tests pass cleanly.
 
 PR #7 merge commit:
 ```text
-98b5167e3df1fb3ecf1246b96e5fa324fc28f641
+98b51678a566882bcce62668987886958cbc7078
+```
+
+Migration:
+```text
+0004_commercial_shipment_control.sql
+```
+
+D1 Database:
+```text
+wcat-sales-db
+```
+
+Worker Version ID:
+```text
+6b9bd0ae-b952-47e8-8c62-3ecf7f9c1417
+```
+
+Production Verification:
+```text
+SUCCESS (All Phase 5E smoke tests passed cleanly, 151 regression tests passed)
 ```
 
 ---
 
 # 3. CURRENT CHECKPOINT
 
-## STOPPED HERE — 2026-08-26
+## STOPPED HERE — 2026-08-27
 
-Phase 5E is fully merged into main. Deployment and production migrations are pending.
+Phase 5E is fully deployed and production-verified.
 Next Action:
-- Deploy migrations/0004_commercial_shipment_control.sql to production D1 database.
-- Deploy Worker code to production wcat-sales-support.
-- Execute Phase 5E production smoke testing.
+- Prepare Phase 5F PO/Shipping spec and plans.
 
 ---
 
