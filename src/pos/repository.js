@@ -188,6 +188,101 @@ function validateUrl(url) {
   }
 }
 
+async function generateAndLogFieldDiffs(db, poId, newRevisionId, oldRevisionId, statements) {
+  const oldRev = await db.prepare("SELECT * FROM po_revisions WHERE revision_id = ?").bind(oldRevisionId).first();
+  const newRev = await db.prepare("SELECT * FROM po_revisions WHERE revision_id = ?").bind(newRevisionId).first();
+  if (!oldRev || !newRev) return;
+
+  // 1. Compare overview fields
+  const overviewFields = [
+    'customer_po_no', 'po_date', 'buyer_reference', 'currency', 'incoterm',
+    'destination', 'delivery_start', 'delivery_end', 'valid_until',
+    'payment_term_snapshot', 'commercial_terms', 'operational_note'
+  ];
+
+  for (const field of overviewFields) {
+    const oldVal = oldRev[field];
+    const newVal = newRev[field];
+
+    const normalizedOld = oldVal === undefined ? null : oldVal;
+    const normalizedNew = newVal === undefined ? null : newVal;
+
+    if (normalizedOld !== normalizedNew) {
+      const diffId = `DIFF-${crypto.randomUUID()}`;
+      const oldStr = normalizedOld !== null ? String(normalizedOld) : null;
+      const newStr = normalizedNew !== null ? String(normalizedNew) : null;
+
+      statements.push(
+        db.prepare(`
+          INSERT INTO po_field_diffs (diff_id, po_revision_id, entity_type, entity_id, field_name, old_value, new_value)
+          VALUES (?, ?, 'REVISION', ?, ?, ?, ?)
+        `).bind(diffId, newRevisionId, newRevisionId, field, oldStr, newStr)
+      );
+    }
+  }
+
+  // 2. Compare line fields
+  const { results: oldLines } = await db.prepare("SELECT * FROM po_revision_lines WHERE po_revision_id = ?").bind(oldRevisionId).all();
+  const { results: newLines } = await db.prepare("SELECT * FROM po_revision_lines WHERE po_revision_id = ?").bind(newRevisionId).all();
+
+  const oldLinesMap = new Map((oldLines || []).map(l => [l.line_id, l]));
+  const newLinesMapByPrevId = new Map((newLines || []).filter(l => l.previous_line_id).map(l => [l.previous_line_id, l]));
+
+  const lineFields = [
+    'contract_qty_mt', 'tolerance_pct', 'unit_price', 'packaging',
+    'container_type', 'loading_pattern', 'commission_recipient_user_id',
+    'commission_rate_usd_mt', 'commercial_line_term', 'operational_line_note'
+  ];
+
+  for (const newLine of newLines || []) {
+    if (newLine.previous_line_id && oldLinesMap.has(newLine.previous_line_id)) {
+      const oldLine = oldLinesMap.get(newLine.previous_line_id);
+      for (const field of lineFields) {
+        const oldVal = oldLine[field];
+        const newVal = newLine[field];
+
+        const normalizedOld = oldVal === undefined ? null : oldVal;
+        const normalizedNew = newVal === undefined ? null : newVal;
+
+        if (normalizedOld !== normalizedNew) {
+          const diffId = `DIFF-${crypto.randomUUID()}`;
+          const oldStr = normalizedOld !== null ? String(normalizedOld) : null;
+          const newStr = normalizedNew !== null ? String(normalizedNew) : null;
+
+          statements.push(
+            db.prepare(`
+              INSERT INTO po_field_diffs (diff_id, po_revision_id, entity_type, entity_id, field_name, old_value, new_value)
+              VALUES (?, ?, 'LINE', ?, ?, ?, ?)
+            `).bind(diffId, newRevisionId, newLine.line_id, field, oldStr, newStr)
+          );
+        }
+      }
+    } else {
+      // New line added
+      const diffId = `DIFF-${crypto.randomUUID()}`;
+      statements.push(
+        db.prepare(`
+          INSERT INTO po_field_diffs (diff_id, po_revision_id, entity_type, entity_id, field_name, old_value, new_value)
+          VALUES (?, ?, 'LINE', ?, 'line_added', NULL, ?)
+        `).bind(diffId, newRevisionId, newLine.line_id, String(newLine.line_no))
+      );
+    }
+  }
+
+  for (const oldLine of oldLines || []) {
+    if (!newLinesMapByPrevId.has(oldLine.line_id)) {
+      // Line removed
+      const diffId = `DIFF-${crypto.randomUUID()}`;
+      statements.push(
+        db.prepare(`
+          INSERT INTO po_field_diffs (diff_id, po_revision_id, entity_type, entity_id, field_name, old_value, new_value)
+          VALUES (?, ?, 'LINE', ?, 'line_removed', ?, NULL)
+        `).bind(diffId, newRevisionId, oldLine.line_id, String(oldLine.line_no))
+      );
+    }
+  }
+}
+
 export function createPORepository(dbBinding) {
   const db = wrapDb(dbBinding);
   
@@ -1109,6 +1204,11 @@ export function createPORepository(dbBinding) {
             VALUES (?, ?, ?, 'SPEC_OLD_REVISION_CONFIRMED', ?, ?)
           `).bind(specEventId, revision.po_id, revisionId, approverId, specEventMetadata)
         );
+      }
+
+      // H. If there was an old active revision, generate and log field diffs
+      if (oldActive) {
+        await generateAndLogFieldDiffs(db, revision.po_id, revisionId, oldActive.revision_id, statements);
       }
 
       // Execute transaction batch

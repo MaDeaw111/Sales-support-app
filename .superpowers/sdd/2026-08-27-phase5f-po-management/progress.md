@@ -46,5 +46,5 @@
 - [x] **Task 9 — PO Documents Links Management**
 - [x] **Task 10 — Revision Activation & Atomic Swapping**
 - [x] **Task 11 — PO Cancellation & Hard Delete Controls**
-- [ ] **Task 12 — Audit Event Logging and Field Diff Generation**
+- [x] **Task 12 — Audit Event Logging and Field Diff Generation**
 - [ ] **Task 13 — API Endpoints & RBAC Views Integration**
