@@ -114,6 +114,43 @@ async function matchManagerPriceNote(db, customerId, productId, incoterm, owners
   return note || null;
 }
 
+async function logPOAuditEvent(db, poId, revisionId, eventType, actorId, detailsObj) {
+  const eventId = `EVT-${crypto.randomUUID()}`;
+  const metadata = detailsObj ? JSON.stringify(detailsObj) : null;
+  await db.prepare(`
+    INSERT INTO po_audit_events (event_id, po_id, po_revision_id, event_type, actor_id, metadata_json)
+    VALUES (?, ?, ?, ?, ?, ?)
+  `).bind(eventId, poId, revisionId, eventType, actorId, metadata).run();
+}
+
+async function enforceNotSuperseded(db, revisionId) {
+  const revision = await db.prepare("SELECT status, po_id FROM po_revisions WHERE revision_id = ?").bind(revisionId).first();
+  if (!revision) {
+    throw new Error(`Revision not found: ${revisionId}`);
+  }
+  if (revision.status === 'SUPERSEDED') {
+    const err = new Error('Superseded revision is immutable');
+    err.code = 'PO_SUPERSEDED_IMMUTABLE';
+    throw err;
+  }
+  return revision;
+}
+
+async function enforceNotSupersededByDocId(db, documentId) {
+  const doc = await db.prepare("SELECT po_revision_id FROM po_revision_documents WHERE document_id = ?").bind(documentId).first();
+  if (!doc) {
+    throw new Error(`Document not found: ${documentId}`);
+  }
+  const revision = await enforceNotSuperseded(db, doc.po_revision_id);
+  return { revisionId: doc.po_revision_id, poId: revision.po_id };
+}
+
+function validateUrl(url) {
+  if (!url || (!url.startsWith('http://') && !url.startsWith('https://'))) {
+    throw new Error('Invalid document URL: must begin with http:// or https://');
+  }
+}
+
 export function createPORepository(dbBinding) {
   const db = wrapDb(dbBinding);
   
@@ -764,6 +801,114 @@ export function createPORepository(dbBinding) {
         hasOutdated,
         outdatedSpecs
       };
+    },
+
+    async createPORevisionDocument(revisionId, dto, creatorId) {
+      // 1. Enforce superseded constraint
+      const revision = await enforceNotSuperseded(db, revisionId);
+
+      // 2. Validate URL format
+      validateUrl(dto.url);
+
+      const documentId = `DOC-${crypto.randomUUID()}`;
+
+      // 3. Insert document record
+      await db.prepare(`
+        INSERT INTO po_revision_documents (document_id, po_revision_id, document_type, label, url, created_by)
+        VALUES (?, ?, ?, ?, ?, ?)
+      `).bind(
+        documentId,
+        revisionId,
+        dto.documentType,
+        dto.label,
+        dto.url,
+        creatorId
+      ).run();
+
+      // 4. Log audit event
+      await logPOAuditEvent(db, revision.po_id, revisionId, 'DOCUMENT_ADDED', creatorId, {
+        label: dto.label,
+        documentType: dto.documentType
+      });
+
+      return await db.prepare("SELECT * FROM po_revision_documents WHERE document_id = ?").bind(documentId).first();
+    },
+
+    async updatePORevisionDocument(documentId, dto, updaterId) {
+      // 1. Enforce superseded constraint
+      const { revisionId, poId } = await enforceNotSupersededByDocId(db, documentId);
+
+      // 2. Validate URL format if updated
+      if (dto.url !== undefined) {
+        validateUrl(dto.url);
+      }
+
+      // 3. Dynamic update query builder
+      const setClauses = ['updated_at = CURRENT_TIMESTAMP'];
+      const bindParams = [];
+      const fieldMappings = {
+        documentType: 'document_type',
+        label: 'label',
+        url: 'url'
+      };
+
+      for (const [dtoKey, sqlColumn] of Object.entries(fieldMappings)) {
+        if (dto[dtoKey] !== undefined) {
+          setClauses.push(`${sqlColumn} = ?`);
+          bindParams.push(dto[dtoKey]);
+        }
+      }
+
+      const query = `UPDATE po_revision_documents SET ${setClauses.join(', ')} WHERE document_id = ?`;
+      bindParams.push(documentId);
+      await db.prepare(query).bind(...bindParams).run();
+
+      // 4. Log audit event
+      await logPOAuditEvent(db, poId, revisionId, 'DOCUMENT_UPDATED', updaterId, {
+        documentId,
+        updates: dto
+      });
+
+      return await db.prepare("SELECT * FROM po_revision_documents WHERE document_id = ?").bind(documentId).first();
+    },
+
+    async deletePORevisionDocument(documentId, updaterId) {
+      // 1. Enforce superseded constraint
+      const { revisionId, poId } = await enforceNotSupersededByDocId(db, documentId);
+
+      // 2. Get document info for audit log
+      const doc = await db.prepare("SELECT label, document_type FROM po_revision_documents WHERE document_id = ?").bind(documentId).first();
+
+      // 3. Delete document record
+      await db.prepare("DELETE FROM po_revision_documents WHERE document_id = ?").bind(documentId).run();
+
+      // 4. Log audit event
+      await logPOAuditEvent(
+        db,
+        poId,
+        revisionId,
+        'DOCUMENT_REMOVED',
+        updaterId,
+        {
+          label: doc?.label,
+          documentType: doc?.document_type
+        }
+      );
+    },
+
+    async validateRevisionDocumentsForActivation(revisionId) {
+      const row = await db.prepare(`
+        SELECT COUNT(*) as count 
+        FROM po_revision_documents 
+        WHERE po_revision_id = ? 
+          AND document_type IN ('CUSTOMER_PO', 'EMAIL_CONFIRMATION')
+      `).bind(revisionId).first();
+
+      if (!row || row.count === 0) {
+        const err = new Error('Evidence document (CUSTOMER_PO or EMAIL_CONFIRMATION) is required to activate revision');
+        err.code = 'PO_EVIDENCE_REQUIRED';
+        throw err;
+      }
     }
   };
 }
