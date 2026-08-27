@@ -82,8 +82,8 @@ CREATE TABLE po_revisions (
 CREATE UNIQUE INDEX idx_active_revision ON po_revisions (po_id) WHERE status = 'ACTIVE';
 CREATE UNIQUE INDEX idx_draft_revision ON po_revisions (po_id) WHERE status = 'DRAFT';
 
--- Index for unique customer PO number within same PO/Customer
-CREATE UNIQUE INDEX idx_po_customer_po_no ON po_revisions (customer_po_no, po_id) WHERE customer_po_no IS NOT NULL;
+-- Index for unique customer PO number lookup within same PO/Customer
+CREATE INDEX idx_po_customer_po_no ON po_revisions (customer_po_no, po_id);
 
 -- 4. PO Revision Lines Table
 CREATE TABLE po_revision_lines (

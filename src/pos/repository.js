@@ -182,6 +182,143 @@ export function createPORepository(dbBinding) {
         header: createdHeader,
         revision: createdRevision
       };
+    },
+
+    async createNextRevision(poId, creatorId) {
+      // 1. Validation queries
+      const header = await db.prepare("SELECT current_draft_revision_id, current_active_revision_id FROM po_headers WHERE po_id = ?").bind(poId).first();
+      if (!header) {
+        throw new Error(`PO not found: ${poId}`);
+      }
+
+      if (header.current_draft_revision_id) {
+        const err = new Error('Draft revision already exists');
+        err.code = 'PO_DRAFT_ALREADY_EXISTS';
+        throw err;
+      }
+
+      if (!header.current_active_revision_id) {
+        throw new Error('No active revision to clone');
+      }
+
+      // Fetch the active revision
+      const activeRevision = await db.prepare("SELECT * FROM po_revisions WHERE revision_id = ?").bind(header.current_active_revision_id).first();
+      if (!activeRevision) {
+        throw new Error(`Active revision not found: ${header.current_active_revision_id}`);
+      }
+
+      const newRevId = `REV-${crypto.randomUUID()}`;
+      const newRevNo = activeRevision.revision_no + 1;
+
+      // 2. Prepare statements
+      // A. Insert Revision
+      const insertRevStmt = db.prepare(`
+        INSERT INTO po_revisions (
+          revision_id, po_id, revision_no, status, customer_po_no, po_date, buyer_reference,
+          ownership_type_snapshot, sales_owner_user_id_snapshot, customer_contact_id, customer_contact_snapshot_json,
+          currency, incoterm, destination, delivery_start, delivery_end, valid_until,
+          payment_term_snapshot, commercial_terms, operational_note, revision_note,
+          approved_by, approved_at, approval_note, approval_summary_json, created_by
+        ) VALUES (?, ?, ?, 'DRAFT', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, NULL, NULL, ?)
+      `).bind(
+        newRevId,
+        poId,
+        newRevNo,
+        activeRevision.customer_po_no,
+        activeRevision.po_date,
+        activeRevision.buyer_reference,
+        activeRevision.ownership_type_snapshot,
+        activeRevision.sales_owner_user_id_snapshot,
+        activeRevision.customer_contact_id,
+        activeRevision.customer_contact_snapshot_json,
+        activeRevision.currency,
+        activeRevision.incoterm,
+        activeRevision.destination,
+        activeRevision.delivery_start,
+        activeRevision.delivery_end,
+        activeRevision.valid_until,
+        activeRevision.payment_term_snapshot,
+        activeRevision.commercial_terms,
+        activeRevision.operational_note,
+        creatorId
+      );
+
+      // B. Fetch and clone Lines
+      const { results: lines } = await db.prepare("SELECT * FROM po_revision_lines WHERE po_revision_id = ?").bind(header.current_active_revision_id).all();
+      const insertLineStmts = (lines || []).map(line => {
+        const newLineId = `LINE-${crypto.randomUUID()}`;
+        return db.prepare(`
+          INSERT INTO po_revision_lines (
+            line_id, po_revision_id, line_no, previous_line_id, product_id, spec_source, spec_revision_id,
+            spec_override_json, contract_qty_mt, tolerance_pct, min_qty_mt, max_qty_mt, unit_price, price_unit,
+            source_price_note_id, suggested_price, price_override_reason, packaging, container_type, loading_pattern,
+            commission_recipient_user_id, commission_rate_usd_mt, commercial_line_term, operational_line_note
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `).bind(
+          newLineId,
+          newRevId,
+          line.line_no,
+          line.line_id,
+          line.product_id,
+          line.spec_source,
+          line.spec_revision_id,
+          line.spec_override_json,
+          line.contract_qty_mt,
+          line.tolerance_pct,
+          line.min_qty_mt,
+          line.max_qty_mt,
+          line.unit_price,
+          line.price_unit,
+          line.source_price_note_id,
+          line.suggested_price,
+          line.price_override_reason,
+          line.packaging,
+          line.container_type,
+          line.loading_pattern,
+          line.commission_recipient_user_id,
+          line.commission_rate_usd_mt,
+          line.commercial_line_term,
+          line.operational_line_note
+        );
+      });
+
+      // C. Fetch and clone Documents
+      const { results: docs } = await db.prepare("SELECT * FROM po_revision_documents WHERE po_revision_id = ?").bind(header.current_active_revision_id).all();
+      const insertDocStmts = (docs || []).map(doc => {
+        const newDocId = `DOC-${crypto.randomUUID()}`;
+        return db.prepare(`
+          INSERT INTO po_revision_documents (
+            document_id, po_revision_id, document_type, label, url, created_by, updated_by
+          ) VALUES (?, ?, ?, ?, ?, ?, ?)
+        `).bind(
+          newDocId,
+          newRevId,
+          doc.document_type,
+          doc.label,
+          doc.url,
+          creatorId,
+          creatorId
+        );
+      });
+
+      // D. Update Header
+      const updateHeaderStmt = db.prepare(`
+        UPDATE po_headers
+        SET current_draft_revision_id = ?
+        WHERE po_id = ?
+      `).bind(newRevId, poId);
+
+      // 3. Batch execute
+      await db.batch([
+        insertRevStmt,
+        ...insertLineStmts,
+        ...insertDocStmts,
+        updateHeaderStmt
+      ]);
+
+      // Return the newly created revision
+      const clonedRevision = await db.prepare("SELECT * FROM po_revisions WHERE revision_id = ?").bind(newRevId).first();
+      return clonedRevision;
     }
   };
 }
