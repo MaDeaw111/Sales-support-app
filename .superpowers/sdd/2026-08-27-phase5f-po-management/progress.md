@@ -39,7 +39,7 @@
 - [x] **Task 2 — PO Header & ID Sequence Generation**
 - [x] **Task 3 — PO Revision Snapshotting & Cloning**
 - [x] **Task 4 — Customer PO Number Uniqueness and History**
-- [ ] **Task 5 — Customer CRM Ownership & House Account Rules**
+- [x] **Task 5 — Customer CRM Ownership & House Account Rules**
 - [ ] **Task 6 — PO Line Commercial Model and Tolerance Calculations**
 - [ ] **Task 7 — Spec Resolution Logic**
 - [ ] **Task 8 — Manager Price Note Matching**
