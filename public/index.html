@@ -4037,47 +4037,6 @@
             updateNewPOReview();
         }
 
-                        <div class="grid grid-cols-2 gap-3">
-                            <div>
-                                <label class="font-semibold text-slate-700">ราคาขายต่อตัน (USD/MT) *</label>
-                                <input type="number" id="editPoPrice" required step="any" value="${po.sellingPrice || 0}" class="w-full border border-slate-300 rounded p-2 mt-1 outline-none font-bold text-emerald-600">
-                            </div>
-                            <div>
-                                <label class="font-semibold text-slate-700">Incoterm</label>
-                                <select id="editPoIncoterm" class="w-full border border-slate-300 rounded p-2 mt-1 outline-none">
-                                    <option value="FOB" ${po.incoterm === 'FOB' ? 'selected' : ''}>FOB (Free on Board)</option>
-                                    <option value="CIF" ${po.incoterm === 'CIF' ? 'selected' : ''}>CIF (Cost, Insurance & Freight)</option>
-                                    <option value="CFR" ${po.incoterm === 'CFR' ? 'selected' : ''}>CFR (Cost & Freight)</option>
-                                </select>
-                            </div>
-                        </div>
-
-                        <div class="grid grid-cols-2 gap-3">
-                            <div>
-                                <label class="font-semibold text-slate-700">ท่าเรือปลายทาง (Destination Port)</label>
-                                <input type="text" id="editPoPort" value="${po.destinationPort || ''}" placeholder="e.g. Rotterdam, Qingdao" class="w-full border border-slate-300 rounded p-2 mt-1 outline-none">
-                            </div>
-                            <div>
-                                <label class="font-semibold text-slate-700">สถานะสัญญา (PO Status)</label>
-                                <select id="editPoStatus" class="w-full border border-slate-300 rounded p-2 mt-1 outline-none">
-                                    <option value="IN_PROGRESS" ${po.poStatus === 'IN_PROGRESS' ? 'selected' : ''}>IN_PROGRESS (กำลังส่งมอบ)</option>
-                                    <option value="COMPLETED" ${po.poStatus === 'COMPLETED' ? 'selected' : ''}>COMPLETED (ส่งมอบครบถ้วน)</option>
-                                    <option value="CANCELLED" ${po.poStatus === 'CANCELLED' ? 'selected' : ''}>CANCELLED (ยกเลิก)</option>
-                                </select>
-                            </div>
-                        </div>
-
-                        <div class="pt-4 flex justify-end space-x-2 border-t border-slate-200">
-                            <button type="button" onclick="closeModal()" class="px-4 py-2 border rounded font-semibold text-slate-600 hover:bg-slate-50">ยกเลิก</button>
-                            <button type="submit" class="px-4 py-2 bg-blue-600 text-white rounded font-semibold hover:bg-blue-700 shadow-sm">บันทึกการแก้ไข PO</button>
-                        </div>
-                    </form>
-                </div>
-            `);
-            lucide.createIcons();
-            handlePackagingSelectChange(selectedPkgValue);
-        }
-
         function recalcTolerance() {
             const contractQty = parseFloat(document.getElementById('editPoQty')?.value) || 0;
             const tolerancePct = parseFloat(document.getElementById('editPoTolerancePct')?.value) || 0;
