@@ -3611,7 +3611,30 @@
                                                 <td class="p-3 text-center">
                                                     <span class="px-2 py-0.5 rounded text-[10px] font-bold ${(header.header_status || po.poStatus) === 'OPEN' ? 'bg-blue-100 text-blue-800' : 'bg-slate-200 text-slate-600'}">${header.header_status || po.poStatus || 'OPEN'}</span>
                                                 </td>
-                                                <td class="p-3 text-right space-x-2">
+                                                <td class="p-3 text-right">
+                                                    <button onclick="state.selectedPoId='${poId}'; renderView();" class="px-2.5 py-1.5 rounded bg-blue-100 text-blue-700 font-bold text-[10px] hover:bg-blue-200">Manage</button>
+                                                </td>
+                                            </tr>
+                                        `;
+                                    }).join('')}
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            `;
+        }
+
+        function getNextPOCode() {
+            const currentYear = new Date().getFullYear();
+            let maxNum = 0;
+            (state.pos || []).forEach(po => {
+                const header = po.header || po;
+                const poId = header.po_id || po.id;
+                const match = poId && poId.match(new RegExp(`PO-${currentYear}-(\\d+)`, 'i'));
+                if (match) {
+                    const num = parseInt(match[1], 10);
+                    if (num > maxNum) maxNum = num;
                 }
             });
             const nextNum = maxNum + 1;
@@ -5831,6 +5854,32 @@
             return 'C-C-' + String(nextNum).padStart(3, '0');
         }
 
+        window.toggleAddCustomerOwner = function(value) {
+            const container = document.getElementById('addCOwnerContainer');
+            const ownerSelect = document.getElementById('addCOwner');
+            if (value === 'ASSIGNED_SALES') {
+                container.classList.remove('hidden');
+                ownerSelect.required = true;
+            } else {
+                container.classList.add('hidden');
+                ownerSelect.required = false;
+                ownerSelect.value = '';
+            }
+        };
+
+        window.toggleEditCustomerOwner = function(value) {
+            const container = document.getElementById('editCOwnerContainer');
+            const ownerSelect = document.getElementById('editCOwner');
+            if (value === 'ASSIGNED_SALES') {
+                container.classList.remove('hidden');
+                ownerSelect.required = true;
+            } else {
+                container.classList.add('hidden');
+                ownerSelect.required = false;
+                ownerSelect.value = '';
+            }
+        };
+
         function openAddCustomerModal() {
             const autoCode = getNextCustomerCode();
             openModal(`
@@ -5868,8 +5917,15 @@
                         </div>
 
                         <div class="grid grid-cols-2 gap-3">
-                            <div class="col-span-2">
-                                <label class="font-semibold text-slate-700">ผู้ดูแลหลัก (Owner)</label>
+                            <div>
+                                <label class="font-semibold text-slate-700">ประเภทบัญชีลูกค้า (Account Type) *</label>
+                                <select id="addCOwnershipType" onchange="toggleAddCustomerOwner(this.value)" class="w-full border border-slate-300 rounded p-2 mt-1 outline-none focus:border-blue-500">
+                                    <option value="HOUSE_ACCOUNT">House Account</option>
+                                    <option value="ASSIGNED_SALES">Assigned Sales</option>
+                                </select>
+                            </div>
+                            <div id="addCOwnerContainer" class="hidden">
+                                <label class="font-semibold text-slate-700">ผู้ดูแลหลัก (Owner) *</label>
                                 <select id="addCOwner" class="w-full border border-slate-300 rounded p-2 mt-1 outline-none focus:border-blue-500">
                                     <option value="">-- ไม่ระบุ / Unassigned --</option>
                                     ${(state.customerOwners || []).map(u=>`<option value="${u.id}">${u.name} (${u.role})</option>`).join('')}
@@ -5911,12 +5967,16 @@
 
         async function handleAddCustomerSubmit(e) {
             e.preventDefault();
+            const ownershipType = document.getElementById('addCOwnershipType').value;
+            const ownerId = ownershipType === 'ASSIGNED_SALES' ? (document.getElementById('addCOwner').value || null) : null;
+            
             const payload = {
                 code: document.getElementById('addCCode').value,
                 name: document.getElementById('addCName').value,
                 country: document.getElementById('addCCountry').value,
                 source: document.getElementById('addCSource').value,
-                ownerId: document.getElementById('addCOwner').value || null,
+                ownershipType,
+                ownerId,
                 status: 'ACTIVE_CUSTOMER',
                 notes: '',
                 contacts: []
@@ -5970,7 +6030,7 @@
                         <div id="editCustomerError" class="hidden rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-bold text-rose-700 mb-3"></div>
                         <div class="p-3 bg-slate-50 rounded-lg border border-slate-200 space-y-3">
                             <div class="font-bold text-slate-800">ข้อมูลพื้นฐาน</div>
-                            <div class="grid grid-cols-2 gap-3">
+                            <div class="grid grid-cols-3 gap-3">
                                 <div>
                                     <label class="font-semibold text-slate-700">ชื่อบริษัทลูกค้า *</label>
                                     <input type="text" id="editCName" required value="${c.name}" class="w-full border border-slate-300 rounded p-2 mt-1 outline-none bg-white">
@@ -5979,16 +6039,30 @@
                                     <label class="font-semibold text-slate-700">รหัสลูกค้า <span class="text-red-500">(ห้ามแก้ไข)</span></label>
                                     <input type="text" id="editCCode" value="${c.code}" readonly class="w-full border border-slate-200 bg-slate-100 font-mono font-bold text-slate-500 rounded p-2 mt-1 outline-none cursor-not-allowed">
                                 </div>
-                            </div>
-                            <div class="grid grid-cols-3 gap-3">
                                 <div>
                                     <label class="font-semibold text-slate-700">ประเทศ</label>
                                     <input type="text" id="editCCountry" value="${c.country || ''}" class="w-full border border-slate-300 rounded p-2 mt-1 outline-none bg-white">
                                 </div>
+                            </div>
+                            <div class="grid grid-cols-3 gap-3">
                                 <div>
-                                    <label class="font-semibold text-slate-700">ผู้ดูแลหลัก</label>
+                                    <label class="font-semibold text-slate-700">สถานะ</label>
+                                    <select id="editCStatus" class="w-full border border-slate-300 rounded p-2 mt-1 outline-none bg-white">
+                                        <option value="ACTIVE" ${c.status === 'ACTIVE_CUSTOMER' || c.status === 'ACTIVE' ? 'selected' : ''}>ACTIVE</option>
+                                        <option value="INACTIVE" ${c.status === 'INACTIVE_CUSTOMER' || c.status === 'INACTIVE' ? 'selected' : ''}>INACTIVE</option>
+                                    </select>
+                                </div>
+                                <div>
+                                    <label class="font-semibold text-slate-700">ประเภทบัญชีลูกค้า *</label>
+                                    <select id="editCOwnershipType" onchange="toggleEditCustomerOwner(this.value)" class="w-full border border-slate-300 rounded p-2 mt-1 outline-none bg-white">
+                                        <option value="HOUSE_ACCOUNT" ${c.ownershipType === 'HOUSE_ACCOUNT' ? 'selected' : ''}>House Account</option>
+                                        <option value="ASSIGNED_SALES" ${c.ownershipType === 'ASSIGNED_SALES' ? 'selected' : ''}>Assigned Sales</option>
+                                    </select>
+                                </div>
+                                <div id="editCOwnerContainer" class="${c.ownershipType === 'ASSIGNED_SALES' ? '' : 'hidden'}">
+                                    <label class="font-semibold text-slate-700">ผู้ดูแลหลัก (Owner) *</label>
                                     <select id="editCOwner" class="w-full border border-slate-300 rounded p-2 mt-1 outline-none bg-white">
-                                        <option value="">-- ไม่ระบุ --</option>
+                                        <option value="">-- ไม่ระบุ / Unassigned --</option>
                                         ${(() => {
                                             const owners = state.customerOwners || [];
                                             const options = owners.map(u => `<option value="${u.id}" ${u.id === c.ownerId ? 'selected' : ''}>${u.name} (${u.role})</option>`);
@@ -5997,13 +6071,6 @@
                                             }
                                             return options.join('');
                                         })()}
-                                    </select>
-                                </div>
-                                <div>
-                                    <label class="font-semibold text-slate-700">สถานะ</label>
-                                    <select id="editCStatus" class="w-full border border-slate-300 rounded p-2 mt-1 outline-none bg-white">
-                                        <option value="ACTIVE" ${c.status === 'ACTIVE_CUSTOMER' || c.status === 'ACTIVE' ? 'selected' : ''}>ACTIVE</option>
-                                        <option value="INACTIVE" ${c.status === 'INACTIVE_CUSTOMER' || c.status === 'INACTIVE' ? 'selected' : ''}>INACTIVE</option>
                                     </select>
                                 </div>
                             </div>
@@ -6123,7 +6190,17 @@
                 errDiv.textContent = '';
             }
 
-            const ownerId = document.getElementById('editCOwner').value || null;
+            const ownershipType = document.getElementById('editCOwnershipType').value;
+            const ownerId = ownershipType === 'ASSIGNED_SALES' ? (document.getElementById('editCOwner').value || null) : null;
+
+            if (ownershipType === 'ASSIGNED_SALES' && !ownerId) {
+                if (errDiv) {
+                    errDiv.classList.remove('hidden');
+                    errDiv.textContent = 'Sales Owner is required for Assigned Sales accounts.';
+                }
+                return;
+            }
+
             if (ownerId) {
                 const owners = state.customerOwners || [];
                 const ownerExists = owners.some(u => u.id === ownerId);
@@ -6161,6 +6238,7 @@
                 name: document.getElementById('editCName').value,
                 country: document.getElementById('editCCountry').value,
                 source: c.source || 'DIRECT',
+                ownershipType,
                 ownerId,
                 status: apiStatus,
                 notes: document.getElementById('editCNotes').value,

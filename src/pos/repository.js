@@ -944,35 +944,16 @@ export function createPORepository(dbBinding) {
           throw err;
         }
 
-        if (line.spec_source === 'STANDARD') {
-          const stdSpec = await db.prepare("SELECT application, revision_no FROM standard_specs WHERE standard_spec_id = ?").bind(line.spec_revision_id).first();
-          if (stdSpec) {
-            const activeSpec = await db.prepare("SELECT standard_spec_id FROM standard_specs WHERE product_id = ? AND application = ? AND status = 'ACTIVE' LIMIT 1").bind(line.product_id, stdSpec.application).first();
-            if (activeSpec && activeSpec.standard_spec_id !== line.spec_revision_id) {
-              hasOutdated = true;
-              outdatedSpecs.push({
-                line_id: line.line_id,
-                spec_source: line.spec_source,
-                spec_revision_id: line.spec_revision_id
-              });
-            }
-          }
-        } else if (line.spec_source === 'CUSTOMER') {
-          const custSpec = await db.prepare("SELECT customer_id, application FROM customer_specs WHERE customer_spec_id = ?").bind(line.spec_revision_id).first();
-          if (custSpec) {
-            const activeCustSpec = await db.prepare("SELECT customer_spec_id FROM customer_specs WHERE customer_id = ? AND product_id = ? AND application = ? AND status = 'ACTIVE' LIMIT 1").bind(custSpec.customer_id, line.product_id, custSpec.application).first();
-            if (activeCustSpec && activeCustSpec.customer_spec_id !== line.spec_revision_id) {
-              hasOutdated = true;
-              outdatedSpecs.push({
-                line_id: line.line_id,
-                spec_source: line.spec_source,
-                spec_revision_id: line.spec_revision_id
-              });
-            }
-          }
+        if (spec.status === 'ARCHIVED') {
+          hasOutdated = true;
+          outdatedSpecs.push({
+            line_id: line.line_id,
+            spec_source: line.spec_source,
+            spec_revision_id: line.spec_revision_id
+          });
         }
       }
-
+      
       return {
         hasOutdated,
         outdatedSpecs
@@ -1173,6 +1154,33 @@ export function createPORepository(dbBinding) {
       // 5. Trigger spec validation
       const specCheck = await this.validateRevisionSpecsForActivation(revisionId);
       if (specCheck.hasOutdated) {
+        for (const out of specCheck.outdatedSpecs) {
+          const line = lines.find(l => l.line_id === out.line_id);
+          let latestActiveSpecId = null;
+          if (out.spec_source === 'STANDARD') {
+            const stdSpec = await db.prepare("SELECT application FROM standard_specs WHERE standard_spec_id = ?").bind(out.spec_revision_id).first();
+            if (stdSpec) {
+              const activeSpec = await db.prepare("SELECT standard_spec_id FROM standard_specs WHERE product_id = ? AND application = ? AND status = 'ACTIVE' LIMIT 1").bind(line.product_id, stdSpec.application).first();
+              if (activeSpec) {
+                latestActiveSpecId = activeSpec.standard_spec_id;
+              }
+            }
+          } else if (out.spec_source === 'CUSTOMER') {
+            const custSpec = await db.prepare("SELECT customer_id, application FROM customer_specs WHERE customer_spec_id = ?").bind(out.spec_revision_id).first();
+            if (custSpec) {
+              const activeCustSpec = await db.prepare("SELECT customer_spec_id FROM customer_specs WHERE customer_id = ? AND product_id = ? AND application = ? AND status = 'ACTIVE' LIMIT 1").bind(custSpec.customer_id, line.product_id, custSpec.application).first();
+              if (activeCustSpec) {
+                latestActiveSpecId = activeCustSpec.customer_spec_id;
+              }
+            }
+          }
+          if (!latestActiveSpecId) {
+            const err = new Error('Outdated spec reference has no valid active spec, activation is blocked');
+            err.code = 'PO_SPEC_REQUIRED';
+            throw err;
+          }
+        }
+
         const unconfirmed = specCheck.outdatedSpecs.filter(
           out => !confirmedOutdatedLineIds.includes(out.line_id)
         );

@@ -179,3 +179,148 @@ test('PO Product Spec Resolution Logic', async () => {
   assert.equal(check3.hasOutdated, false);
   assert.equal(check3.outdatedSpecs.length, 0);
 });
+
+test('PO Spec Resolution - Outdated Spec Keep Old & Update Latest Flow', async () => {
+  const db = await setupTestDb();
+  
+  // Seed basic data
+  db.prepare("INSERT INTO users (user_id, email, role, status, full_name, password_hash, password_salt) VALUES ('U1', 'sales@example.com', 'EXTERNAL_SALES', 'ACTIVE', 'Sales Person', 'hash', 'salt')").run();
+  db.prepare("INSERT INTO customers (customer_id, customer_code, customer_name, owner_user_id) VALUES ('C1', 'CUST1', 'Assigned Customer', 'U1')").run();
+  db.prepare("INSERT INTO product_categories (category_id, category_code, category_name) VALUES ('CAT1', 'TAPIOCA', 'Tapioca Product')").run();
+  db.prepare("INSERT INTO product_forms (form_id, form_code, form_name) VALUES ('FRM1', 'PELLET', 'Pellet')").run();
+  db.prepare("INSERT INTO products (product_id, product_code, product_name, short_name, category_id, form_id) VALUES ('P1', 'THP-65', 'Tapioca Pellet 65%', 'THP65', 'CAT1', 'FRM1')").run();
+  db.prepare("INSERT INTO product_applications (product_id, application) VALUES ('P1', 'FEED_GRADE')").run();
+
+  // STD_OLD: archived standard spec
+  db.prepare("INSERT INTO standard_specs (standard_spec_id, product_id, application, revision_no, status, effective_date) VALUES ('STD_OLD', 'P1', 'FEED_GRADE', 1, 'ARCHIVED', '2026-01-01')").run();
+  // STD_NEW: active standard spec
+  db.prepare("INSERT INTO standard_specs (standard_spec_id, product_id, application, revision_no, status, effective_date) VALUES ('STD_NEW', 'P1', 'FEED_GRADE', 2, 'ACTIVE', '2026-08-01')").run();
+
+  // Create document in database so we satisfy evidence rule
+  const repo = createPORepository(db);
+  const po = await repo.createDraftPO({
+    customerId: 'C1',
+    poDate: '2026-08-27',
+    currency: 'USD',
+    incoterm: 'FOB',
+    deliveryStart: '2026-09-01',
+    deliveryEnd: '2026-09-30',
+    validUntil: '2028-12-31'
+  }, 'U1');
+
+  const poId = po.header.po_id;
+  const revisionId = po.revision.revision_id;
+
+  // Add document
+  await repo.createPORevisionDocument(revisionId, {
+    documentType: 'CUSTOMER_PO',
+    label: 'PO Doc',
+    url: 'https://example.com/po.pdf'
+  }, 'U1');
+
+  // Add line referencing STD_OLD (archived/outdated)
+  const line = await repo.createPORevisionLine(revisionId, {
+    lineNo: 10,
+    productId: 'P1',
+    specSource: 'STANDARD',
+    specRevisionId: 'STD_OLD',
+    contractQtyMt: 100,
+    tolerancePct: 10,
+    unitPrice: 350,
+    packaging: 'Jumbo Bag',
+    containerType: '20GP',
+    loadingPattern: 'Palletized'
+  }, 'U1');
+
+  // 1. Outdated review returns selected + latest IDs
+  const review = await repo.getPORevisionReview(revisionId);
+  assert.equal(review.hasOutdatedSpecs, true);
+  assert.equal(review.outdatedSpecs.length, 1);
+  const out = review.outdatedSpecs[0];
+  assert.equal(out.lineId, line.line_id);
+  assert.equal(out.specSource, 'STANDARD');
+  assert.equal(out.selectedSpecRevisionId, 'STD_OLD');
+  assert.equal(out.latestActiveSpecRevisionId, 'STD_NEW');
+
+  // 2. Outdated spec without confirmation blocks activation (throws PO_SPEC_OUTDATED)
+  await assert.rejects(async () => {
+    await repo.activateRevision(revisionId, 'U1', 'activation note', []);
+  }, (err) => {
+    return err.code === 'PO_SPEC_OUTDATED' && err.details.length === 1;
+  });
+
+  // 3. Keep Old explicit confirmation allows activation + logs audit event SPEC_OLD_REVISION_CONFIRMED
+  await repo.activateRevision(revisionId, 'U1', 'activation note', [line.line_id]);
+
+  const auditEvents = db.prepare("SELECT event_type, metadata_json FROM po_audit_events WHERE event_type = 'SPEC_OLD_REVISION_CONFIRMED'").all();
+  assert.equal(auditEvents.length, 1);
+  const metadata = JSON.parse(auditEvents[0].metadata_json);
+  assert.equal(metadata.line_id, line.line_id);
+  assert.equal(metadata.spec_revision_id, 'STD_OLD');
+
+  // Let's create another draft to test Choice B (Update Latest)
+  const po2 = await repo.createDraftPO({
+    customerId: 'C1',
+    poDate: '2026-08-27',
+    currency: 'USD',
+    incoterm: 'FOB',
+    deliveryStart: '2026-09-01',
+    deliveryEnd: '2026-09-30',
+    validUntil: '2028-12-31'
+  }, 'U1');
+  const revId2 = po2.revision.revision_id;
+
+  const line2 = await repo.createPORevisionLine(revId2, {
+    lineNo: 10,
+    productId: 'P1',
+    specSource: 'STANDARD',
+    specRevisionId: 'STD_OLD',
+    contractQtyMt: 100,
+    tolerancePct: 10,
+    unitPrice: 350,
+    packaging: 'Jumbo Bag',
+    containerType: '20GP',
+    loadingPattern: 'Palletized'
+  }, 'U1');
+
+  // 4. Update Latest changes Draft line
+  const review2 = await repo.getPORevisionReview(revId2);
+  const latestSpecId = review2.outdatedSpecs[0].latestActiveSpecRevisionId;
+  assert.equal(latestSpecId, 'STD_NEW');
+
+  await repo.updatePORevisionLine(line2.line_id, {
+    specRevisionId: latestSpecId
+  });
+
+  // 5. After update, review no longer reports that line as outdated
+  const reviewPostUpdate = await repo.getPORevisionReview(revId2);
+  assert.equal(reviewPostUpdate.hasOutdatedSpecs, false);
+  assert.equal(reviewPostUpdate.outdatedSpecs.length, 0);
+
+  // 6. Draft Spec always blocked (cannot activate, throws PO_SPEC_REQUIRED or similar)
+  // Let's change standard specs so STD_NEW status is DRAFT
+  db.prepare("UPDATE standard_specs SET status = 'DRAFT' WHERE standard_spec_id = 'STD_NEW'").run();
+  
+  await assert.rejects(async () => {
+    await repo.validateRevisionSpecsForActivation(revId2);
+  }, (err) => err.code === 'PO_SPEC_REQUIRED');
+
+  // Restore STD_NEW to ACTIVE
+  db.prepare("UPDATE standard_specs SET status = 'ACTIVE' WHERE standard_spec_id = 'STD_NEW'").run();
+
+  // 7. No valid Active Spec blocks activation (even if Keep Old confirmation is passed)
+  // Let's archive STD_NEW so no active specs exist
+  db.prepare("UPDATE standard_specs SET status = 'ARCHIVED' WHERE standard_spec_id = 'STD_NEW'").run();
+  
+  // Set line2 to STD_OLD (archived)
+  await repo.updatePORevisionLine(line2.line_id, {
+    specRevisionId: 'STD_OLD'
+  });
+
+  // Since latest Active does not exist, activating even with confirmation must throw PO_SPEC_REQUIRED
+  await assert.rejects(async () => {
+    await repo.activateRevision(revId2, 'U1', 'activation note', [line2.line_id]);
+  }, (err) => {
+    return err.code === 'PO_SPEC_REQUIRED';
+  });
+});

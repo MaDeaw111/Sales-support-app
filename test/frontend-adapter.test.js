@@ -654,6 +654,7 @@ test('saveEditCustomer - rejects saving legacy ownerId and displays inline error
     editCName: { value: 'Company' },
     editCCountry: { value: 'Thailand' },
     editCOwner: { value: 'USR-LEGACY' },
+    editCOwnershipType: { value: 'ASSIGNED_SALES' },
     editCStatus: { value: 'ACTIVE' },
     editCNotes: { value: '' },
     editCustomerError: errDiv
@@ -683,6 +684,7 @@ test('saveEditCustomer - rejects saving legacy ownerId and displays inline error
     assert.equal(saveCustomerToApiCalled, true, 'Should call API when valid owner is selected');
     
     saveCustomerToApiCalled = false;
+    mockElements.editCOwnershipType.value = 'HOUSE_ACCOUNT';
     mockElements.editCOwner.value = '';
     await fn(e, 'CUST-1');
     assert.equal(saveCustomerToApiCalled, true, 'Should call API when unassigned');

@@ -50,6 +50,7 @@ function rowToCustomer(row, contacts = []) {
     country: row.country || '',
     source: row.source || 'DIRECT',
     ownerId: row.owner_user_id || '',
+    ownershipType: row.ownership_type || 'HOUSE_ACCOUNT',
     status: row.status,
     notes: row.notes || '',
     contactPerson: primary?.contact_name || '',
@@ -114,7 +115,7 @@ export function createCustomerRepository(dbBinding) {
 
     async findCustomerById(customerId) {
       const customerRow = await db.prepare(`
-        SELECT customer_id, customer_code, customer_name, country, source, owner_user_id, status, notes, created_at, updated_at
+        SELECT customer_id, customer_code, customer_name, country, source, owner_user_id, status, notes, ownership_type, created_at, updated_at
         FROM customers
         WHERE customer_id = ?
         LIMIT 1
@@ -135,7 +136,7 @@ export function createCustomerRepository(dbBinding) {
     async listCustomers(filters = {}) {
       const sql = `
         SELECT customer_id, customer_code, customer_name, country, source,
-               owner_user_id, status, notes, created_at, updated_at
+               owner_user_id, status, notes, ownership_type, created_at, updated_at
         FROM customers
         WHERE (? IS NULL OR owner_user_id = ?)
         ORDER BY customer_name COLLATE NOCASE;
@@ -193,7 +194,23 @@ export function createCustomerRepository(dbBinding) {
       const name = dto.name;
       const country = dto.country || '';
       const source = dto.source || 'DIRECT';
-      const ownerId = dto.ownerId || null;
+      let ownershipType = dto.ownershipType;
+      if (ownershipType === undefined) {
+        ownershipType = dto.ownerId ? 'ASSIGNED_SALES' : 'HOUSE_ACCOUNT';
+      }
+      let ownerId = dto.ownerId || null;
+      
+      if (ownershipType === 'ASSIGNED_SALES') {
+        if (!ownerId || !String(ownerId).trim()) {
+          throw new Error('Sales Owner is required for ASSIGNED_SALES account.');
+        }
+      } else {
+        if (dto.ownershipType === 'HOUSE_ACCOUNT' && dto.ownerId) {
+          throw new Error('Sales Owner must be empty for HOUSE_ACCOUNT account.');
+        }
+        ownerId = null;
+      }
+      
       const status = dto.status || 'ACTIVE_CUSTOMER';
       const notes = dto.notes || '';
       
@@ -202,9 +219,9 @@ export function createCustomerRepository(dbBinding) {
       batchStatements.push(
         db.prepare(`
           INSERT INTO customers (
-            customer_id, customer_code, customer_name, country, source, owner_user_id, status, notes
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-        `).bind(customerId, code, name, country, source, ownerId, status, notes)
+            customer_id, customer_code, customer_name, country, source, owner_user_id, status, notes, ownership_type
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `).bind(customerId, code, name, country, source, ownerId, status, notes, ownershipType)
       );
       
       const contacts = normalizeContacts(dto.contacts || []);
@@ -231,6 +248,30 @@ export function createCustomerRepository(dbBinding) {
     },
     
     async updateCustomer(customerId, dto) {
+      const current = await this.findCustomerById(customerId);
+      if (!current) throw new Error('Customer not found.');
+
+      let ownershipType = dto.ownershipType;
+      if (ownershipType === undefined) {
+        if (dto.ownerId !== undefined) {
+          ownershipType = dto.ownerId ? 'ASSIGNED_SALES' : 'HOUSE_ACCOUNT';
+        } else {
+          ownershipType = current.ownershipType || 'HOUSE_ACCOUNT';
+        }
+      }
+      if (!['ASSIGNED_SALES', 'HOUSE_ACCOUNT'].includes(ownershipType)) {
+        throw new Error('Invalid ownershipType.');
+      }
+
+      let ownerId = dto.ownerId !== undefined ? dto.ownerId : current.ownerId;
+      if (ownershipType === 'ASSIGNED_SALES') {
+        if (!ownerId || !String(ownerId).trim()) {
+          throw new Error('Sales Owner is required for ASSIGNED_SALES account.');
+        }
+      } else {
+        ownerId = null;
+      }
+
       const batchStatements = [];
       const fields = [];
       const params = [];
@@ -251,10 +292,15 @@ export function createCustomerRepository(dbBinding) {
         fields.push('source = ?');
         params.push(dto.source);
       }
-      if (dto.ownerId !== undefined) {
+      
+      // Always update both ownership_type and owner_user_id together if either changes
+      if (dto.ownershipType !== undefined || dto.ownerId !== undefined) {
+        fields.push('ownership_type = ?');
+        params.push(ownershipType);
         fields.push('owner_user_id = ?');
-        params.push(dto.ownerId);
+        params.push(ownerId);
       }
+      
       if (dto.status !== undefined) {
         fields.push('status = ?');
         params.push(dto.status);

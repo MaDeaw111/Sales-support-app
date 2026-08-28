@@ -83,7 +83,26 @@ export function createCustomerHandler({ repo, resolveUser }) {
         }
       }
       
-      const ownerId = body.ownerId || null;
+      let ownershipType = body.ownershipType;
+      if (ownershipType === undefined) {
+        ownershipType = body.ownerId ? 'ASSIGNED_SALES' : 'HOUSE_ACCOUNT';
+      }
+      if (!['ASSIGNED_SALES', 'HOUSE_ACCOUNT'].includes(ownershipType)) {
+        return json({ status: 'ERROR', message: 'Invalid ownershipType.' }, 400);
+      }
+      
+      let ownerId = body.ownerId || null;
+      if (ownershipType === 'ASSIGNED_SALES' && !ownerId) {
+        return json({ status: 'ERROR', message: 'Sales Owner is required for ASSIGNED_SALES account.' }, 400);
+      }
+      if (body.ownershipType === 'HOUSE_ACCOUNT' && body.ownerId) {
+        return json({ status: 'ERROR', message: 'Sales Owner must be empty for HOUSE_ACCOUNT account.' }, 400);
+      }
+      if (ownershipType === 'HOUSE_ACCOUNT') {
+        ownerId = null;
+        body.ownerId = null;
+      }
+      
       if (ownerId) {
         const exists = await repo.userExists(ownerId);
         if (!exists) {
@@ -108,6 +127,7 @@ export function createCustomerHandler({ repo, resolveUser }) {
           country: body.country,
           source: body.source,
           ownerId,
+          ownershipType,
           status,
           notes: body.notes,
           contacts: body.contacts
@@ -173,6 +193,30 @@ export function createCustomerHandler({ repo, resolveUser }) {
           if (!Array.isArray(body.contacts)) {
             return json({ status: 'ERROR', message: 'Contacts must be an array.' }, 400);
           }
+        }
+        
+        const existingOwnershipType = customer.ownershipType || 'HOUSE_ACCOUNT';
+        const existingOwnerId = customer.ownerId || null;
+        let ownershipType = body.ownershipType;
+        if (ownershipType === undefined) {
+          if (body.ownerId !== undefined) {
+            ownershipType = body.ownerId ? 'ASSIGNED_SALES' : 'HOUSE_ACCOUNT';
+          } else {
+            ownershipType = existingOwnershipType;
+          }
+        }
+        if (!['ASSIGNED_SALES', 'HOUSE_ACCOUNT'].includes(ownershipType)) {
+          return json({ status: 'ERROR', message: 'Invalid ownershipType.' }, 400);
+        }
+        
+        let ownerId = body.ownerId !== undefined ? body.ownerId : existingOwnerId;
+        if (ownershipType === 'HOUSE_ACCOUNT') {
+          ownerId = null;
+          body.ownerId = null;
+        }
+        
+        if (ownershipType === 'ASSIGNED_SALES' && !ownerId) {
+          return json({ status: 'ERROR', message: 'Sales Owner is required for ASSIGNED_SALES account.' }, 400);
         }
         
         if (body.ownerId !== undefined && body.ownerId !== null) {

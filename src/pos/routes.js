@@ -340,6 +340,9 @@ export function createPOHandler({ repo, resolveUser, db }) {
     // GET /api/pos/:poId/revisions/:revisionId/review
     const reviewMatch = path.match(/^\/api\/pos\/([^/]+)\/revisions\/([^/]+)\/review$/);
     if (reviewMatch && method === 'GET') {
+      if (caller.role !== 'ADMIN' && caller.role !== 'MANAGER') {
+        return json({ status: 'ERROR', message: 'Permission denied.' }, 403);
+      }
       const poId = reviewMatch[1];
       const revisionId = reviewMatch[2];
       const detail = await repo.getPO(poId);
@@ -347,12 +350,6 @@ export function createPOHandler({ repo, resolveUser, db }) {
       const clean = filterPOForRole(detail, caller);
       if (!clean) return json({ status: 'ERROR', message: 'Permission denied.' }, 403);
 
-      if (caller.role === 'EXTERNAL_SALES') {
-        const rev = detail.revisions.find(r => r.revision_id === revisionId);
-        if (!rev || rev.status !== 'ACTIVE') {
-          return json({ status: 'ERROR', message: 'Permission denied.' }, 403);
-        }
-      }
       try {
         const reviewData = await repo.getPORevisionReview(revisionId);
         const dummyPoDetail = {

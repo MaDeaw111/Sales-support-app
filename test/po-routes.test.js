@@ -196,3 +196,96 @@ test('PO Management API Endpoints & RBAC Integration', async () => {
   const cloneData = await resClone.json();
   assert.equal(cloneData.code, 'PO_ALREADY_CANCELLED');
 });
+
+test('Review Endpoint Security Constraints', async () => {
+  const db = await setupTestDb();
+  
+  // Seed basic data
+  db.prepare("INSERT INTO users (user_id, email, role, status, full_name, password_hash, password_salt) VALUES ('U_SALES', 'sales@example.com', 'EXTERNAL_SALES', 'ACTIVE', 'Sales Guy', 'hash', 'salt')").run();
+  db.prepare("INSERT INTO users (user_id, email, role, status, full_name, password_hash, password_salt) VALUES ('U_SUPPORT', 'support@example.com', 'SALES_SUPPORT', 'ACTIVE', 'Support Person', 'hash', 'salt')").run();
+  db.prepare("INSERT INTO users (user_id, email, role, status, full_name, password_hash, password_salt) VALUES ('U_MANAGER', 'manager@example.com', 'MANAGER', 'ACTIVE', 'Manager', 'hash', 'salt')").run();
+  db.prepare("INSERT INTO users (user_id, email, role, status, full_name, password_hash, password_salt) VALUES ('U_EXPORT', 'export@example.com', 'EXPORT', 'ACTIVE', 'Exporter', 'hash', 'salt')").run();
+  db.prepare("INSERT INTO users (user_id, email, role, status, full_name, password_hash, password_salt) VALUES ('U_WAREHOUSE', 'warehouse@example.com', 'PRODUCTION_WAREHOUSE', 'ACTIVE', 'Warehouse Guy', 'hash', 'salt')").run();
+  
+  db.prepare("INSERT INTO customers (customer_id, customer_code, customer_name, owner_user_id) VALUES ('C1', 'CUST1', 'Customer 1', 'U_SALES')").run();
+  db.prepare("INSERT INTO product_categories (category_id, category_code, category_name) VALUES ('CAT1', 'TAPIOCA', 'Tapioca Product')").run();
+  db.prepare("INSERT INTO product_forms (form_id, form_code, form_name) VALUES ('FRM1', 'PELLET', 'Pellet')").run();
+  db.prepare("INSERT INTO products (product_id, product_code, product_name, short_name, category_id, form_id) VALUES ('P1', 'THP-65', 'Tapioca Pellet 65%', 'THP65', 'CAT1', 'FRM1')").run();
+  db.prepare("INSERT INTO product_applications (product_id, application) VALUES ('P1', 'FEED_GRADE')").run();
+  db.prepare("INSERT INTO standard_specs (standard_spec_id, product_id, application, revision_no, status, effective_date) VALUES ('STD1', 'P1', 'FEED_GRADE', 0, 'ACTIVE', '2026-08-27')").run();
+
+  const repo = createPORepository(db);
+  
+  // Create PO
+  const po = await repo.createDraftPO({
+    customerId: 'C1',
+    poDate: '2026-08-27',
+    currency: 'USD',
+    incoterm: 'FOB',
+    deliveryStart: '2026-09-01',
+    deliveryEnd: '2026-09-30',
+    validUntil: '2028-12-31'
+  }, 'U_SUPPORT');
+  
+  const poId = po.header.po_id;
+  const revisionId = po.revision.revision_id;
+  
+  // Add a line
+  await repo.createPORevisionLine(revisionId, {
+    lineNo: 10,
+    productId: 'P1',
+    specSource: 'STANDARD',
+    specRevisionId: 'STD1',
+    contractQtyMt: 100,
+    tolerancePct: 5,
+    unitPrice: 150,
+    priceUnit: '/MT',
+    packaging: 'Jumbo Bag',
+    containerType: '20FCL',
+    loadingPattern: 'PALLETIZED',
+    commercialLineTerm: 'Net 30',
+    commissionRecipientUserId: 'U_SALES',
+    commissionRateUsdMt: 2
+  }, 'U_SUPPORT');
+
+  let currentUser = null;
+  const resolveUser = async () => currentUser;
+  const handler = createPOHandler({ repo, resolveUser, db });
+
+  // 1. MANAGER can access and gets full data
+  currentUser = { user_id: 'U_MANAGER', role: 'MANAGER' };
+  const reqMgr = mockRequest('GET', `/api/pos/${poId}/revisions/${revisionId}/review`);
+  const resMgr = await handler(reqMgr);
+  assert.equal(resMgr.status, 200);
+  const mgrData = await resMgr.json();
+  assert.equal(mgrData.status, 'SUCCESS');
+  assert.ok(mgrData.data.reviewSummary);
+  assert.ok(mgrData.data.materialDiff);
+
+  // 2. Deny: SALES_SUPPORT (403)
+  currentUser = { user_id: 'U_SUPPORT', role: 'SALES_SUPPORT' };
+  const reqSupport = mockRequest('GET', `/api/pos/${poId}/revisions/${revisionId}/review`);
+  const resSupport = await handler(reqSupport);
+  assert.equal(resSupport.status, 403);
+  const supportData = await resSupport.json();
+  assert.equal(supportData.status, 'ERROR');
+  assert.equal(supportData.data, undefined);
+
+  // 3. Deny: EXTERNAL_SALES (403)
+  currentUser = { user_id: 'U_SALES', role: 'EXTERNAL_SALES' };
+  const reqSales = mockRequest('GET', `/api/pos/${poId}/revisions/${revisionId}/review`);
+  const resSales = await handler(reqSales);
+  assert.equal(resSales.status, 403);
+
+  // 4. Deny: EXPORT (403)
+  currentUser = { user_id: 'U_EXPORT', role: 'EXPORT' };
+  const reqExport = mockRequest('GET', `/api/pos/${poId}/revisions/${revisionId}/review`);
+  const resExport = await handler(reqExport);
+  assert.equal(resExport.status, 403);
+
+  // 5. Deny: PRODUCTION_WAREHOUSE (403)
+  currentUser = { user_id: 'U_WAREHOUSE', role: 'PRODUCTION_WAREHOUSE' };
+  const reqWh = mockRequest('GET', `/api/pos/${poId}/revisions/${revisionId}/review`);
+  const resWh = await handler(reqWh);
+  assert.equal(resWh.status, 403);
+});
