@@ -589,7 +589,7 @@ function handleRepoError(err) {
 export function createPOHandlerFromEnv(env) {
   return createPOHandler({
     repo: createPORepository(env.DB),
-    resolveUser: resolveAuthenticatedUser,
+    resolveUser: (req) => resolveAuthenticatedUser(req, env),
     db: env.DB
   });
 }
