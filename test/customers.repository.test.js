@@ -14,6 +14,10 @@ async function setupTestDb() {
   // Then load 0002_customers.sql
   const customersSql = await readFile(new URL('../migrations/0002_customers.sql', import.meta.url), 'utf8');
   db.exec(customersSql);
+
+  // Load 0006_customer_ownership_type.sql
+  const ownershipSql = await readFile(new URL('../migrations/0006_customer_ownership_type.sql', import.meta.url), 'utf8');
+  db.exec(ownershipSql);
   
   // Insert referenced users (PRAGMA foreign_keys = ON is enabled)
   db.prepare(`
@@ -182,4 +186,67 @@ test('repository normalizes contacts correctly', async () => {
   assert.equal(created2.contacts[0].isPrimary, true);
   assert.equal(created2.contacts[1].name, 'Second Contact');
   assert.equal(created2.contacts[1].isPrimary, false);
+});
+
+test('Customer CRM repository - customer ownership type rules', async () => {
+  const db = await setupTestDb();
+  const repo = createCustomerRepository(db);
+
+  // 1. Create HOUSE_ACCOUNT without owner
+  const cust1 = await repo.createCustomer({
+    name: 'House Cust',
+    code: 'C-H-001',
+    ownershipType: 'HOUSE_ACCOUNT',
+    ownerId: null,
+    contacts: []
+  });
+  assert.equal(cust1.ownershipType, 'HOUSE_ACCOUNT');
+  assert.equal(cust1.ownerId, ''); // rowToCustomer maps null/undefined to empty string
+
+  // 2. Create ASSIGNED_SALES with owner
+  const cust2 = await repo.createCustomer({
+    name: 'Assigned Cust',
+    code: 'C-A-001',
+    ownershipType: 'ASSIGNED_SALES',
+    ownerId: 'USR-0001',
+    contacts: []
+  });
+  assert.equal(cust2.ownershipType, 'ASSIGNED_SALES');
+  assert.equal(cust2.ownerId, 'USR-0001');
+
+  // 3. Reject ASSIGNED_SALES without owner
+  await assert.rejects(async () => {
+    await repo.createCustomer({
+      name: 'Failed Assigned Cust',
+      code: 'C-A-002',
+      ownershipType: 'ASSIGNED_SALES',
+      ownerId: null,
+      contacts: []
+    });
+  }, /Sales Owner is required/);
+
+  // 4. Switch ASSIGNED_SALES -> HOUSE_ACCOUNT clears owner
+  const cust2Updated = await repo.updateCustomer(cust2.id, {
+    ownershipType: 'HOUSE_ACCOUNT'
+  });
+  assert.equal(cust2Updated.ownershipType, 'HOUSE_ACCOUNT');
+  assert.equal(cust2Updated.ownerId, '');
+
+  // 5. Switch HOUSE_ACCOUNT -> ASSIGNED_SALES requires owner
+  await assert.rejects(async () => {
+    await repo.updateCustomer(cust1.id, {
+      ownershipType: 'ASSIGNED_SALES'
+    });
+  }, /Sales Owner is required/);
+
+  const cust1Updated = await repo.updateCustomer(cust1.id, {
+    ownershipType: 'ASSIGNED_SALES',
+    ownerId: 'USR-0001'
+  });
+  assert.equal(cust1Updated.ownershipType, 'ASSIGNED_SALES');
+  assert.equal(cust1Updated.ownerId, 'USR-0001');
+  
+  // 6. Find API returns ownershipType
+  const found = await repo.findCustomerById(cust1.id);
+  assert.equal(found.ownershipType, 'ASSIGNED_SALES');
 });

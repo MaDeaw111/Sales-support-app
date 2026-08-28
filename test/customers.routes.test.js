@@ -11,6 +11,8 @@ async function setupTestDb() {
   db.exec(authSql);
   const customersSql = await readFile(new URL('../migrations/0002_customers.sql', import.meta.url), 'utf8');
   db.exec(customersSql);
+  const ownershipSql = await readFile(new URL('../migrations/0006_customer_ownership_type.sql', import.meta.url), 'utf8');
+  db.exec(ownershipSql);
 
   const wrappedDb = {
     prepare(sql) {
@@ -469,5 +471,106 @@ test('customer-owners route: authenticated ADMIN returns 200 and filtered/saniti
     assert.equal(owner.password_salt, undefined);
     assert.equal(owner.password_iterations, undefined);
   }
+});
+
+test('customers route: customer ownership type rules & validation', async () => {
+  const { db, wrappedDb } = await setupTestDb();
+  await seedUserAndSession(db, 'USR-0001', 'Admin', 'admin@example.com', 'ADMIN', 'ALL', 'admin-token');
+  
+  // 1. Create HOUSE_ACCOUNT without owner
+  const res1 = await worker.fetch(
+    makeRequest('/api/customers', 'POST', {
+      name: 'House Cust',
+      code: 'C-H-001',
+      ownershipType: 'HOUSE_ACCOUNT',
+      ownerId: null
+    }, 'admin-token'),
+    { DB: wrappedDb }
+  );
+  assert.equal(res1.status, 200);
+  const body1 = await res1.json();
+  assert.equal(body1.data.customer.ownershipType, 'HOUSE_ACCOUNT');
+  assert.equal(body1.data.customer.ownerId, '');
+
+  const customerId = body1.data.customer.id;
+
+  // 2. Create ASSIGNED_SALES with owner
+  const res2 = await worker.fetch(
+    makeRequest('/api/customers', 'POST', {
+      name: 'Assigned Cust',
+      code: 'C-A-001',
+      ownershipType: 'ASSIGNED_SALES',
+      ownerId: 'USR-0001'
+    }, 'admin-token'),
+    { DB: wrappedDb }
+  );
+  assert.equal(res2.status, 200);
+  const body2 = await res2.json();
+  assert.equal(body2.data.customer.ownershipType, 'ASSIGNED_SALES');
+  assert.equal(body2.data.customer.ownerId, 'USR-0001');
+
+  // 3. Reject ASSIGNED_SALES without owner
+  const res3 = await worker.fetch(
+    makeRequest('/api/customers', 'POST', {
+      name: 'Failed Cust 1',
+      code: 'C-A-002',
+      ownershipType: 'ASSIGNED_SALES',
+      ownerId: null
+    }, 'admin-token'),
+    { DB: wrappedDb }
+  );
+  assert.equal(res3.status, 400);
+  const body3 = await res3.json();
+  assert.match(body3.message, /Sales Owner is required/);
+
+  // 4. Reject HOUSE_ACCOUNT with owner (explicit validation)
+  const res4 = await worker.fetch(
+    makeRequest('/api/customers', 'POST', {
+      name: 'Failed Cust 2',
+      code: 'C-H-002',
+      ownershipType: 'HOUSE_ACCOUNT',
+      ownerId: 'USR-0001'
+    }, 'admin-token'),
+    { DB: wrappedDb }
+  );
+  assert.equal(res4.status, 400);
+  const body4 = await res4.json();
+  assert.match(body4.message, /Sales Owner must be empty/);
+
+  // 5. Switch ASSIGNED_SALES -> HOUSE_ACCOUNT clears owner
+  const assignedCustomerId = body2.data.customer.id;
+  const res5 = await worker.fetch(
+    makeRequest(`/api/customers/${assignedCustomerId}`, 'PUT', {
+      ownershipType: 'HOUSE_ACCOUNT'
+    }, 'admin-token'),
+    { DB: wrappedDb }
+  );
+  assert.equal(res5.status, 200);
+  const body5 = await res5.json();
+  assert.equal(body5.data.customer.ownershipType, 'HOUSE_ACCOUNT');
+  assert.equal(body5.data.customer.ownerId, '');
+
+  // 6. Switch HOUSE_ACCOUNT -> ASSIGNED_SALES requires owner
+  const res6 = await worker.fetch(
+    makeRequest(`/api/customers/${customerId}`, 'PUT', {
+      ownershipType: 'ASSIGNED_SALES'
+    }, 'admin-token'),
+    { DB: wrappedDb }
+  );
+  assert.equal(res6.status, 400);
+  const body6 = await res6.json();
+  assert.match(body6.message, /Sales Owner is required/);
+
+  const res7 = await worker.fetch(
+    makeRequest(`/api/customers/${customerId}`, 'PUT', {
+      ownershipType: 'ASSIGNED_SALES',
+      ownerId: 'USR-0001'
+    }, 'admin-token'),
+    { DB: wrappedDb }
+  );
+  assert.equal(res7.status, 200);
+  const body7 = await res7.json();
+  assert.equal(body7.data.customer.ownershipType, 'ASSIGNED_SALES');
+  assert.equal(body7.data.customer.ownerId, 'USR-0001');
 });
 
