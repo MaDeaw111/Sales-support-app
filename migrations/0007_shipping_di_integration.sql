@@ -2,7 +2,7 @@ PRAGMA foreign_keys = ON;
 
 CREATE TABLE service_partners (
   partner_id TEXT PRIMARY KEY,
-  partner_type TEXT NOT NULL CHECK(partner_type IN ('FORWARDER','SHIPPING_LINE','TRUCKING','OTHER')),
+  partner_type TEXT NOT NULL CHECK(partner_type IN ('FORWARDER','SHIPPING_LINE','TRUCKING','SURVEYOR')),
   partner_name TEXT NOT NULL CHECK(trim(partner_name) <> ''),
   contact_name TEXT,
   contact_phone TEXT,

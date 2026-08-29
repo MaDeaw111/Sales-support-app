@@ -82,3 +82,15 @@ test('Phase 6 schema creates every shipping DI table and required lookup indexes
     assert.ok(db.prepare('SELECT name FROM sqlite_master WHERE type = ? AND name = ?').get('index', index), `${index} should exist`);
   }
 });
+
+test('Phase 6 service partners permit the approved SURVEYOR type and reject OTHER', async () => {
+  const db = await setupThrough0006();
+  db.exec(await readMigration('0007_shipping_di_integration.sql'));
+  db.prepare("INSERT INTO users (user_id, email, password_hash, password_salt, role, status, full_name) VALUES ('U1', 'export@example.com', 'hash', 'salt', 'EXPORT', 'ACTIVE', 'Export User')").run();
+
+  db.prepare("INSERT INTO service_partners (partner_id, partner_type, partner_name, created_by) VALUES ('SP-001', 'SURVEYOR', 'SGS', 'U1')").run();
+  assert.throws(
+    () => db.prepare("INSERT INTO service_partners (partner_id, partner_type, partner_name, created_by) VALUES ('SP-002', 'OTHER', 'Other Partner', 'U1')").run(),
+    /CHECK constraint failed: partner_type/
+  );
+});
