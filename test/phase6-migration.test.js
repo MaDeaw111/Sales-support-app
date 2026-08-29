@@ -72,6 +72,7 @@ test('Phase 6 schema creates every shipping DI table and required lookup indexes
   for (const index of [
     'idx_delivery_instructions_di_no',
     'idx_delivery_instructions_customer_status',
+    'idx_delivery_instructions_customer_history',
     'idx_delivery_instruction_lines_po_line',
     'idx_phase6_shipments_status',
     'idx_phase6_shipments_booking_no',
@@ -80,6 +81,11 @@ test('Phase 6 schema creates every shipping DI table and required lookup indexes
     'idx_shipment_audit_events_shipment_created_at',
   ]) {
     assert.ok(db.prepare('SELECT name FROM sqlite_master WHERE type = ? AND name = ?').get('index', index), `${index} should exist`);
+  }
+
+  const deliveryInstructionColumns = db.prepare('PRAGMA table_info(delivery_instructions)').all().map((column) => column.name);
+  for (const column of ['di_drive_url', 'surveyor_partner_id', 'forwarder_partner_id']) {
+    assert.ok(deliveryInstructionColumns.includes(column), `${column} should exist on delivery_instructions`);
   }
 });
 

@@ -27,6 +27,12 @@ async function nextInternalDiNo(db, poId) {
   return `${poId}_${String(Number(row?.n || 0) + 1).padStart(3, '0')}`;
 }
 
+function isInternalDiNoUniqueCollision(error) {
+  return String(error?.message || '').includes(
+    'UNIQUE constraint failed: delivery_instructions.customer_id, delivery_instructions.di_no'
+  );
+}
+
 async function findDeliveryInstruction(db, diId) {
   const deliveryInstruction = await db.prepare(`
     SELECT di_id, customer_id, po_id, po_revision_id, di_no, shipping_month, shipping_period,
@@ -160,50 +166,64 @@ export function createShippingDiRepository(db) {
       await validateSelectedPartner(db, deliveryInstruction.surveyorPartnerId, 'SURVEYOR', 'DI_SURVEYOR_INVALID');
       await validateSelectedPartner(db, deliveryInstruction.forwarderPartnerId, 'FORWARDER', 'DI_FORWARDER_INVALID');
 
-      const diId = `DI-${crypto.randomUUID()}`;
-      const diNo = deliveryInstruction.diNo || await nextInternalDiNo(db, deliveryInstruction.poId);
-      await db.prepare(`
-        INSERT INTO delivery_instructions (
-          di_id, customer_id, po_id, po_revision_id, di_no, shipping_month, shipping_period,
-          status, note, di_drive_url, surveyor_partner_id, forwarder_partner_id, created_by, updated_by
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, 'DRAFT', ?, ?, ?, ?, ?, ?)
-      `).bind(
-        diId,
-        deliveryInstruction.customerId,
-        deliveryInstruction.poId,
-        deliveryInstruction.poRevisionId,
-        diNo,
-        deliveryInstruction.shippingMonth,
-        deliveryInstruction.shippingPeriod,
-        deliveryInstruction.note,
-        deliveryInstruction.googleDriveUrl,
-        deliveryInstruction.surveyorPartnerId,
-        deliveryInstruction.forwarderPartnerId,
-        actorId,
-        actorId
-      ).run();
-
-      for (const line of deliveryInstruction.lines) {
-        await db.prepare(`
-          INSERT INTO delivery_instruction_lines (
-            di_line_id, di_id, po_id, po_revision_id, po_revision_line_id, product_id,
-            planned_qty_mt, packing_snapshot, created_by, updated_by
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      const maxInternalNumberAttempts = 3;
+      const hasCustomerDiNo = deliveryInstruction.diNo !== null;
+      for (let attempt = 0; attempt < (hasCustomerDiNo ? 1 : maxInternalNumberAttempts); attempt += 1) {
+        const diId = `DI-${crypto.randomUUID()}`;
+        const diNo = hasCustomerDiNo
+          ? deliveryInstruction.diNo
+          : await nextInternalDiNo(db, deliveryInstruction.poId);
+        const statements = [db.prepare(`
+          INSERT INTO delivery_instructions (
+            di_id, customer_id, po_id, po_revision_id, di_no, shipping_month, shipping_period,
+            status, note, di_drive_url, surveyor_partner_id, forwarder_partner_id, created_by, updated_by
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, 'DRAFT', ?, ?, ?, ?, ?, ?)
         `).bind(
-          `DIL-${crypto.randomUUID()}`,
           diId,
+          deliveryInstruction.customerId,
           deliveryInstruction.poId,
           deliveryInstruction.poRevisionId,
-          line.poRevisionLineId,
-          line.productId,
-          line.plannedQtyMt,
-          line.packingSnapshot,
+          diNo,
+          deliveryInstruction.shippingMonth,
+          deliveryInstruction.shippingPeriod,
+          deliveryInstruction.note,
+          deliveryInstruction.googleDriveUrl,
+          deliveryInstruction.surveyorPartnerId,
+          deliveryInstruction.forwarderPartnerId,
           actorId,
           actorId
-        ).run();
-      }
+        )];
 
-      return findDeliveryInstruction(db, diId);
+        for (const line of deliveryInstruction.lines) {
+          statements.push(db.prepare(`
+            INSERT INTO delivery_instruction_lines (
+              di_line_id, di_id, po_id, po_revision_id, po_revision_line_id, product_id,
+              planned_qty_mt, packing_snapshot, created_by, updated_by
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          `).bind(
+            `DIL-${crypto.randomUUID()}`,
+            diId,
+            deliveryInstruction.poId,
+            deliveryInstruction.poRevisionId,
+            line.poRevisionLineId,
+            line.productId,
+            line.plannedQtyMt,
+            line.packingSnapshot,
+            actorId,
+            actorId
+          ));
+        }
+
+        try {
+          await db.batch(statements);
+          return findDeliveryInstruction(db, diId);
+        } catch (error) {
+          if (!hasCustomerDiNo && attempt + 1 < maxInternalNumberAttempts && isInternalDiNoUniqueCollision(error)) {
+            continue;
+          }
+          throw error;
+        }
+      }
     },
 
     async getDeliveryInstruction(diId) {
@@ -241,7 +261,7 @@ export function createShippingDiRepository(db) {
         SELECT surveyor_partner_id, forwarder_partner_id
         FROM delivery_instructions
         WHERE customer_id = ? AND status <> 'CANCELLED'
-        ORDER BY created_at DESC, di_id DESC
+        ORDER BY created_at DESC, rowid DESC
         LIMIT 1
       `).bind(customerId).first();
       return {

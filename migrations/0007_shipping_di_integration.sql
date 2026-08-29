@@ -23,6 +23,9 @@ CREATE TABLE delivery_instructions (
   po_id TEXT NOT NULL REFERENCES po_headers(po_id),
   po_revision_id TEXT NOT NULL REFERENCES po_revisions(revision_id),
   di_no TEXT NOT NULL CHECK(trim(di_no) <> ''),
+  surveyor_partner_id TEXT REFERENCES service_partners(partner_id),
+  forwarder_partner_id TEXT REFERENCES service_partners(partner_id),
+  di_drive_url TEXT,
   shipping_month TEXT NOT NULL,
   shipping_period TEXT NOT NULL CHECK(shipping_period IN ('FIRST_HALF','SECOND_HALF')),
   status TEXT NOT NULL DEFAULT 'DRAFT' CHECK(status IN ('DRAFT','ISSUED','CANCELLED')),
@@ -177,6 +180,7 @@ CREATE TABLE shipment_audit_events (
 
 CREATE INDEX idx_delivery_instructions_di_no ON delivery_instructions(di_no);
 CREATE INDEX idx_delivery_instructions_customer_status ON delivery_instructions(customer_id, status);
+CREATE INDEX idx_delivery_instructions_customer_history ON delivery_instructions(customer_id, status, created_at DESC);
 CREATE INDEX idx_delivery_instruction_lines_po_line ON delivery_instruction_lines(po_id, po_revision_id, po_revision_line_id);
 CREATE INDEX idx_phase6_shipments_status ON phase6_shipments(status);
 CREATE INDEX idx_phase6_shipments_booking_no ON phase6_shipments(booking_no);

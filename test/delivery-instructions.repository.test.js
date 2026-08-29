@@ -4,7 +4,7 @@ import { readFile } from 'node:fs/promises';
 import { DatabaseSync } from 'node:sqlite';
 import { createShippingDiRepository } from '../src/shipping-di/repository.js';
 
-async function setupTestDb() {
+async function setupTestDb({ collisionDiNo = null, failLineId = null } = {}) {
   const db = new DatabaseSync(':memory:');
   for (const migration of [
     '0001_auth.sql',
@@ -13,8 +13,7 @@ async function setupTestDb() {
     '0004_commercial_shipment_control.sql',
     '0005_po_management.sql',
     '0006_customer_ownership_type.sql',
-    '0007_shipping_di_integration.sql',
-    '0008_delivery_instruction_details.sql'
+    '0007_shipping_di_integration.sql'
   ]) {
     db.exec(await readFile(new URL(`../migrations/${migration}`, import.meta.url), 'utf8'));
   }
@@ -35,30 +34,54 @@ async function setupTestDb() {
       .run(lineId, revisionId, lineNo, 'P1', 'STANDARD', 'SPEC-1', 100, 0, 100, 100, 300, 'Jumbo Bag', '20GP', 'PALLETIZED');
   }
 
-  return {
-    db,
-    wrappedDb: {
-      prepare(sql) {
-        const statement = db.prepare(sql);
-        return {
-          params: [],
-          bind(...params) {
-            this.params = params;
-            return this;
-          },
-          async first() {
-            return statement.all(...this.params)[0] || null;
-          },
-          async all() {
-            return { results: statement.all(...this.params), success: true };
-          },
-          async run() {
-            return { success: true, meta: statement.run(...this.params) };
+  let collisionTriggered = false;
+  const wrappedDb = {
+    prepare(sql) {
+      const statement = db.prepare(sql);
+      return {
+        params: [],
+        bind(...params) {
+          this.params = params;
+          return this;
+        },
+        async first() {
+          return statement.all(...this.params)[0] || null;
+        },
+        async all() {
+          return { results: statement.all(...this.params), success: true };
+        },
+        async run() {
+          if (
+            !collisionTriggered &&
+            collisionDiNo &&
+            sql.includes('INSERT INTO delivery_instructions') &&
+            this.params[4] === collisionDiNo
+          ) {
+            collisionTriggered = true;
+            throw new Error('UNIQUE constraint failed: delivery_instructions.customer_id, delivery_instructions.di_no');
           }
-        };
+          if (failLineId && sql.includes('INSERT INTO delivery_instruction_lines') && this.params[4] === failLineId) {
+            throw new Error('SIMULATED_DI_LINE_WRITE_FAILURE');
+          }
+          return { success: true, meta: statement.run(...this.params) };
+        }
+      };
+    },
+    async batch(statements) {
+      db.exec('BEGIN');
+      try {
+        const results = [];
+        for (const statement of statements) results.push(await statement.run());
+        db.exec('COMMIT');
+        return results;
+      } catch (error) {
+        db.exec('ROLLBACK');
+        throw error;
       }
     }
   };
+
+  return { db, wrappedDb };
 }
 
 function diPayload(overrides = {}) {
@@ -148,5 +171,63 @@ test('combined DI keeps each exact PO line and offers latest non-cancelled partn
   assert.deepEqual(await repo.suggestPartnersForCustomer('C1'), {
     surveyor_partner_id: 'SP-SURVEYOR',
     forwarder_partner_id: 'SP-FORWARDER'
+  });
+});
+
+test('rolls back the DI header and every line when a later combined-line write fails', async () => {
+  const { db, wrappedDb } = await setupTestDb({ failLineId: 'LINE-20' });
+  const repo = createShippingDiRepository(wrappedDb);
+
+  await assert.rejects(
+    () => repo.createDeliveryInstruction(diPayload({
+      lines: [
+        { poId: 'PO-2026-015', poRevisionId: 'REV-1', poRevisionLineId: 'LINE-10', plannedQtyMt: 10, packingSnapshot: 'Jumbo Bag' },
+        { poId: 'PO-2026-015', poRevisionId: 'REV-1', poRevisionLineId: 'LINE-20', plannedQtyMt: 15, packingSnapshot: 'Jumbo Bag' }
+      ]
+    }), 'U_EXPORT'),
+    /SIMULATED_DI_LINE_WRITE_FAILURE/
+  );
+
+  assert.equal(db.prepare('SELECT COUNT(*) AS n FROM delivery_instructions').get().n, 0);
+  assert.equal(db.prepare('SELECT COUNT(*) AS n FROM delivery_instruction_lines').get().n, 0);
+});
+
+test('retries a PO-local automatic DI number after an exact unique allocation collision', async () => {
+  const { wrappedDb } = await setupTestDb({ collisionDiNo: 'PO-2026-015_002' });
+  const repo = createShippingDiRepository(wrappedDb);
+
+  await repo.createDeliveryInstruction(diPayload(), 'U_EXPORT');
+  const retried = await repo.createDeliveryInstruction(diPayload({
+    lines: [{ poId: 'PO-2026-015', poRevisionId: 'REV-1', poRevisionLineId: 'LINE-20', plannedQtyMt: 25, packingSnapshot: 'Jumbo Bag' }]
+  }), 'U_EXPORT');
+
+  assert.equal(retried.di_no, 'PO-2026-015_002');
+});
+
+test('partner suggestions use insertion chronology when historical DIs share a timestamp', async () => {
+  const { db, wrappedDb } = await setupTestDb();
+  for (const [partnerId, partnerType] of [
+    ['SP-SURVEYOR-OLD', 'SURVEYOR'], ['SP-FORWARDER-OLD', 'FORWARDER'],
+    ['SP-SURVEYOR-NEW', 'SURVEYOR'], ['SP-FORWARDER-NEW', 'FORWARDER']
+  ]) {
+    db.prepare('INSERT INTO service_partners (partner_id, partner_type, partner_name, created_by) VALUES (?, ?, ?, ?)')
+      .run(partnerId, partnerType, partnerId, 'U_EXPORT');
+  }
+  for (const [diId, diNo, surveyorId, forwarderId] of [
+    ['DI-Z', 'HISTORY-OLD', 'SP-SURVEYOR-OLD', 'SP-FORWARDER-OLD'],
+    ['DI-A', 'HISTORY-NEW', 'SP-SURVEYOR-NEW', 'SP-FORWARDER-NEW']
+  ]) {
+    db.prepare(`
+      INSERT INTO delivery_instructions (
+        di_id, customer_id, po_id, po_revision_id, di_no, shipping_month, shipping_period,
+        status, surveyor_partner_id, forwarder_partner_id, created_by, created_at
+      ) VALUES (?, 'C1', 'PO-2026-015', 'REV-1', ?, '2026-09', 'FIRST_HALF', 'DRAFT', ?, ?, 'U_EXPORT', '2026-09-01 00:00:00')
+    `).run(diId, diNo, surveyorId, forwarderId);
+  }
+
+  const repo = createShippingDiRepository(wrappedDb);
+  assert.deepEqual(await repo.suggestPartnersForCustomer('C1'), {
+    surveyor_partner_id: 'SP-SURVEYOR-NEW',
+    forwarder_partner_id: 'SP-FORWARDER-NEW'
   });
 });
