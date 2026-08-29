@@ -3,6 +3,7 @@ import { createShippingDiRepository } from './repository.js';
 
 const OPERATIONAL_READER_ROLES = ['ADMIN', 'MANAGER', 'SALES_SUPPORT', 'EXPORT'];
 const SERVICE_PARTNER_WRITE_ROLES = ['ADMIN', 'MANAGER', 'EXPORT'];
+const DELIVERY_INSTRUCTION_WRITE_ROLES = ['ADMIN', 'MANAGER', 'EXPORT'];
 
 function json(body, status = 200) {
   return new Response(JSON.stringify(body), {
@@ -46,6 +47,27 @@ export function createShippingDiHandler({ repo, resolveUser, db }) {
       try {
         const servicePartner = await activeRepo.createServicePartner(body, caller.user_id);
         return json({ status: 'SUCCESS', data: { servicePartner } });
+      } catch (error) {
+        return json({ status: 'ERROR', message: error.message }, 400);
+      }
+    }
+
+    if (path === '/api/delivery-instructions' && method === 'GET') {
+      if (!OPERATIONAL_READER_ROLES.includes(caller.role)) return json({ status: 'ERROR', message: 'Permission denied.' }, 403);
+      const deliveryInstructions = await activeRepo.listDeliveryInstructions({
+        customerId: url.searchParams.get('customerId') || undefined,
+        poId: url.searchParams.get('poId') || undefined,
+        status: url.searchParams.get('status') || undefined
+      });
+      return json({ status: 'SUCCESS', data: { deliveryInstructions } });
+    }
+
+    if (path === '/api/delivery-instructions' && method === 'POST') {
+      if (!DELIVERY_INSTRUCTION_WRITE_ROLES.includes(caller.role)) return json({ status: 'ERROR', message: 'Permission denied.' }, 403);
+      const body = await readJson(request);
+      try {
+        const deliveryInstruction = await activeRepo.createDeliveryInstruction(body, caller.user_id);
+        return json({ status: 'SUCCESS', data: { deliveryInstruction } });
       } catch (error) {
         return json({ status: 'ERROR', message: error.message }, 400);
       }

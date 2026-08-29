@@ -1,0 +1,152 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
+import { DatabaseSync } from 'node:sqlite';
+import { createShippingDiRepository } from '../src/shipping-di/repository.js';
+
+async function setupTestDb() {
+  const db = new DatabaseSync(':memory:');
+  for (const migration of [
+    '0001_auth.sql',
+    '0002_customers.sql',
+    '0003_product_specs.sql',
+    '0004_commercial_shipment_control.sql',
+    '0005_po_management.sql',
+    '0006_customer_ownership_type.sql',
+    '0007_shipping_di_integration.sql',
+    '0008_delivery_instruction_details.sql'
+  ]) {
+    db.exec(await readFile(new URL(`../migrations/${migration}`, import.meta.url), 'utf8'));
+  }
+
+  db.prepare("INSERT INTO users (user_id, email, password_hash, password_salt, role, status, full_name) VALUES ('U_EXPORT', 'export@example.com', 'hash', 'salt', 'EXPORT', 'ACTIVE', 'Export User')").run();
+  db.prepare("INSERT INTO users (user_id, email, password_hash, password_salt, role, status, full_name) VALUES ('U_SALES', 'sales@example.com', 'hash', 'salt', 'EXTERNAL_SALES', 'ACTIVE', 'Sales User')").run();
+  db.prepare("INSERT INTO customers (customer_id, customer_code, customer_name, owner_user_id) VALUES ('C1', 'CUST1', 'Customer One', 'U_SALES')").run();
+  db.prepare("INSERT INTO customers (customer_id, customer_code, customer_name, owner_user_id) VALUES ('C2', 'CUST2', 'Customer Two', 'U_SALES')").run();
+  db.prepare("INSERT INTO product_categories (category_id, category_code, category_name) VALUES ('CAT1', 'TAPIOCA', 'Tapioca')").run();
+  db.prepare("INSERT INTO product_forms (form_id, form_code, form_name) VALUES ('FORM1', 'PELLET', 'Pellet')").run();
+  db.prepare("INSERT INTO products (product_id, product_code, product_name, short_name, category_id, form_id) VALUES ('P1', 'THP-65', 'Tapioca Pellet 65%', 'THP65', 'CAT1', 'FORM1')").run();
+  db.prepare("INSERT INTO po_headers (po_id, customer_id, created_by) VALUES ('PO-2026-015', 'C1', 'U_EXPORT')").run();
+  db.prepare("INSERT INTO po_headers (po_id, customer_id, created_by) VALUES ('PO-2026-016', 'C2', 'U_EXPORT')").run();
+  db.prepare("INSERT INTO po_revisions (revision_id, po_id, revision_no, status, ownership_type_snapshot, sales_owner_user_id_snapshot, currency, incoterm, delivery_start, delivery_end, valid_until, created_by) VALUES ('REV-1', 'PO-2026-015', 0, 'ACTIVE', 'ASSIGNED_SALES', 'U_SALES', 'USD', 'FOB', '2026-09-01', '2026-09-30', '2026-12-31', 'U_EXPORT')").run();
+  db.prepare("INSERT INTO po_revisions (revision_id, po_id, revision_no, status, ownership_type_snapshot, sales_owner_user_id_snapshot, currency, incoterm, delivery_start, delivery_end, valid_until, created_by) VALUES ('REV-2', 'PO-2026-016', 0, 'ACTIVE', 'ASSIGNED_SALES', 'U_SALES', 'USD', 'FOB', '2026-09-01', '2026-09-30', '2026-12-31', 'U_EXPORT')").run();
+  for (const [lineId, revisionId, lineNo] of [['LINE-10', 'REV-1', 10], ['LINE-20', 'REV-1', 20], ['LINE-30', 'REV-2', 10]]) {
+    db.prepare('INSERT INTO po_revision_lines (line_id, po_revision_id, line_no, product_id, spec_source, spec_revision_id, contract_qty_mt, tolerance_pct, min_qty_mt, max_qty_mt, unit_price, packaging, container_type, loading_pattern) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
+      .run(lineId, revisionId, lineNo, 'P1', 'STANDARD', 'SPEC-1', 100, 0, 100, 100, 300, 'Jumbo Bag', '20GP', 'PALLETIZED');
+  }
+
+  return {
+    db,
+    wrappedDb: {
+      prepare(sql) {
+        const statement = db.prepare(sql);
+        return {
+          params: [],
+          bind(...params) {
+            this.params = params;
+            return this;
+          },
+          async first() {
+            return statement.all(...this.params)[0] || null;
+          },
+          async all() {
+            return { results: statement.all(...this.params), success: true };
+          },
+          async run() {
+            return { success: true, meta: statement.run(...this.params) };
+          }
+        };
+      }
+    }
+  };
+}
+
+function diPayload(overrides = {}) {
+  return {
+    customerId: 'C1',
+    poId: 'PO-2026-015',
+    poRevisionId: 'REV-1',
+    diNo: null,
+    shippingMonth: '2026-09',
+    shippingPeriod: 'FIRST_HALF',
+    lines: [{ poId: 'PO-2026-015', poRevisionId: 'REV-1', poRevisionLineId: 'LINE-10', plannedQtyMt: 25, packingSnapshot: 'Jumbo Bag' }],
+    ...overrides
+  };
+}
+
+test('internal DI number increments only within its PO and every line is an exact Phase 5F line', async () => {
+  const { wrappedDb } = await setupTestDb();
+  const repo = createShippingDiRepository(wrappedDb);
+
+  const first = await repo.createDeliveryInstruction(diPayload(), 'U_EXPORT');
+  const second = await repo.createDeliveryInstruction(diPayload({
+    lines: [{ poId: 'PO-2026-015', poRevisionId: 'REV-1', poRevisionLineId: 'LINE-20', plannedQtyMt: 25, packingSnapshot: 'Jumbo Bag' }]
+  }), 'U_EXPORT');
+
+  assert.equal(first.di_no, 'PO-2026-015_001');
+  assert.equal(second.di_no, 'PO-2026-015_002');
+  assert.deepEqual(first.lines.map((line) => ({
+    po_id: line.po_id,
+    po_revision_id: line.po_revision_id,
+    po_revision_line_id: line.po_revision_line_id,
+    planned_qty_mt: line.planned_qty_mt,
+    packing_snapshot: line.packing_snapshot
+  })), [{
+    po_id: 'PO-2026-015',
+    po_revision_id: 'REV-1',
+    po_revision_line_id: 'LINE-10',
+    planned_qty_mt: 25,
+    packing_snapshot: 'Jumbo Bag'
+  }]);
+});
+
+test('DI creation rejects a line from another PO revision and an invalid optional Drive URL', async () => {
+  const { wrappedDb } = await setupTestDb();
+  const repo = createShippingDiRepository(wrappedDb);
+
+  await assert.rejects(
+    () => repo.createDeliveryInstruction(diPayload({
+      lines: [{ poId: 'PO-2026-016', poRevisionId: 'REV-2', poRevisionLineId: 'LINE-30', plannedQtyMt: 25, packingSnapshot: 'Jumbo Bag' }]
+    }), 'U_EXPORT'),
+    /DI_LINE_PO_LINEAGE_INVALID/
+  );
+  await assert.rejects(
+    () => repo.createDeliveryInstruction(diPayload({ googleDriveUrl: 'https://example.com/not-drive' }), 'U_EXPORT'),
+    /DI_GOOGLE_DRIVE_URL_INVALID/
+  );
+});
+
+test('supplied customer DI number is retained exactly and DI reads can be filtered by customer', async () => {
+  const { wrappedDb } = await setupTestDb();
+  const repo = createShippingDiRepository(wrappedDb);
+
+  const created = await repo.createDeliveryInstruction(diPayload({ diNo: 'CUSTOMER-DI- 07 ' }), 'U_EXPORT');
+
+  assert.equal(created.di_no, 'CUSTOMER-DI- 07 ');
+  assert.deepEqual((await repo.listDeliveryInstructions({ customerId: 'C1' })).map((di) => di.di_id), [created.di_id]);
+  assert.equal((await repo.getDeliveryInstruction(created.di_id)).di_no, 'CUSTOMER-DI- 07 ');
+});
+
+test('combined DI keeps each exact PO line and offers latest non-cancelled partner selections as suggestions', async () => {
+  const { db, wrappedDb } = await setupTestDb();
+  db.prepare("INSERT INTO service_partners (partner_id, partner_type, partner_name, created_by) VALUES ('SP-SURVEYOR', 'SURVEYOR', 'SGS', 'U_EXPORT')").run();
+  db.prepare("INSERT INTO service_partners (partner_id, partner_type, partner_name, created_by) VALUES ('SP-FORWARDER', 'FORWARDER', 'Kuehne + Nagel', 'U_EXPORT')").run();
+  const repo = createShippingDiRepository(wrappedDb);
+
+  const created = await repo.createDeliveryInstruction(diPayload({
+    googleDriveUrl: 'https://drive.google.com/file/d/DI-1/view',
+    surveyorPartnerId: 'SP-SURVEYOR',
+    forwarderPartnerId: 'SP-FORWARDER',
+    lines: [
+      { poId: 'PO-2026-015', poRevisionId: 'REV-1', poRevisionLineId: 'LINE-10', plannedQtyMt: 10, packingSnapshot: 'Jumbo Bag' },
+      { poId: 'PO-2026-015', poRevisionId: 'REV-1', poRevisionLineId: 'LINE-20', plannedQtyMt: 15, packingSnapshot: 'Jumbo Bag' }
+    ]
+  }), 'U_EXPORT');
+
+  assert.equal(created.di_drive_url, 'https://drive.google.com/file/d/DI-1/view');
+  assert.deepEqual(created.lines.map((line) => line.po_revision_line_id), ['LINE-10', 'LINE-20']);
+  assert.deepEqual(await repo.suggestPartnersForCustomer('C1'), {
+    surveyor_partner_id: 'SP-SURVEYOR',
+    forwarder_partner_id: 'SP-FORWARDER'
+  });
+});
