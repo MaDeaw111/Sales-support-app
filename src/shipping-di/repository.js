@@ -3,6 +3,8 @@ import {
   codedError,
   validateDeliveryInstruction,
   validateDeliveryInstructionAvailabilityLines,
+  validateDeliveryInstructionUpdate,
+  validateCancellationNote,
   validateServicePartner
 } from './validation.js';
 
@@ -45,7 +47,7 @@ function isAvailabilityReservationFailure(error) {
 async function findDeliveryInstruction(db, diId) {
   const deliveryInstruction = await db.prepare(`
     SELECT di_id, customer_id, po_id, po_revision_id, di_no, shipping_month, shipping_period,
-           status, note, di_drive_url, surveyor_partner_id, forwarder_partner_id,
+           status, note, cancellation_note, di_drive_url, surveyor_partner_id, forwarder_partner_id,
            created_by, created_at, updated_by, updated_at
     FROM delivery_instructions
     WHERE di_id = ?
@@ -72,6 +74,172 @@ async function validateSelectedPartner(db, partnerId, partnerType, code) {
     WHERE partner_id = ?
   `).bind(partnerId).first();
   if (!partner || partner.partner_type !== partnerType) throw codedError(code);
+}
+
+function deliveryInstructionSnapshot(deliveryInstruction) {
+  const value = (camelCase, snakeCase) => Object.hasOwn(deliveryInstruction, camelCase)
+    ? deliveryInstruction[camelCase]
+    : deliveryInstruction[snakeCase];
+  return {
+    customerId: value('customerId', 'customer_id'),
+    poId: value('poId', 'po_id'),
+    poRevisionId: value('poRevisionId', 'po_revision_id'),
+    diNo: value('diNo', 'di_no'),
+    shippingMonth: value('shippingMonth', 'shipping_month'),
+    shippingPeriod: value('shippingPeriod', 'shipping_period'),
+    note: deliveryInstruction.note,
+    googleDriveUrl: value('googleDriveUrl', 'di_drive_url'),
+    surveyorPartnerId: value('surveyorPartnerId', 'surveyor_partner_id'),
+    forwarderPartnerId: value('forwarderPartnerId', 'forwarder_partner_id'),
+    lines: (deliveryInstruction.lines || []).map((line) => ({
+      poRevisionLineId: line.poRevisionLineId ?? line.po_revision_line_id,
+      plannedQtyMt: line.plannedQtyMt ?? line.planned_qty_mt,
+      packingSnapshot: line.packingSnapshot ?? line.packing_snapshot
+    }))
+  };
+}
+
+function auditStatement(db, entityType, entityId, eventType, actorId, metadata = {}) {
+  return db.prepare(`
+    INSERT INTO shipment_audit_events (event_id, entity_type, entity_id, event_type, actor_id, metadata_json)
+    VALUES (?, ?, ?, ?, ?, ?)
+  `).bind(`EVT-${crypto.randomUUID()}`, entityType, entityId, eventType, actorId, JSON.stringify(metadata));
+}
+
+function deliveryInstructionUpdateDto(existing, dto) {
+  const patch = validateDeliveryInstructionUpdate(dto);
+  const existingDto = {
+    customerId: existing.customer_id,
+    poId: existing.po_id,
+    poRevisionId: existing.po_revision_id,
+    diNo: existing.di_no,
+    shippingMonth: existing.shipping_month,
+    shippingPeriod: existing.shipping_period,
+    note: existing.note,
+    googleDriveUrl: existing.di_drive_url,
+    surveyorPartnerId: existing.surveyor_partner_id,
+    forwarderPartnerId: existing.forwarder_partner_id,
+    lines: existing.lines.map((line) => ({
+      poId: line.po_id,
+      poRevisionId: line.po_revision_id,
+      poRevisionLineId: line.po_revision_line_id,
+      plannedQtyMt: line.planned_qty_mt,
+      packingSnapshot: line.packing_snapshot
+    }))
+  };
+  return validateDeliveryInstruction({ ...existingDto, ...patch });
+}
+
+async function validateDeliveryInstructionReferences(db, deliveryInstruction) {
+  const header = await db.prepare(`
+    SELECT customer_id
+    FROM po_headers
+    WHERE po_id = ?
+  `).bind(deliveryInstruction.poId).first();
+  if (!header || header.customer_id !== deliveryInstruction.customerId) throw codedError('DI_PO_LINEAGE_INVALID');
+
+  const revision = await db.prepare(`
+    SELECT revision_id
+    FROM po_revisions
+    WHERE revision_id = ? AND po_id = ?
+  `).bind(deliveryInstruction.poRevisionId, deliveryInstruction.poId).first();
+  if (!revision) throw codedError('DI_PO_REVISION_LINEAGE_INVALID');
+
+  const seenLineIds = new Set();
+  for (const line of deliveryInstruction.lines) {
+    if (
+      line.poId !== deliveryInstruction.poId ||
+      line.poRevisionId !== deliveryInstruction.poRevisionId ||
+      seenLineIds.has(line.poRevisionLineId)
+    ) throw codedError('DI_LINE_PO_LINEAGE_INVALID');
+    seenLineIds.add(line.poRevisionLineId);
+
+    const exactLine = await db.prepare(`
+      SELECT l.product_id
+      FROM po_headers h
+      JOIN po_revisions r ON r.po_id = h.po_id
+      JOIN po_revision_lines l ON l.po_revision_id = r.revision_id
+      WHERE h.po_id = ? AND h.customer_id = ? AND r.revision_id = ? AND l.line_id = ?
+    `).bind(
+      deliveryInstruction.poId,
+      deliveryInstruction.customerId,
+      deliveryInstruction.poRevisionId,
+      line.poRevisionLineId
+    ).first();
+    if (!exactLine) throw codedError('DI_LINE_PO_LINEAGE_INVALID');
+    line.productId = exactLine.product_id;
+  }
+}
+
+function deliveryInstructionLineReservationStatement(db, diId, deliveryInstruction, line, actorId) {
+  return db.prepare(`
+    WITH requested_line (
+      di_line_id, di_id, po_id, po_revision_id, po_revision_line_id, product_id,
+      planned_qty_mt, packing_snapshot, created_by, updated_by
+    ) AS (VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?))
+    INSERT INTO delivery_instruction_lines (
+      di_line_id, di_id, po_id, po_revision_id, po_revision_line_id, product_id,
+      planned_qty_mt, packing_snapshot, created_by, updated_by
+    )
+    SELECT requested.di_line_id, requested.di_id, requested.po_id, requested.po_revision_id,
+           requested.po_revision_line_id, requested.product_id,
+           CASE
+             WHEN requested.planned_qty_mt <= COALESCE((
+               SELECT line.max_qty_mt
+                 - COALESCE((
+                   SELECT SUM(container_line.qty_mt)
+                   FROM delivery_instruction_lines actual_di_line
+                   JOIN shipment_container_lines container_line
+                     ON container_line.delivery_instruction_line_id = actual_di_line.di_line_id
+                   JOIN shipment_containers container
+                     ON container.container_id = container_line.container_id
+                   JOIN phase6_shipments shipment
+                     ON shipment.shipment_id = container.shipment_id
+                   WHERE actual_di_line.po_revision_line_id = requested.po_revision_line_id
+                     AND shipment.status <> 'CANCELLED'
+                     AND container.status <> 'CANCELLED'
+                 ), 0)
+                 - COALESCE((
+                   SELECT SUM(planned_di_line.planned_qty_mt)
+                   FROM delivery_instruction_lines planned_di_line
+                   JOIN delivery_instructions planned_di
+                     ON planned_di.di_id = planned_di_line.di_id
+                   WHERE planned_di_line.po_revision_line_id = requested.po_revision_line_id
+                     AND planned_di.status <> 'CANCELLED'
+                     AND NOT EXISTS (
+                       SELECT 1
+                       FROM delivery_instruction_lines actual_di_line
+                       JOIN shipment_container_lines container_line
+                         ON container_line.delivery_instruction_line_id = actual_di_line.di_line_id
+                       JOIN shipment_containers container
+                         ON container.container_id = container_line.container_id
+                       JOIN phase6_shipments shipment
+                         ON shipment.shipment_id = container.shipment_id
+                       WHERE actual_di_line.di_id = planned_di.di_id
+                         AND shipment.status <> 'CANCELLED'
+                         AND container.status <> 'CANCELLED'
+                     )
+                 ), 0)
+               FROM po_revision_lines line
+               WHERE line.line_id = requested.po_revision_line_id
+             ), -1) + 0.000001
+             THEN requested.planned_qty_mt
+             ELSE -1
+           END,
+           requested.packing_snapshot, requested.created_by, requested.updated_by
+    FROM requested_line requested
+  `).bind(
+    `DIL-${crypto.randomUUID()}`,
+    diId,
+    deliveryInstruction.poId,
+    deliveryInstruction.poRevisionId,
+    line.poRevisionLineId,
+    line.productId,
+    line.plannedQtyMt,
+    line.packingSnapshot,
+    actorId,
+    actorId
+  );
 }
 
 export function createShippingDiRepository(db) {
@@ -129,48 +297,7 @@ export function createShippingDiRepository(db) {
 
     async createDeliveryInstruction(dto, actorId) {
       const deliveryInstruction = validateDeliveryInstruction(dto);
-      const header = await db.prepare(`
-        SELECT customer_id
-        FROM po_headers
-        WHERE po_id = ?
-      `).bind(deliveryInstruction.poId).first();
-      if (!header || header.customer_id !== deliveryInstruction.customerId) {
-        throw codedError('DI_PO_LINEAGE_INVALID');
-      }
-
-      const revision = await db.prepare(`
-        SELECT revision_id
-        FROM po_revisions
-        WHERE revision_id = ? AND po_id = ?
-      `).bind(deliveryInstruction.poRevisionId, deliveryInstruction.poId).first();
-      if (!revision) throw codedError('DI_PO_REVISION_LINEAGE_INVALID');
-
-      const seenLineIds = new Set();
-      for (const line of deliveryInstruction.lines) {
-        if (
-          line.poId !== deliveryInstruction.poId ||
-          line.poRevisionId !== deliveryInstruction.poRevisionId ||
-          seenLineIds.has(line.poRevisionLineId)
-        ) {
-          throw codedError('DI_LINE_PO_LINEAGE_INVALID');
-        }
-        seenLineIds.add(line.poRevisionLineId);
-
-        const exactLine = await db.prepare(`
-          SELECT l.product_id
-          FROM po_headers h
-          JOIN po_revisions r ON r.po_id = h.po_id
-          JOIN po_revision_lines l ON l.po_revision_id = r.revision_id
-          WHERE h.po_id = ? AND h.customer_id = ? AND r.revision_id = ? AND l.line_id = ?
-        `).bind(
-          deliveryInstruction.poId,
-          deliveryInstruction.customerId,
-          deliveryInstruction.poRevisionId,
-          line.poRevisionLineId
-        ).first();
-        if (!exactLine) throw codedError('DI_LINE_PO_LINEAGE_INVALID');
-        line.productId = exactLine.product_id;
-      }
+      await validateDeliveryInstructionReferences(db, deliveryInstruction);
 
       await this.assertDeliveryInstructionAvailability(deliveryInstruction.lines);
 
@@ -204,6 +331,10 @@ export function createShippingDiRepository(db) {
           actorId,
           actorId
         )];
+
+        statements.push(auditStatement(db, 'DI', diId, 'DI_CREATED', actorId, {
+          new: { ...deliveryInstructionSnapshot(deliveryInstruction), status: 'DRAFT', diNo }
+        }));
 
         for (const line of deliveryInstruction.lines) {
           statements.push(db.prepare(`
@@ -291,6 +422,113 @@ export function createShippingDiRepository(db) {
       }
     },
 
+    async updateDraftDeliveryInstruction(diId, dto, actorId) {
+      const existing = await findDeliveryInstruction(db, diId);
+      if (!existing) throw codedError('DI_NOT_FOUND');
+      if (existing.status !== 'DRAFT') throw codedError('DI_NOT_DRAFT');
+
+      const deliveryInstruction = deliveryInstructionUpdateDto(existing, dto);
+      await validateDeliveryInstructionReferences(db, deliveryInstruction);
+      await this.assertDeliveryInstructionAvailability(deliveryInstruction.lines, diId);
+      await validateSelectedPartner(db, deliveryInstruction.surveyorPartnerId, 'SURVEYOR', 'DI_SURVEYOR_INVALID');
+      await validateSelectedPartner(db, deliveryInstruction.forwarderPartnerId, 'FORWARDER', 'DI_FORWARDER_INVALID');
+
+      const statements = [
+        db.prepare(`
+          UPDATE delivery_instructions
+          SET customer_id = ?, po_id = ?, po_revision_id = ?, di_no = ?, shipping_month = ?, shipping_period = ?,
+              note = ?, di_drive_url = ?, surveyor_partner_id = ?, forwarder_partner_id = ?,
+              updated_by = ?, updated_at = CURRENT_TIMESTAMP
+          WHERE di_id = ?
+        `).bind(
+          deliveryInstruction.customerId,
+          deliveryInstruction.poId,
+          deliveryInstruction.poRevisionId,
+          deliveryInstruction.diNo,
+          deliveryInstruction.shippingMonth,
+          deliveryInstruction.shippingPeriod,
+          deliveryInstruction.note,
+          deliveryInstruction.googleDriveUrl,
+          deliveryInstruction.surveyorPartnerId,
+          deliveryInstruction.forwarderPartnerId,
+          actorId,
+          diId
+        ),
+        db.prepare('DELETE FROM delivery_instruction_lines WHERE di_id = ?').bind(diId)
+      ];
+      for (const line of deliveryInstruction.lines) {
+        statements.push(deliveryInstructionLineReservationStatement(db, diId, deliveryInstruction, line, actorId));
+      }
+      statements.push(auditStatement(db, 'DI', diId, 'DI_UPDATED', actorId, {
+        old: deliveryInstructionSnapshot(existing),
+        new: deliveryInstructionSnapshot(deliveryInstruction)
+      }));
+      try {
+        await db.batch(statements);
+      } catch (error) {
+        if (isAvailabilityReservationFailure(error)) throw codedError('DI_QTY_EXCEEDS_MAX_ALLOWED');
+        throw error;
+      }
+      return findDeliveryInstruction(db, diId);
+    },
+
+    async confirmDeliveryInstruction(diId, actorId) {
+      const deliveryInstruction = await findDeliveryInstruction(db, diId);
+      if (!deliveryInstruction) throw codedError('DI_NOT_FOUND');
+      if (deliveryInstruction.status !== 'DRAFT') throw codedError('DI_NOT_DRAFT');
+
+      await db.batch([
+        db.prepare(`
+          UPDATE delivery_instructions
+          SET status = 'CONFIRMED', updated_by = ?, updated_at = CURRENT_TIMESTAMP
+          WHERE di_id = ?
+        `).bind(actorId, diId),
+        auditStatement(db, 'DI', diId, 'DI_CONFIRMED', actorId, {
+          oldStatus: deliveryInstruction.status,
+          newStatus: 'CONFIRMED'
+        })
+      ]);
+      return findDeliveryInstruction(db, diId);
+    },
+
+    async cancelDeliveryInstruction(diId, note, actorId) {
+      const cancellationNote = validateCancellationNote(note);
+      const deliveryInstruction = await findDeliveryInstruction(db, diId);
+      if (!deliveryInstruction) throw codedError('DI_NOT_FOUND');
+      if (deliveryInstruction.status === 'CANCELLED') throw codedError('DI_ALREADY_CANCELLED');
+
+      await db.batch([
+        db.prepare(`
+          UPDATE delivery_instructions
+          SET status = 'CANCELLED', cancellation_note = ?, updated_by = ?, updated_at = CURRENT_TIMESTAMP
+          WHERE di_id = ?
+        `).bind(cancellationNote, actorId, diId),
+        auditStatement(db, 'DI', diId, 'DI_CANCELLED', actorId, {
+          oldStatus: deliveryInstruction.status,
+          newStatus: 'CANCELLED',
+          cancellationNote
+        })
+      ]);
+      return findDeliveryInstruction(db, diId);
+    },
+
+    async deleteDraftDeliveryInstruction(diId) {
+      const deliveryInstruction = await findDeliveryInstruction(db, diId);
+      if (!deliveryInstruction) throw codedError('DI_NOT_FOUND');
+      if (deliveryInstruction.status !== 'DRAFT') throw codedError('DI_HARD_DELETE_FORBIDDEN');
+      await db.prepare('DELETE FROM delivery_instructions WHERE di_id = ?').bind(diId).run();
+    },
+
+    async getShippingDiHistory(diId) {
+      const { results } = await db.prepare(`
+        SELECT event_id, entity_type, entity_id, event_type, actor_id, metadata_json, created_at
+        FROM shipment_audit_events
+        WHERE entity_type = 'DI' AND entity_id = ?
+        ORDER BY created_at ASC, rowid ASC
+      `).bind(diId).all();
+      return results || [];
+    },
+
     async getDeliveryInstruction(diId) {
       return findDeliveryInstruction(db, diId);
     },
@@ -298,7 +536,7 @@ export function createShippingDiRepository(db) {
     async listDeliveryInstructions(filters = {}) {
       let query = `
         SELECT di_id, customer_id, po_id, po_revision_id, di_no, shipping_month, shipping_period,
-               status, note, di_drive_url, surveyor_partner_id, forwarder_partner_id,
+               status, note, cancellation_note, di_drive_url, surveyor_partner_id, forwarder_partner_id,
                created_by, created_at, updated_by, updated_at
         FROM delivery_instructions
         WHERE 1 = 1

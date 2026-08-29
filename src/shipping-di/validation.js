@@ -126,4 +126,19 @@ export function validateDeliveryInstruction(dto) {
   };
 }
 
+export function validateDeliveryInstructionUpdate(dto) {
+  if (!dto || typeof dto !== 'object' || Array.isArray(dto) || Object.keys(dto).length === 0) {
+    throw codedError('DI_UPDATE_PAYLOAD_INVALID');
+  }
+  if (Object.keys(dto).some((property) => !DELIVERY_INSTRUCTION_PROPERTIES.includes(property))) {
+    throw codedError('DI_PROPERTY_INVALID');
+  }
+  return dto;
+}
+
+export function validateCancellationNote(note) {
+  if (typeof note !== 'string' || !note.trim()) throw codedError('CANCEL_NOTE_REQUIRED');
+  return note.trim();
+}
+
 export { codedError };

@@ -28,7 +28,7 @@ CREATE TABLE delivery_instructions (
   di_drive_url TEXT,
   shipping_month TEXT NOT NULL,
   shipping_period TEXT NOT NULL CHECK(shipping_period IN ('FIRST_HALF','SECOND_HALF')),
-  status TEXT NOT NULL DEFAULT 'DRAFT' CHECK(status IN ('DRAFT','ISSUED','CANCELLED')),
+  status TEXT NOT NULL DEFAULT 'DRAFT' CHECK(status IN ('DRAFT','CONFIRMED','IN_PROGRESS','COMPLETED','CANCELLED')),
   note TEXT,
   cancellation_note TEXT,
   created_by TEXT NOT NULL REFERENCES users(user_id),
@@ -171,8 +171,9 @@ CREATE TABLE customer_credit_usages (
 
 CREATE TABLE shipment_audit_events (
   event_id TEXT PRIMARY KEY,
-  shipment_id TEXT NOT NULL REFERENCES phase6_shipments(shipment_id) ON DELETE CASCADE,
-  event_type TEXT NOT NULL CHECK(event_type IN ('SHIPMENT_CREATED','SHIPMENT_UPDATED','STATUS_CHANGED','BOOKING_UPDATED','CONTAINER_ADDED','CONTAINER_UPDATED','INVOICE_ADDED','INVOICE_UPDATED','CREDIT_APPLIED','DOCUMENTS_SENT','SHIPMENT_CANCELLED')),
+  entity_type TEXT NOT NULL CHECK(entity_type IN ('DI','SHIPMENT','INVOICE','CREDIT','DOCUMENT')),
+  entity_id TEXT NOT NULL,
+  event_type TEXT NOT NULL CHECK(event_type IN ('DI_CREATED','DI_UPDATED','DI_CONFIRMED','DI_CANCELLED','SHIPMENT_CREATED','SHIPMENT_UPDATED','STATUS_CHANGED','BOOKING_UPDATED','CONTAINER_ADDED','CONTAINER_UPDATED','INVOICE_ADDED','INVOICE_UPDATED','CREDIT_APPLIED','DOCUMENTS_SENT','SHIPMENT_CANCELLED')),
   actor_id TEXT NOT NULL REFERENCES users(user_id),
   metadata_json TEXT,
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
@@ -186,4 +187,4 @@ CREATE INDEX idx_phase6_shipments_status ON phase6_shipments(status);
 CREATE INDEX idx_phase6_shipments_booking_no ON phase6_shipments(booking_no);
 CREATE INDEX idx_shipment_invoices_invoice_no ON shipment_invoices(invoice_no);
 CREATE INDEX idx_shipment_containers_container_no ON shipment_containers(container_no);
-CREATE INDEX idx_shipment_audit_events_shipment_created_at ON shipment_audit_events(shipment_id, created_at);
+CREATE INDEX idx_shipment_audit_events_entity_created_at ON shipment_audit_events(entity_type, entity_id, created_at);

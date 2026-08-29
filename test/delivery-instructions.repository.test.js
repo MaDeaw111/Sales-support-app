@@ -345,3 +345,100 @@ test('availability assertion permits a DRAFT line to retain its own allocation o
     /DI_QTY_EXCEEDS_MAX_ALLOWED/
   );
 });
+
+test('DI lifecycle only permits DRAFT editing, confirmation, and never-confirmed DRAFT deletion', async () => {
+  const { db, wrappedDb } = await setupTestDb();
+  const repo = createShippingDiRepository(wrappedDb);
+  const created = await repo.createDeliveryInstruction(diPayload({ note: 'Initial instruction' }), 'U_EXPORT');
+
+  const updated = await repo.updateDraftDeliveryInstruction(created.di_id, { note: 'Updated instruction' }, 'U_EXPORT');
+  assert.equal(updated.note, 'Updated instruction');
+  const updatedEvent = (await repo.getShippingDiHistory(created.di_id)).at(-1);
+  assert.equal(updatedEvent.event_type, 'DI_UPDATED');
+  assert.deepEqual(JSON.parse(updatedEvent.metadata_json), {
+    old: {
+      customerId: 'C1',
+      poId: 'PO-2026-015',
+      poRevisionId: 'REV-1',
+      diNo: created.di_no,
+      shippingMonth: '2026-09',
+      shippingPeriod: 'FIRST_HALF',
+      note: 'Initial instruction',
+      googleDriveUrl: null,
+      surveyorPartnerId: null,
+      forwarderPartnerId: null,
+      lines: [{ poRevisionLineId: 'LINE-10', plannedQtyMt: 25, packingSnapshot: 'Jumbo Bag' }]
+    },
+    new: {
+      customerId: 'C1',
+      poId: 'PO-2026-015',
+      poRevisionId: 'REV-1',
+      diNo: created.di_no,
+      shippingMonth: '2026-09',
+      shippingPeriod: 'FIRST_HALF',
+      note: 'Updated instruction',
+      googleDriveUrl: null,
+      surveyorPartnerId: null,
+      forwarderPartnerId: null,
+      lines: [{ poRevisionLineId: 'LINE-10', plannedQtyMt: 25, packingSnapshot: 'Jumbo Bag' }]
+    }
+  });
+
+  const confirmed = await repo.confirmDeliveryInstruction(created.di_id, 'U_EXPORT');
+  assert.equal(confirmed.status, 'CONFIRMED');
+  await assert.rejects(
+    () => repo.updateDraftDeliveryInstruction(created.di_id, { note: 'No longer editable' }, 'U_EXPORT'),
+    /DI_NOT_DRAFT/
+  );
+  await assert.rejects(
+    () => repo.deleteDraftDeliveryInstruction(created.di_id),
+    /DI_HARD_DELETE_FORBIDDEN/
+  );
+
+  const draft = await repo.createDeliveryInstruction(diPayload({
+    lines: [{ poId: 'PO-2026-015', poRevisionId: 'REV-1', poRevisionLineId: 'LINE-20', plannedQtyMt: 25, packingSnapshot: 'Jumbo Bag' }]
+  }), 'U_EXPORT');
+  await repo.deleteDraftDeliveryInstruction(draft.di_id);
+  assert.equal(await repo.getDeliveryInstruction(draft.di_id), null);
+  assert.equal(db.prepare('SELECT COUNT(*) AS n FROM delivery_instruction_lines WHERE di_id = ?').get(draft.di_id).n, 0);
+});
+
+test('cancelling a DI requires a note, releases planned availability, and records DI audit history', async () => {
+  const { db, wrappedDb } = await setupTestDb();
+  const repo = createShippingDiRepository(wrappedDb);
+  const created = await repo.createDeliveryInstruction(diPayload(), 'U_EXPORT');
+
+  await assert.rejects(() => repo.cancelDeliveryInstruction(created.di_id, '', 'U_EXPORT'), /CANCEL_NOTE_REQUIRED/);
+  await repo.confirmDeliveryInstruction(created.di_id, 'U_EXPORT');
+  const cancelled = await repo.cancelDeliveryInstruction(created.di_id, 'Customer changed schedule', 'U_EXPORT');
+
+  assert.equal(cancelled.status, 'CANCELLED');
+  assert.equal(cancelled.cancellation_note, 'Customer changed schedule');
+  const [balance] = await repo.getPoLineBalances('PO-2026-015');
+  assert.equal(balance.available_qty_mt, 100);
+  const history = await repo.getShippingDiHistory(created.di_id);
+  assert.deepEqual(history.map((event) => event.event_type), ['DI_CREATED', 'DI_CONFIRMED', 'DI_CANCELLED']);
+  assert.ok(history.every((event) => event.entity_type === 'DI' && event.entity_id === created.di_id && event.actor_id === 'U_EXPORT' && event.created_at));
+  assert.equal(JSON.parse(history.at(-1).metadata_json).cancellationNote, 'Customer changed schedule');
+  assert.equal(db.prepare("SELECT COUNT(*) AS n FROM shipment_audit_events WHERE entity_type = 'DI'").get().n, 3);
+});
+
+test('concurrent DRAFT DI edits reserve the revised quantity only once', async () => {
+  const { db, wrappedDb } = await setupTestDb();
+  const repo = createShippingDiRepository(wrappedDb);
+  const first = await repo.createDeliveryInstruction(diPayload({ diNo: 'EDIT-RACE-1' }), 'U_EXPORT');
+  const second = await repo.createDeliveryInstruction(diPayload({ diNo: 'EDIT-RACE-2' }), 'U_EXPORT');
+  const patch = {
+    lines: [{ poId: 'PO-2026-015', poRevisionId: 'REV-1', poRevisionLineId: 'LINE-10', plannedQtyMt: 75, packingSnapshot: 'Jumbo Bag' }]
+  };
+
+  const results = await Promise.allSettled([
+    repo.updateDraftDeliveryInstruction(first.di_id, patch, 'U_EXPORT'),
+    repo.updateDraftDeliveryInstruction(second.di_id, patch, 'U_EXPORT')
+  ]);
+
+  assert.equal(results.filter((result) => result.status === 'fulfilled').length, 1);
+  assert.equal(results.filter((result) => result.status === 'rejected').length, 1);
+  assert.match(results.find((result) => result.status === 'rejected').reason.message, /DI_QTY_EXCEEDS_MAX_ALLOWED/);
+  assert.equal(db.prepare("SELECT SUM(planned_qty_mt) AS total FROM delivery_instruction_lines WHERE po_revision_line_id = 'LINE-10'").get().total, 100);
+});

@@ -58,3 +58,38 @@ test('delivery-instruction balance route exposes exact PO line availability to o
   assert.equal(response.status, 200);
   assert.deepEqual((await response.json()).data.poLineBalances, poLineBalances);
 });
+
+test('delivery-instruction lifecycle routes keep DRAFT edits and confirm available to every EXPORT user', async () => {
+  const calls = [];
+  const repo = {
+    updateDraftDeliveryInstruction: async (...args) => {
+      calls.push(['update', ...args]);
+      return { di_id: 'DI-1', note: 'Updated' };
+    },
+    confirmDeliveryInstruction: async (...args) => {
+      calls.push(['confirm', ...args]);
+      return { di_id: 'DI-1', status: 'CONFIRMED' };
+    },
+    cancelDeliveryInstruction: async (...args) => {
+      calls.push(['cancel', ...args]);
+      return { di_id: 'DI-1', status: 'CANCELLED' };
+    },
+    deleteDraftDeliveryInstruction: async (...args) => calls.push(['delete', ...args])
+  };
+  let caller = { user_id: 'U_EXPORT_2', role: 'EXPORT' };
+  const handler = createShippingDiHandler({ repo, resolveUser: async () => caller });
+
+  assert.equal((await handler(request('/api/delivery-instructions/DI-1', 'PATCH', { note: 'Updated' }))).status, 200);
+  assert.equal((await handler(request('/api/delivery-instructions/DI-1/confirm', 'POST'))).status, 200);
+  assert.equal((await handler(request('/api/delivery-instructions/DI-1/cancel', 'POST', { note: 'Schedule moved' }))).status, 200);
+  assert.equal((await handler(request('/api/delivery-instructions/DI-1', 'DELETE'))).status, 200);
+  assert.deepEqual(calls, [
+    ['update', 'DI-1', { note: 'Updated' }, 'U_EXPORT_2'],
+    ['confirm', 'DI-1', 'U_EXPORT_2'],
+    ['cancel', 'DI-1', 'Schedule moved', 'U_EXPORT_2'],
+    ['delete', 'DI-1']
+  ]);
+
+  caller = { user_id: 'U_SUPPORT', role: 'SALES_SUPPORT' };
+  assert.equal((await handler(request('/api/delivery-instructions/DI-1/confirm', 'POST'))).status, 403);
+});

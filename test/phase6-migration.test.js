@@ -47,6 +47,15 @@ test('Phase 6 migration is additive and retains Phase 5E shipment anchors', asyn
     () => db.prepare("INSERT INTO delivery_instructions (di_id, customer_id, po_id, po_revision_id, di_no, shipping_month, shipping_period, status, created_by) VALUES ('DI1','C1','PO1','REV1','D1','2026-09','INVALID','DRAFT','U1')").run(),
     /CHECK constraint failed: shipping_period/,
   );
+
+  for (const [diId, status] of [['DI2', 'CONFIRMED'], ['DI3', 'IN_PROGRESS'], ['DI4', 'COMPLETED']]) {
+    db.prepare("INSERT INTO delivery_instructions (di_id, customer_id, po_id, po_revision_id, di_no, shipping_month, shipping_period, status, created_by) VALUES (?, 'C1', 'PO1', 'REV1', ?, '2026-09', 'FIRST_HALF', ?, 'U1')")
+      .run(diId, `${diId}-NO`, status);
+  }
+  assert.throws(
+    () => db.prepare("INSERT INTO delivery_instructions (di_id, customer_id, po_id, po_revision_id, di_no, shipping_month, shipping_period, status, created_by) VALUES ('DI5', 'C1', 'PO1', 'REV1', 'DI5-NO', '2026-09', 'FIRST_HALF', 'ISSUED', 'U1')").run(),
+    /CHECK constraint failed: status/
+  );
 });
 
 test('Phase 6 schema creates every shipping DI table and required lookup indexes', async () => {
@@ -78,7 +87,7 @@ test('Phase 6 schema creates every shipping DI table and required lookup indexes
     'idx_phase6_shipments_booking_no',
     'idx_shipment_invoices_invoice_no',
     'idx_shipment_containers_container_no',
-    'idx_shipment_audit_events_shipment_created_at',
+    'idx_shipment_audit_events_entity_created_at',
   ]) {
     assert.ok(db.prepare('SELECT name FROM sqlite_master WHERE type = ? AND name = ?').get('index', index), `${index} should exist`);
   }
@@ -87,6 +96,9 @@ test('Phase 6 schema creates every shipping DI table and required lookup indexes
   for (const column of ['di_drive_url', 'surveyor_partner_id', 'forwarder_partner_id']) {
     assert.ok(deliveryInstructionColumns.includes(column), `${column} should exist on delivery_instructions`);
   }
+
+  const auditColumns = db.prepare('PRAGMA table_info(shipment_audit_events)').all().map((column) => column.name);
+  assert.deepEqual(auditColumns, ['event_id', 'entity_type', 'entity_id', 'event_type', 'actor_id', 'metadata_json', 'created_at']);
 });
 
 test('Phase 6 service partners permit the approved SURVEYOR type and reject OTHER', async () => {
