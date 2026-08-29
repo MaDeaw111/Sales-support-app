@@ -1,5 +1,10 @@
 import crypto from 'node:crypto';
-import { codedError, validateDeliveryInstruction, validateServicePartner } from './validation.js';
+import {
+  codedError,
+  validateDeliveryInstruction,
+  validateDeliveryInstructionAvailabilityLines,
+  validateServicePartner
+} from './validation.js';
 
 async function nextId(db) {
   const row = await db.prepare(`
@@ -163,6 +168,8 @@ export function createShippingDiRepository(db) {
         line.productId = exactLine.product_id;
       }
 
+      await this.assertDeliveryInstructionAvailability(deliveryInstruction.lines);
+
       await validateSelectedPartner(db, deliveryInstruction.surveyorPartnerId, 'SURVEYOR', 'DI_SURVEYOR_INVALID');
       await validateSelectedPartner(db, deliveryInstruction.forwarderPartnerId, 'FORWARDER', 'DI_FORWARDER_INVALID');
 
@@ -268,6 +275,94 @@ export function createShippingDiRepository(db) {
         surveyor_partner_id: latest?.surveyor_partner_id || null,
         forwarder_partner_id: latest?.forwarder_partner_id || null
       };
+    },
+
+    async getPoLineBalances(poId) {
+      const { results } = await db.prepare(`
+        WITH actual_by_line AS (
+          SELECT dil.po_revision_line_id, SUM(scl.qty_mt) AS actual_qty_mt
+          FROM delivery_instruction_lines dil
+          JOIN shipment_container_lines scl ON scl.delivery_instruction_line_id = dil.di_line_id
+          JOIN shipment_containers sc ON sc.container_id = scl.container_id
+          JOIN phase6_shipments s ON s.shipment_id = sc.shipment_id
+          WHERE s.status <> 'CANCELLED' AND sc.status <> 'CANCELLED'
+          GROUP BY dil.po_revision_line_id
+        ),
+        unrepresented_planned_by_line AS (
+          SELECT dil.po_revision_line_id, SUM(dil.planned_qty_mt) AS unrepresented_planned_qty_mt
+          FROM delivery_instruction_lines dil
+          JOIN delivery_instructions di ON di.di_id = dil.di_id
+          WHERE di.po_id = ?
+            AND di.status <> 'CANCELLED'
+            AND NOT EXISTS (
+              SELECT 1
+              FROM delivery_instruction_lines actual_dil
+              JOIN shipment_container_lines scl ON scl.delivery_instruction_line_id = actual_dil.di_line_id
+              JOIN shipment_containers sc ON sc.container_id = scl.container_id
+              JOIN phase6_shipments s ON s.shipment_id = sc.shipment_id
+              WHERE actual_dil.di_id = di.di_id
+                AND s.status <> 'CANCELLED'
+                AND sc.status <> 'CANCELLED'
+            )
+          GROUP BY dil.po_revision_line_id
+        )
+        SELECT l.line_id AS po_revision_line_id, l.po_revision_id, l.line_no, l.product_id,
+               l.contract_qty_mt, l.max_qty_mt,
+               COALESCE(a.actual_qty_mt, 0) AS actual_qty_mt,
+               COALESCE(p.unrepresented_planned_qty_mt, 0) AS unrepresented_planned_qty_mt,
+               l.max_qty_mt - COALESCE(a.actual_qty_mt, 0) - COALESCE(p.unrepresented_planned_qty_mt, 0) AS available_qty_mt
+        FROM po_revision_lines l
+        JOIN po_revisions r ON r.revision_id = l.po_revision_id
+        LEFT JOIN actual_by_line a ON a.po_revision_line_id = l.line_id
+        LEFT JOIN unrepresented_planned_by_line p ON p.po_revision_line_id = l.line_id
+        WHERE r.po_id = ?
+        ORDER BY l.line_no ASC
+      `).bind(poId, poId).all();
+      return results || [];
+    },
+
+    async assertDeliveryInstructionAvailability(lines, excludedDiId = null) {
+      const requestedLines = validateDeliveryInstructionAvailabilityLines(lines);
+      const balancesByPoId = new Map();
+      const priorAllocationByLineId = new Map();
+
+      if (excludedDiId) {
+        const { results } = await db.prepare(`
+          SELECT dil.po_revision_line_id, SUM(dil.planned_qty_mt) AS planned_qty_mt
+          FROM delivery_instruction_lines dil
+          JOIN delivery_instructions di ON di.di_id = dil.di_id
+          WHERE dil.di_id = ?
+            AND di.status <> 'CANCELLED'
+            AND NOT EXISTS (
+              SELECT 1
+              FROM delivery_instruction_lines actual_dil
+              JOIN shipment_container_lines scl ON scl.delivery_instruction_line_id = actual_dil.di_line_id
+              JOIN shipment_containers sc ON sc.container_id = scl.container_id
+              JOIN phase6_shipments s ON s.shipment_id = sc.shipment_id
+              WHERE actual_dil.di_id = dil.di_id
+                AND s.status <> 'CANCELLED'
+                AND sc.status <> 'CANCELLED'
+            )
+          GROUP BY dil.po_revision_line_id
+        `).bind(excludedDiId).all();
+        for (const allocation of results || []) {
+          priorAllocationByLineId.set(allocation.po_revision_line_id, allocation.planned_qty_mt);
+        }
+      }
+
+      for (const line of requestedLines) {
+        if (!balancesByPoId.has(line.poId)) {
+          balancesByPoId.set(line.poId, await this.getPoLineBalances(line.poId));
+        }
+        const balance = balancesByPoId.get(line.poId)
+          .find((candidate) => candidate.po_revision_line_id === line.poRevisionLineId);
+        if (!balance || balance.po_revision_id !== line.poRevisionId) throw codedError('DI_LINE_PO_LINEAGE_INVALID');
+
+        const priorAllocation = Number(priorAllocationByLineId.get(line.poRevisionLineId) || 0);
+        if (line.plannedQtyMt > balance.available_qty_mt + priorAllocation + 0.000001) {
+          throw codedError('DI_QTY_EXCEEDS_MAX_ALLOWED');
+        }
+      }
     }
   };
 }

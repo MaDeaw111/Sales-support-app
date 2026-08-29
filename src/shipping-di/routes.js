@@ -62,6 +62,13 @@ export function createShippingDiHandler({ repo, resolveUser, db }) {
       return json({ status: 'SUCCESS', data: { deliveryInstructions } });
     }
 
+    const poBalanceMatch = path.match(/^\/api\/delivery-instructions\/po-balance\/([^/]+)$/);
+    if (poBalanceMatch && method === 'GET') {
+      if (!OPERATIONAL_READER_ROLES.includes(caller.role)) return json({ status: 'ERROR', message: 'Permission denied.' }, 403);
+      const poLineBalances = await activeRepo.getPoLineBalances(decodeURIComponent(poBalanceMatch[1]));
+      return json({ status: 'SUCCESS', data: { poLineBalances } });
+    }
+
     if (path === '/api/delivery-instructions' && method === 'POST') {
       if (!DELIVERY_INSTRUCTION_WRITE_ROLES.includes(caller.role)) return json({ status: 'ERROR', message: 'Permission denied.' }, 403);
       const body = await readJson(request);

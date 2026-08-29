@@ -42,3 +42,19 @@ test('delivery-instruction routes reject unauthenticated and non-operational cal
   });
   assert.equal((await deniedHandler(request('/api/delivery-instructions'))).status, 403);
 });
+
+test('delivery-instruction balance route exposes exact PO line availability to operational readers', async () => {
+  const poLineBalances = [{ po_revision_line_id: 'LINE-10', available_qty_mt: 92 }];
+  const handler = createShippingDiHandler({
+    repo: { getPoLineBalances: async (poId) => {
+      assert.equal(poId, 'PO-2026-015');
+      return poLineBalances;
+    } },
+    resolveUser: async () => ({ user_id: 'U_SUPPORT', role: 'SALES_SUPPORT' })
+  });
+
+  const response = await handler(request('/api/delivery-instructions/po-balance/PO-2026-015'));
+
+  assert.equal(response.status, 200);
+  assert.deepEqual((await response.json()).data.poLineBalances, poLineBalances);
+});

@@ -68,6 +68,24 @@ function validateGoogleDriveUrl(value) {
   return value;
 }
 
+export function validateDeliveryInstructionAvailabilityLines(lines) {
+  if (!Array.isArray(lines) || lines.length === 0) throw codedError('DI_LINES_REQUIRED');
+
+  return lines.map((line) => {
+    if (!line || typeof line !== 'object' || Array.isArray(line)) throw codedError('DI_LINE_INVALID');
+    const poId = requiredId(line.poId, 'DI_LINE_PO_LINEAGE_INVALID');
+    const poRevisionId = requiredId(line.poRevisionId, 'DI_LINE_PO_LINEAGE_INVALID');
+    const poRevisionLineId = requiredId(line.poRevisionLineId, 'DI_LINE_PO_LINEAGE_INVALID');
+    if (typeof line.plannedQtyMt !== 'number' || !Number.isFinite(line.plannedQtyMt) || line.plannedQtyMt <= 0) {
+      throw codedError('DI_LINE_PLANNED_QTY_INVALID');
+    }
+    if (typeof line.packingSnapshot !== 'string' || !line.packingSnapshot.trim()) {
+      throw codedError('DI_LINE_PACKING_REQUIRED');
+    }
+    return { poId, poRevisionId, poRevisionLineId, plannedQtyMt: line.plannedQtyMt, packingSnapshot: line.packingSnapshot.trim() };
+  });
+}
+
 export function validateDeliveryInstruction(dto) {
   if (!dto || typeof dto !== 'object' || Array.isArray(dto)) throw codedError('DI_PAYLOAD_INVALID');
   if (Object.keys(dto).some((property) => !DELIVERY_INSTRUCTION_PROPERTIES.includes(property))) {
@@ -87,21 +105,7 @@ export function validateDeliveryInstruction(dto) {
   if (!['FIRST_HALF', 'SECOND_HALF'].includes(dto.shippingPeriod)) {
     throw codedError('DI_SHIPPING_PERIOD_INVALID');
   }
-  if (!Array.isArray(dto.lines) || dto.lines.length === 0) throw codedError('DI_LINES_REQUIRED');
-
-  const lines = dto.lines.map((line) => {
-    if (!line || typeof line !== 'object' || Array.isArray(line)) throw codedError('DI_LINE_INVALID');
-    const poId = requiredId(line.poId, 'DI_LINE_PO_LINEAGE_INVALID');
-    const poRevisionId = requiredId(line.poRevisionId, 'DI_LINE_PO_LINEAGE_INVALID');
-    const poRevisionLineId = requiredId(line.poRevisionLineId, 'DI_LINE_PO_LINEAGE_INVALID');
-    if (typeof line.plannedQtyMt !== 'number' || !Number.isFinite(line.plannedQtyMt) || line.plannedQtyMt <= 0) {
-      throw codedError('DI_LINE_PLANNED_QTY_INVALID');
-    }
-    if (typeof line.packingSnapshot !== 'string' || !line.packingSnapshot.trim()) {
-      throw codedError('DI_LINE_PACKING_REQUIRED');
-    }
-    return { poId, poRevisionId, poRevisionLineId, plannedQtyMt: line.plannedQtyMt, packingSnapshot: line.packingSnapshot.trim() };
-  });
+  const lines = validateDeliveryInstructionAvailabilityLines(dto.lines);
 
   if (typeof dto.note !== 'undefined' && dto.note !== null && typeof dto.note !== 'string') {
     throw codedError('DI_NOTE_INVALID');

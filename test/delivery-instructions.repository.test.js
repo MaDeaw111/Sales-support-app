@@ -231,3 +231,92 @@ test('partner suggestions use insertion chronology when historical DIs share a t
     forwarder_partner_id: 'SP-FORWARDER-NEW'
   });
 });
+
+test('PO line balance subtracts planned only until that DI has actual container quantity', async () => {
+  const { db, wrappedDb } = await setupTestDb();
+  const repo = createShippingDiRepository(wrappedDb);
+
+  db.prepare(`
+    INSERT INTO delivery_instructions (
+      di_id, customer_id, po_id, po_revision_id, di_no, shipping_month, shipping_period, status, created_by
+    ) VALUES ('DI-1', 'C1', 'PO-2026-015', 'REV-1', 'BALANCE-1', '2026-09', 'FIRST_HALF', 'DRAFT', 'U_EXPORT')
+  `).run();
+  db.prepare(`
+    INSERT INTO delivery_instruction_lines (
+      di_line_id, di_id, po_id, po_revision_id, po_revision_line_id, product_id, planned_qty_mt, packing_snapshot, created_by
+    ) VALUES ('DIL-1', 'DI-1', 'PO-2026-015', 'REV-1', 'LINE-10', 'P1', 10, 'Jumbo Bag', 'U_EXPORT')
+  `).run();
+  db.prepare("INSERT INTO phase6_shipments (shipment_id, di_id, status, created_by) VALUES ('SHIP-1', 'DI-1', 'LOADED', 'U_EXPORT')").run();
+  db.prepare("INSERT INTO shipment_containers (container_id, shipment_id, container_no, container_type, status, created_by) VALUES ('CONT-1', 'SHIP-1', 'TGHU1234567', '20GP', 'LOADED', 'U_EXPORT')").run();
+  db.prepare("INSERT INTO shipment_container_lines (container_line_id, container_id, delivery_instruction_line_id, qty_mt, created_by) VALUES ('CL-1', 'CONT-1', 'DIL-1', 8, 'U_EXPORT')").run();
+
+  const [balance] = await repo.getPoLineBalances('PO-2026-015');
+
+  assert.equal(balance.available_qty_mt, 92); // 100 max - 8 actual; not 100 - 10 - 8
+});
+
+test('DI creation rejects planned quantity above the exact PO line maximum', async () => {
+  const { wrappedDb } = await setupTestDb();
+  const repo = createShippingDiRepository(wrappedDb);
+
+  await repo.createDeliveryInstruction(diPayload({
+    lines: [{ poId: 'PO-2026-015', poRevisionId: 'REV-1', poRevisionLineId: 'LINE-10', plannedQtyMt: 75, packingSnapshot: 'Jumbo Bag' }]
+  }), 'U_EXPORT');
+
+  await assert.rejects(
+    () => repo.createDeliveryInstruction(diPayload({
+      lines: [{ poId: 'PO-2026-015', poRevisionId: 'REV-1', poRevisionLineId: 'LINE-10', plannedQtyMt: 26, packingSnapshot: 'Jumbo Bag' }]
+    }), 'U_EXPORT'),
+    /DI_QTY_EXCEEDS_MAX_ALLOWED/
+  );
+});
+
+test('cancelled DI planned quantity is released from the PO line balance', async () => {
+  const { db, wrappedDb } = await setupTestDb();
+  const repo = createShippingDiRepository(wrappedDb);
+
+  db.prepare(`
+    INSERT INTO delivery_instructions (
+      di_id, customer_id, po_id, po_revision_id, di_no, shipping_month, shipping_period, status, created_by
+    ) VALUES ('DI-CANCELLED', 'C1', 'PO-2026-015', 'REV-1', 'CANCELLED-1', '2026-09', 'FIRST_HALF', 'CANCELLED', 'U_EXPORT')
+  `).run();
+  db.prepare(`
+    INSERT INTO delivery_instruction_lines (
+      di_line_id, di_id, po_id, po_revision_id, po_revision_line_id, product_id, planned_qty_mt, packing_snapshot, created_by
+    ) VALUES ('DIL-CANCELLED', 'DI-CANCELLED', 'PO-2026-015', 'REV-1', 'LINE-10', 'P1', 100, 'Jumbo Bag', 'U_EXPORT')
+  `).run();
+
+  const [balance] = await repo.getPoLineBalances('PO-2026-015');
+
+  assert.equal(balance.unrepresented_planned_qty_mt, 0);
+  assert.equal(balance.available_qty_mt, 100);
+});
+
+test('availability assertion permits a DRAFT line to retain its own allocation only', async () => {
+  const { db, wrappedDb } = await setupTestDb();
+  const repo = createShippingDiRepository(wrappedDb);
+
+  db.prepare(`
+    INSERT INTO delivery_instructions (
+      di_id, customer_id, po_id, po_revision_id, di_no, shipping_month, shipping_period, status, created_by
+    ) VALUES ('DI-DRAFT', 'C1', 'PO-2026-015', 'REV-1', 'DRAFT-1', '2026-09', 'FIRST_HALF', 'DRAFT', 'U_EXPORT')
+  `).run();
+  db.prepare(`
+    INSERT INTO delivery_instruction_lines (
+      di_line_id, di_id, po_id, po_revision_id, po_revision_line_id, product_id, planned_qty_mt, packing_snapshot, created_by
+    ) VALUES ('DIL-DRAFT', 'DI-DRAFT', 'PO-2026-015', 'REV-1', 'LINE-10', 'P1', 100, 'Jumbo Bag', 'U_EXPORT')
+  `).run();
+
+  const line = {
+    poId: 'PO-2026-015',
+    poRevisionId: 'REV-1',
+    poRevisionLineId: 'LINE-10',
+    plannedQtyMt: 100,
+    packingSnapshot: 'Jumbo Bag'
+  };
+  await assert.doesNotReject(() => repo.assertDeliveryInstructionAvailability([line], 'DI-DRAFT'));
+  await assert.rejects(
+    () => repo.assertDeliveryInstructionAvailability([{ ...line, plannedQtyMt: 100.01 }], 'DI-DRAFT'),
+    /DI_QTY_EXCEEDS_MAX_ALLOWED/
+  );
+});
