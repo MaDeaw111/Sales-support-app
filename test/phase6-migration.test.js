@@ -22,9 +22,21 @@ async function setupThrough0006() {
   return db;
 }
 
+function seedDeliveryInstructionReferences(db) {
+  db.prepare("INSERT INTO users (user_id, email, password_hash, password_salt, role, status, full_name) VALUES ('U1', 'sales@example.com', 'hash', 'salt', 'EXTERNAL_SALES', 'ACTIVE', 'Sales Person')").run();
+  db.prepare("INSERT INTO customers (customer_id, customer_code, customer_name) VALUES ('C1', 'CUST1', 'Customer 1')").run();
+  db.prepare("INSERT INTO product_categories (category_id, category_code, category_name) VALUES ('CAT1', 'TAPIOCA', 'Tapioca Product')").run();
+  db.prepare("INSERT INTO product_forms (form_id, form_code, form_name) VALUES ('FRM1', 'PELLET', 'Pellet')").run();
+  db.prepare("INSERT INTO products (product_id, product_code, product_name, short_name, category_id, form_id) VALUES ('P1', 'THP-65', 'Tapioca Pellet 65%', 'THP65', 'CAT1', 'FRM1')").run();
+  db.prepare("INSERT INTO po_headers (po_id, customer_id, created_by) VALUES ('PO1', 'C1', 'U1')").run();
+  db.prepare("INSERT INTO po_revisions (revision_id, po_id, revision_no, status, ownership_type_snapshot, sales_owner_user_id_snapshot, currency, incoterm, delivery_start, delivery_end, valid_until, created_by) VALUES ('REV1', 'PO1', 0, 'DRAFT', 'ASSIGNED_SALES', 'U1', 'USD', 'FOB', '2026-09-01', '2026-09-30', '2026-08-31', 'U1')").run();
+  db.prepare("INSERT INTO po_revision_lines (line_id, po_revision_id, line_no, product_id, spec_source, spec_revision_id, contract_qty_mt, tolerance_pct, min_qty_mt, max_qty_mt, unit_price, packaging, container_type, loading_pattern) VALUES ('LINE1', 'REV1', 10, 'P1', 'STANDARD', 'SPEC-REV-1', 100, 10, 90, 110, 350, 'Jumbo Bag', '20GP', 'Palletized')").run();
+}
+
 test('Phase 6 migration is additive and retains Phase 5E shipment anchors', async () => {
   const db = await setupThrough0006();
   db.exec(await readMigration('0007_shipping_di_integration.sql'));
+  seedDeliveryInstructionReferences(db);
 
   assert.ok(db.prepare("SELECT name FROM sqlite_master WHERE name = 'shipments'").get());
   assert.ok(db.prepare("SELECT name FROM sqlite_master WHERE name = 'shipment_document_links'").get());
@@ -32,8 +44,8 @@ test('Phase 6 migration is additive and retains Phase 5E shipment anchors', asyn
   assert.ok(db.prepare("SELECT name FROM sqlite_master WHERE name = 'phase6_shipments'").get());
 
   assert.throws(
-    () => db.prepare("INSERT INTO delivery_instructions (di_id, customer_id, po_id, di_no, shipping_month, shipping_period, status, created_by) VALUES ('DI1','C1','PO1','D1','2026-09','INVALID','DRAFT','U1')").run(),
-    /constraint failed/,
+    () => db.prepare("INSERT INTO delivery_instructions (di_id, customer_id, po_id, po_revision_id, di_no, shipping_month, shipping_period, status, created_by) VALUES ('DI1','C1','PO1','REV1','D1','2026-09','INVALID','DRAFT','U1')").run(),
+    /CHECK constraint failed: shipping_period/,
   );
 });
 
