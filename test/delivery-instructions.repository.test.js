@@ -35,6 +35,7 @@ async function setupTestDb({ collisionDiNo = null, failLineId = null } = {}) {
   }
 
   let collisionTriggered = false;
+  let releasePreviousBatch = Promise.resolve();
   const wrappedDb = {
     prepare(sql) {
       const statement = db.prepare(sql);
@@ -68,6 +69,12 @@ async function setupTestDb({ collisionDiNo = null, failLineId = null } = {}) {
       };
     },
     async batch(statements) {
+      const previousBatch = releasePreviousBatch;
+      let releaseBatch;
+      releasePreviousBatch = new Promise((resolve) => {
+        releaseBatch = resolve;
+      });
+      await previousBatch;
       db.exec('BEGIN');
       try {
         const results = [];
@@ -77,6 +84,8 @@ async function setupTestDb({ collisionDiNo = null, failLineId = null } = {}) {
       } catch (error) {
         db.exec('ROLLBACK');
         throw error;
+      } finally {
+        releaseBatch();
       }
     }
   };
@@ -269,6 +278,22 @@ test('DI creation rejects planned quantity above the exact PO line maximum', asy
     }), 'U_EXPORT'),
     /DI_QTY_EXCEEDS_MAX_ALLOWED/
   );
+});
+
+test('concurrent DI creates reserve the exact PO line quantity only once', async () => {
+  const { db, wrappedDb } = await setupTestDb();
+  const repo = createShippingDiRepository(wrappedDb);
+  const attempt = (diNo) => repo.createDeliveryInstruction(diPayload({
+    diNo,
+    lines: [{ poId: 'PO-2026-015', poRevisionId: 'REV-1', poRevisionLineId: 'LINE-10', plannedQtyMt: 75, packingSnapshot: 'Jumbo Bag' }]
+  }), 'U_EXPORT');
+
+  const results = await Promise.allSettled([attempt('RACE-1'), attempt('RACE-2')]);
+
+  assert.equal(results.filter((result) => result.status === 'fulfilled').length, 1);
+  assert.equal(results.filter((result) => result.status === 'rejected').length, 1);
+  assert.match(results.find((result) => result.status === 'rejected').reason.message, /DI_QTY_EXCEEDS_MAX_ALLOWED/);
+  assert.equal(db.prepare("SELECT SUM(planned_qty_mt) AS total FROM delivery_instruction_lines WHERE po_revision_line_id = 'LINE-10'").get().total, 75);
 });
 
 test('cancelled DI planned quantity is released from the PO line balance', async () => {

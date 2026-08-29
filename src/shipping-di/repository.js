@@ -38,6 +38,10 @@ function isInternalDiNoUniqueCollision(error) {
   );
 }
 
+function isAvailabilityReservationFailure(error) {
+  return String(error?.message || '').includes('CHECK constraint failed: planned_qty_mt > 0');
+}
+
 async function findDeliveryInstruction(db, diId) {
   const deliveryInstruction = await db.prepare(`
     SELECT di_id, customer_id, po_id, po_revision_id, di_no, shipping_month, shipping_period,
@@ -203,10 +207,61 @@ export function createShippingDiRepository(db) {
 
         for (const line of deliveryInstruction.lines) {
           statements.push(db.prepare(`
+            WITH requested_line (
+              di_line_id, di_id, po_id, po_revision_id, po_revision_line_id, product_id,
+              planned_qty_mt, packing_snapshot, created_by, updated_by
+            ) AS (VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?))
             INSERT INTO delivery_instruction_lines (
               di_line_id, di_id, po_id, po_revision_id, po_revision_line_id, product_id,
               planned_qty_mt, packing_snapshot, created_by, updated_by
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            )
+            SELECT requested.di_line_id, requested.di_id, requested.po_id, requested.po_revision_id,
+                   requested.po_revision_line_id, requested.product_id,
+                   CASE
+                     WHEN requested.planned_qty_mt <= COALESCE((
+                       SELECT line.max_qty_mt
+                         - COALESCE((
+                           SELECT SUM(container_line.qty_mt)
+                           FROM delivery_instruction_lines actual_di_line
+                           JOIN shipment_container_lines container_line
+                             ON container_line.delivery_instruction_line_id = actual_di_line.di_line_id
+                           JOIN shipment_containers container
+                             ON container.container_id = container_line.container_id
+                           JOIN phase6_shipments shipment
+                             ON shipment.shipment_id = container.shipment_id
+                           WHERE actual_di_line.po_revision_line_id = requested.po_revision_line_id
+                             AND shipment.status <> 'CANCELLED'
+                             AND container.status <> 'CANCELLED'
+                         ), 0)
+                         - COALESCE((
+                           SELECT SUM(planned_di_line.planned_qty_mt)
+                           FROM delivery_instruction_lines planned_di_line
+                           JOIN delivery_instructions planned_di
+                             ON planned_di.di_id = planned_di_line.di_id
+                           WHERE planned_di_line.po_revision_line_id = requested.po_revision_line_id
+                             AND planned_di.status <> 'CANCELLED'
+                             AND NOT EXISTS (
+                               SELECT 1
+                               FROM delivery_instruction_lines actual_di_line
+                               JOIN shipment_container_lines container_line
+                                 ON container_line.delivery_instruction_line_id = actual_di_line.di_line_id
+                               JOIN shipment_containers container
+                                 ON container.container_id = container_line.container_id
+                               JOIN phase6_shipments shipment
+                                 ON shipment.shipment_id = container.shipment_id
+                               WHERE actual_di_line.di_id = planned_di.di_id
+                                 AND shipment.status <> 'CANCELLED'
+                                 AND container.status <> 'CANCELLED'
+                             )
+                         ), 0)
+                       FROM po_revision_lines line
+                       WHERE line.line_id = requested.po_revision_line_id
+                     ), -1) + 0.000001
+                     THEN requested.planned_qty_mt
+                     ELSE -1
+                   END,
+                   requested.packing_snapshot, requested.created_by, requested.updated_by
+            FROM requested_line requested
           `).bind(
             `DIL-${crypto.randomUUID()}`,
             diId,
@@ -225,6 +280,9 @@ export function createShippingDiRepository(db) {
           await db.batch(statements);
           return findDeliveryInstruction(db, diId);
         } catch (error) {
+          if (isAvailabilityReservationFailure(error)) {
+            throw codedError('DI_QTY_EXCEEDS_MAX_ALLOWED');
+          }
           if (!hasCustomerDiNo && attempt + 1 < maxInternalNumberAttempts && isInternalDiNoUniqueCollision(error)) {
             continue;
           }
