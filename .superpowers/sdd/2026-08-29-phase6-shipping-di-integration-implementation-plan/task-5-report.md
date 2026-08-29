@@ -53,3 +53,26 @@ Committed as `feat: add Phase 6 DI lifecycle`.
 
 - No booking behavior was added. A later task is responsible for moving a confirmed DI to `IN_PROGRESS`.
 - No remote D1, production system, deployment, or legacy shipment module was accessed or changed.
+
+## Fix round 1: lifecycle mutation guards
+
+### Root cause
+
+The initial lifecycle methods checked the DI status before their write, then issued unconditional mutations. A concurrent caller could pass the same stale `DRAFT` read, so PATCH/confirm or DELETE/confirm could both report success. Cancellation also treated every non-cancelled state as cancellable.
+
+### RED evidence
+
+- Cancelling a DRAFT DI with a valid note succeeded when the expected result was `DI_NOT_CONFIRMED`.
+- Real `Promise.allSettled()` PATCH-vs-confirm and DELETE-vs-confirm regressions both failed with two fulfilled operations (`2 !== 1`).
+
+### Fix
+
+- Cancellation now accepts only `CONFIRMED`; DRAFT, IN_PROGRESS, and COMPLETED reject with `DI_NOT_CONFIRMED`.
+- PATCH, confirm, cancel, and delete use their expected status in the SQL `WHERE` clause. A zero-row mutation returns the appropriate lifecycle error instead of treating a stale precheck as authorization.
+- Audit inserts use SQLite `changes() = 1` immediately after their guarded mutation, so a losing state transition cannot append an event. DRAFT line deletion/insertion is likewise status-gated, preserving the Task 4 atomic quantity reservation guard.
+
+### Fix-round verification
+
+- `node --test test/delivery-instructions.repository.test.js test/delivery-instructions.routes.test.js test/phase6-migration.test.js` — 24 passed, 0 failed.
+- `npm test` — 199 passed, 0 failed, 0 skipped.
+- `git diff --check` — no whitespace errors.

@@ -106,6 +106,18 @@ function auditStatement(db, entityType, entityId, eventType, actorId, metadata =
   `).bind(`EVT-${crypto.randomUUID()}`, entityType, entityId, eventType, actorId, JSON.stringify(metadata));
 }
 
+function auditAfterMutationStatement(db, entityType, entityId, eventType, actorId, metadata = {}) {
+  return db.prepare(`
+    INSERT INTO shipment_audit_events (event_id, entity_type, entity_id, event_type, actor_id, metadata_json)
+    SELECT ?, ?, ?, ?, ?, ?
+    WHERE changes() = 1
+  `).bind(`EVT-${crypto.randomUUID()}`, entityType, entityId, eventType, actorId, JSON.stringify(metadata));
+}
+
+function mutationApplied(result) {
+  return Number(result?.meta?.changes ?? result?.changes ?? 0) === 1;
+}
+
 function deliveryInstructionUpdateDto(existing, dto) {
   const patch = validateDeliveryInstructionUpdate(dto);
   const existingDto = {
@@ -228,6 +240,11 @@ function deliveryInstructionLineReservationStatement(db, diId, deliveryInstructi
            END,
            requested.packing_snapshot, requested.created_by, requested.updated_by
     FROM requested_line requested
+    WHERE EXISTS (
+      SELECT 1
+      FROM delivery_instructions current_di
+      WHERE current_di.di_id = requested.di_id AND current_di.status = 'DRAFT'
+    )
   `).bind(
     `DIL-${crypto.randomUUID()}`,
     diId,
@@ -439,7 +456,7 @@ export function createShippingDiRepository(db) {
           SET customer_id = ?, po_id = ?, po_revision_id = ?, di_no = ?, shipping_month = ?, shipping_period = ?,
               note = ?, di_drive_url = ?, surveyor_partner_id = ?, forwarder_partner_id = ?,
               updated_by = ?, updated_at = CURRENT_TIMESTAMP
-          WHERE di_id = ?
+          WHERE di_id = ? AND status = 'DRAFT'
         `).bind(
           deliveryInstruction.customerId,
           deliveryInstruction.poId,
@@ -454,17 +471,24 @@ export function createShippingDiRepository(db) {
           actorId,
           diId
         ),
-        db.prepare('DELETE FROM delivery_instruction_lines WHERE di_id = ?').bind(diId)
+        auditAfterMutationStatement(db, 'DI', diId, 'DI_UPDATED', actorId, {
+          old: deliveryInstructionSnapshot(existing),
+          new: deliveryInstructionSnapshot(deliveryInstruction)
+        }),
+        db.prepare(`
+          DELETE FROM delivery_instruction_lines
+          WHERE di_id = ?
+            AND EXISTS (
+              SELECT 1 FROM delivery_instructions WHERE di_id = ? AND status = 'DRAFT'
+            )
+        `).bind(diId, diId)
       ];
       for (const line of deliveryInstruction.lines) {
         statements.push(deliveryInstructionLineReservationStatement(db, diId, deliveryInstruction, line, actorId));
       }
-      statements.push(auditStatement(db, 'DI', diId, 'DI_UPDATED', actorId, {
-        old: deliveryInstructionSnapshot(existing),
-        new: deliveryInstructionSnapshot(deliveryInstruction)
-      }));
       try {
-        await db.batch(statements);
+        const results = await db.batch(statements);
+        if (!mutationApplied(results[0])) throw codedError('DI_NOT_DRAFT');
       } catch (error) {
         if (isAvailabilityReservationFailure(error)) throw codedError('DI_QTY_EXCEEDS_MAX_ALLOWED');
         throw error;
@@ -477,17 +501,18 @@ export function createShippingDiRepository(db) {
       if (!deliveryInstruction) throw codedError('DI_NOT_FOUND');
       if (deliveryInstruction.status !== 'DRAFT') throw codedError('DI_NOT_DRAFT');
 
-      await db.batch([
+      const results = await db.batch([
         db.prepare(`
           UPDATE delivery_instructions
           SET status = 'CONFIRMED', updated_by = ?, updated_at = CURRENT_TIMESTAMP
-          WHERE di_id = ?
+          WHERE di_id = ? AND status = 'DRAFT'
         `).bind(actorId, diId),
-        auditStatement(db, 'DI', diId, 'DI_CONFIRMED', actorId, {
+        auditAfterMutationStatement(db, 'DI', diId, 'DI_CONFIRMED', actorId, {
           oldStatus: deliveryInstruction.status,
           newStatus: 'CONFIRMED'
         })
       ]);
+      if (!mutationApplied(results[0])) throw codedError('DI_NOT_DRAFT');
       return findDeliveryInstruction(db, diId);
     },
 
@@ -495,20 +520,21 @@ export function createShippingDiRepository(db) {
       const cancellationNote = validateCancellationNote(note);
       const deliveryInstruction = await findDeliveryInstruction(db, diId);
       if (!deliveryInstruction) throw codedError('DI_NOT_FOUND');
-      if (deliveryInstruction.status === 'CANCELLED') throw codedError('DI_ALREADY_CANCELLED');
+      if (deliveryInstruction.status !== 'CONFIRMED') throw codedError('DI_NOT_CONFIRMED');
 
-      await db.batch([
+      const results = await db.batch([
         db.prepare(`
           UPDATE delivery_instructions
           SET status = 'CANCELLED', cancellation_note = ?, updated_by = ?, updated_at = CURRENT_TIMESTAMP
-          WHERE di_id = ?
+          WHERE di_id = ? AND status = 'CONFIRMED'
         `).bind(cancellationNote, actorId, diId),
-        auditStatement(db, 'DI', diId, 'DI_CANCELLED', actorId, {
+        auditAfterMutationStatement(db, 'DI', diId, 'DI_CANCELLED', actorId, {
           oldStatus: deliveryInstruction.status,
           newStatus: 'CANCELLED',
           cancellationNote
         })
       ]);
+      if (!mutationApplied(results[0])) throw codedError('DI_NOT_CONFIRMED');
       return findDeliveryInstruction(db, diId);
     },
 
@@ -516,7 +542,15 @@ export function createShippingDiRepository(db) {
       const deliveryInstruction = await findDeliveryInstruction(db, diId);
       if (!deliveryInstruction) throw codedError('DI_NOT_FOUND');
       if (deliveryInstruction.status !== 'DRAFT') throw codedError('DI_HARD_DELETE_FORBIDDEN');
-      await db.prepare('DELETE FROM delivery_instructions WHERE di_id = ?').bind(diId).run();
+      const result = await db.prepare(`
+        DELETE FROM delivery_instructions
+        WHERE di_id = ? AND status = 'DRAFT'
+      `).bind(diId).run();
+      if (!mutationApplied(result)) {
+        const current = await findDeliveryInstruction(db, diId);
+        if (!current) throw codedError('DI_NOT_FOUND');
+        throw codedError('DI_HARD_DELETE_FORBIDDEN');
+      }
     },
 
     async getShippingDiHistory(diId) {

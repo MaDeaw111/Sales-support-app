@@ -409,6 +409,15 @@ test('cancelling a DI requires a note, releases planned availability, and record
   const created = await repo.createDeliveryInstruction(diPayload(), 'U_EXPORT');
 
   await assert.rejects(() => repo.cancelDeliveryInstruction(created.di_id, '', 'U_EXPORT'), /CANCEL_NOTE_REQUIRED/);
+  await assert.rejects(() => repo.cancelDeliveryInstruction(created.di_id, 'Customer changed schedule', 'U_EXPORT'), /DI_NOT_CONFIRMED/);
+  for (const status of ['IN_PROGRESS', 'COMPLETED']) {
+    const nonCancellable = await repo.createDeliveryInstruction(diPayload({
+      diNo: `CANCEL-${status}`,
+      lines: [{ poId: 'PO-2026-015', poRevisionId: 'REV-1', poRevisionLineId: 'LINE-20', plannedQtyMt: 1, packingSnapshot: 'Jumbo Bag' }]
+    }), 'U_EXPORT');
+    db.prepare('UPDATE delivery_instructions SET status = ? WHERE di_id = ?').run(status, nonCancellable.di_id);
+    await assert.rejects(() => repo.cancelDeliveryInstruction(nonCancellable.di_id, 'No approved cancellation rule', 'U_EXPORT'), /DI_NOT_CONFIRMED/);
+  }
   await repo.confirmDeliveryInstruction(created.di_id, 'U_EXPORT');
   const cancelled = await repo.cancelDeliveryInstruction(created.di_id, 'Customer changed schedule', 'U_EXPORT');
 
@@ -420,7 +429,48 @@ test('cancelling a DI requires a note, releases planned availability, and record
   assert.deepEqual(history.map((event) => event.event_type), ['DI_CREATED', 'DI_CONFIRMED', 'DI_CANCELLED']);
   assert.ok(history.every((event) => event.entity_type === 'DI' && event.entity_id === created.di_id && event.actor_id === 'U_EXPORT' && event.created_at));
   assert.equal(JSON.parse(history.at(-1).metadata_json).cancellationNote, 'Customer changed schedule');
-  assert.equal(db.prepare("SELECT COUNT(*) AS n FROM shipment_audit_events WHERE entity_type = 'DI'").get().n, 3);
+  assert.equal(db.prepare("SELECT COUNT(*) AS n FROM shipment_audit_events WHERE entity_type = 'DI' AND entity_id = ?").get(created.di_id).n, 3);
+});
+
+test('PATCH and confirmation conflicts apply only one DRAFT transition and audit event', async () => {
+  const { db, wrappedDb } = await setupTestDb();
+  const repo = createShippingDiRepository(wrappedDb);
+  const created = await repo.createDeliveryInstruction(diPayload({ note: 'Before confirmation' }), 'U_EXPORT');
+
+  const results = await Promise.allSettled([
+    repo.updateDraftDeliveryInstruction(created.di_id, { note: 'Must not apply after confirmation' }, 'U_EXPORT'),
+    repo.confirmDeliveryInstruction(created.di_id, 'U_EXPORT')
+  ]);
+
+  assert.equal(results.filter((result) => result.status === 'fulfilled').length, 1);
+  assert.equal(results.filter((result) => result.status === 'rejected').length, 1);
+  assert.match(results.find((result) => result.status === 'rejected').reason.message, /DI_NOT_DRAFT/);
+  assert.equal((await repo.getDeliveryInstruction(created.di_id)).status, 'CONFIRMED');
+  assert.equal((await repo.getDeliveryInstruction(created.di_id)).note, 'Before confirmation');
+  assert.deepEqual((await repo.getShippingDiHistory(created.di_id)).map((event) => event.event_type), ['DI_CREATED', 'DI_CONFIRMED']);
+  assert.equal(db.prepare("SELECT COUNT(*) AS n FROM shipment_audit_events WHERE entity_id = ? AND event_type = 'DI_UPDATED'").get(created.di_id).n, 0);
+});
+
+test('DELETE and confirmation conflicts preserve exactly one winning DRAFT transition', async () => {
+  const { wrappedDb } = await setupTestDb();
+  const repo = createShippingDiRepository(wrappedDb);
+  const created = await repo.createDeliveryInstruction(diPayload(), 'U_EXPORT');
+
+  const results = await Promise.allSettled([
+    repo.deleteDraftDeliveryInstruction(created.di_id),
+    repo.confirmDeliveryInstruction(created.di_id, 'U_EXPORT')
+  ]);
+
+  assert.equal(results.filter((result) => result.status === 'fulfilled').length, 1);
+  assert.equal(results.filter((result) => result.status === 'rejected').length, 1);
+  const deliveryInstruction = await repo.getDeliveryInstruction(created.di_id);
+  const history = await repo.getShippingDiHistory(created.di_id);
+  if (deliveryInstruction) {
+    assert.equal(deliveryInstruction.status, 'CONFIRMED');
+    assert.deepEqual(history.map((event) => event.event_type), ['DI_CREATED', 'DI_CONFIRMED']);
+  } else {
+    assert.deepEqual(history.map((event) => event.event_type), ['DI_CREATED']);
+  }
 });
 
 test('concurrent DRAFT DI edits reserve the revised quantity only once', async () => {
