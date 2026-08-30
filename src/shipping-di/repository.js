@@ -138,6 +138,99 @@ async function listShipmentContainers(db, shipmentId) {
   }));
 }
 
+function containerPoLineCapacityGuard(diLines, quantitiesByPoLine) {
+  const clauses = [];
+  const parameters = [];
+  for (const line of diLines) {
+    const poRevisionLineId = line.po_revision_line_id;
+    const proposedActualQtyMt = Number(quantitiesByPoLine.get(poRevisionLineId) || 0);
+    const proposedContribution = proposedActualQtyMt > 0
+      ? proposedActualQtyMt
+      : Number(line.planned_qty_mt);
+    clauses.push(`
+      AND ? + COALESCE((
+        SELECT SUM(other_container_line.qty_mt)
+        FROM shipment_container_lines other_container_line
+        JOIN shipment_containers other_container ON other_container.container_id = other_container_line.container_id
+        JOIN phase6_shipments other_shipment ON other_shipment.shipment_id = other_container.shipment_id
+        JOIN delivery_instruction_lines other_actual_line
+          ON other_actual_line.di_line_id = other_container_line.delivery_instruction_line_id
+        WHERE other_actual_line.po_revision_line_id = ?
+          AND other_shipment.shipment_id <> phase6_shipments.shipment_id
+          AND other_shipment.status <> 'CANCELLED'
+          AND other_container.status <> 'CANCELLED'
+      ), 0) + COALESCE((
+        SELECT SUM(other_planned_line.planned_qty_mt)
+        FROM delivery_instruction_lines other_planned_line
+        JOIN delivery_instructions other_planned_di ON other_planned_di.di_id = other_planned_line.di_id
+        WHERE other_planned_line.po_revision_line_id = ?
+          AND other_planned_line.di_id <> phase6_shipments.di_id
+          AND other_planned_di.status <> 'CANCELLED'
+          AND NOT EXISTS (
+            SELECT 1
+            FROM shipment_container_lines represented_line
+            JOIN shipment_containers represented_container ON represented_container.container_id = represented_line.container_id
+            JOIN phase6_shipments represented_shipment ON represented_shipment.shipment_id = represented_container.shipment_id
+            WHERE represented_line.delivery_instruction_line_id = other_planned_line.di_line_id
+              AND represented_shipment.status <> 'CANCELLED'
+              AND represented_container.status <> 'CANCELLED'
+          )
+      ), 0) <= COALESCE((
+        SELECT max_qty_mt FROM po_revision_lines WHERE line_id = ?
+      ), -1) + 0.000001
+    `);
+    parameters.push(proposedContribution, poRevisionLineId, poRevisionLineId, poRevisionLineId);
+  }
+  return { sql: clauses.join(''), parameters };
+}
+
+async function assertContainerPoLineCapacity(db, shipment, diLines, quantitiesByPoLine) {
+  for (const line of diLines) {
+    const poRevisionLineId = line.po_revision_line_id;
+    const proposedActualQtyMt = Number(quantitiesByPoLine.get(poRevisionLineId) || 0);
+    const proposedContribution = proposedActualQtyMt > 0
+      ? proposedActualQtyMt
+      : Number(line.planned_qty_mt);
+    const capacity = await db.prepare(`
+      SELECT po_line.max_qty_mt
+        - COALESCE((
+          SELECT SUM(other_container_line.qty_mt)
+          FROM shipment_container_lines other_container_line
+          JOIN shipment_containers other_container ON other_container.container_id = other_container_line.container_id
+          JOIN phase6_shipments other_shipment ON other_shipment.shipment_id = other_container.shipment_id
+          JOIN delivery_instruction_lines other_actual_line
+            ON other_actual_line.di_line_id = other_container_line.delivery_instruction_line_id
+          WHERE other_actual_line.po_revision_line_id = po_line.line_id
+            AND other_shipment.shipment_id <> ?
+            AND other_shipment.status <> 'CANCELLED'
+            AND other_container.status <> 'CANCELLED'
+        ), 0)
+        - COALESCE((
+          SELECT SUM(other_planned_line.planned_qty_mt)
+          FROM delivery_instruction_lines other_planned_line
+          JOIN delivery_instructions other_planned_di ON other_planned_di.di_id = other_planned_line.di_id
+          WHERE other_planned_line.po_revision_line_id = po_line.line_id
+            AND other_planned_line.di_id <> ?
+            AND other_planned_di.status <> 'CANCELLED'
+            AND NOT EXISTS (
+              SELECT 1
+              FROM shipment_container_lines represented_line
+              JOIN shipment_containers represented_container ON represented_container.container_id = represented_line.container_id
+              JOIN phase6_shipments represented_shipment ON represented_shipment.shipment_id = represented_container.shipment_id
+              WHERE represented_line.delivery_instruction_line_id = other_planned_line.di_line_id
+                AND represented_shipment.status <> 'CANCELLED'
+                AND represented_container.status <> 'CANCELLED'
+            )
+        ), 0) AS available_contribution_mt
+      FROM po_revision_lines po_line
+      WHERE po_line.line_id = ?
+    `).bind(shipment.shipment_id, shipment.di_id, poRevisionLineId).first();
+    if (!capacity || proposedContribution > Number(capacity.available_contribution_mt) + 0.000001) {
+      throw codedError('CONTAINER_PO_LINE_QTY_EXCEEDS_MAX');
+    }
+  }
+}
+
 async function findPhase6ShipmentReadModel(db, identifier, lookupField) {
   const shipment = await db.prepare(`
     SELECT shipment.shipment_id, shipment.di_id, instruction.customer_id, instruction.di_no, instruction.container_plan,
@@ -146,9 +239,12 @@ async function findPhase6ShipmentReadModel(db, identifier, lookupField) {
            shipment.etd, shipment.eta, shipment.planned_loading_date, shipment.actual_loading_date,
            shipment.schedule_result, shipment.schedule_note, shipment.all_ship_docs_drive_url,
            shipment.digital_docs_sent_date, shipment.original_docs_required, shipment.dhl_sent_date,
-           shipment.dhl_tracking_no, shipment.docs_note, shipment.cash_received_amount,
-           shipment.payment_status, shipment.payment_note, shipment.cancellation_note,
-           shipment.created_by, shipment.created_at, shipment.updated_by, shipment.updated_at
+            shipment.dhl_tracking_no, shipment.docs_note, shipment.cash_received_amount,
+            shipment.payment_status, shipment.payment_note, shipment.cancellation_note,
+            ${finalInvoiceTotalExpression('shipment.shipment_id')} AS final_invoice_total,
+            ${allocatedCreditExpression('shipment.shipment_id')} AS allocated_credit_amount,
+            ROUND(shipment.cash_received_amount + ${allocatedCreditExpression('shipment.shipment_id')}, 2) AS payment_total,
+            shipment.created_by, shipment.created_at, shipment.updated_by, shipment.updated_at
     FROM phase6_shipments shipment
     JOIN delivery_instructions instruction ON instruction.di_id = shipment.di_id
     WHERE shipment.${lookupField} = ?
@@ -197,6 +293,9 @@ async function findPhase6ShipmentReadModel(db, identifier, lookupField) {
   const containers = [...containersByNumber.values()];
   return {
     ...shipment,
+    final_invoice_total: Number(shipment.final_invoice_total),
+    allocated_credit_amount: Number(shipment.allocated_credit_amount),
+    payment_total: Number(shipment.payment_total),
     products: (products || []).map((product) => ({ ...product, planned_qty_mt: Number(product.planned_qty_mt) })),
     containers
   };
@@ -471,7 +570,7 @@ async function findCustomerCreditByRequestKey(db, requestKey) {
 
 async function findCustomerCreditUsageByRequestKey(db, requestKey) {
   return db.prepare(`
-    SELECT credit_usage_id, shipment_id
+    SELECT credit_usage_id, credit_id, shipment_id, invoice_id, amount
     FROM customer_credit_usages
     WHERE request_key = ?
   `).bind(requestKey).first();
@@ -507,6 +606,37 @@ function allocatedCreditExpression(shipmentExpression = 'phase6_shipments.shipme
   ), 0), 2)`;
 }
 
+function finalInvoicesMatchActualCargoExpression(
+  shipmentExpression = 'phase6_shipments.shipment_id',
+  diExpression = 'phase6_shipments.di_id'
+) {
+  return `NOT EXISTS (
+    SELECT 1
+    FROM delivery_instruction_lines completion_line
+    WHERE completion_line.di_id = ${diExpression}
+      AND ABS(
+        COALESCE((
+          SELECT SUM(actual_line.qty_mt)
+          FROM shipment_container_lines actual_line
+          JOIN shipment_containers actual_container ON actual_container.container_id = actual_line.container_id
+          JOIN delivery_instruction_lines actual_di_line
+            ON actual_di_line.di_line_id = actual_line.delivery_instruction_line_id
+          WHERE actual_container.shipment_id = ${shipmentExpression}
+            AND actual_container.status <> 'CANCELLED'
+            AND actual_di_line.po_revision_line_id = completion_line.po_revision_line_id
+        ), 0)
+        - COALESCE((
+          SELECT SUM(final_line.qty_mt)
+          FROM shipment_invoice_lines final_line
+          JOIN shipment_invoices final_invoice ON final_invoice.invoice_id = final_line.invoice_id
+          WHERE final_invoice.shipment_id = ${shipmentExpression}
+            AND final_invoice.version = 'FINAL'
+            AND final_line.po_revision_line_id = completion_line.po_revision_line_id
+        ), 0)
+      ) > 0.000001
+  )`;
+}
+
 function paymentStatusExpression(cashExpression) {
   const finalInvoiceCount = finalInvoiceCountExpression();
   const finalTotal = finalInvoiceTotalExpression();
@@ -516,7 +646,7 @@ function paymentStatusExpression(cashExpression) {
     WHEN ${finalInvoiceCount} = 0 THEN 'UNPAID'
     WHEN ${finalTotal} = 0 THEN 'PAID'
     WHEN ${covered} <= 0 THEN 'UNPAID'
-    WHEN ${covered} >= ${finalTotal} THEN 'PAID'
+    WHEN ${covered} = ${finalTotal} THEN 'PAID'
     ELSE 'PARTIAL'
   END`;
 }
@@ -527,13 +657,26 @@ function paymentUpdateStatement(db, shipmentId, actorId, payment = null, require
     ? `cash_received_amount = ?, payment_note = ?,`
     : '';
   const parameters = payment
-    ? [payment.cashReceivedAmount, payment.paymentNote, payment.cashReceivedAmount, payment.cashReceivedAmount]
+    ? [
+      payment.cashReceivedAmount,
+      payment.paymentNote,
+      payment.cashReceivedAmount,
+      payment.cashReceivedAmount
+    ]
     : [];
   return db.prepare(`
     UPDATE phase6_shipments
     SET ${fields} payment_status = ${paymentStatusExpression(cashExpression)},
         updated_by = ?, updated_at = CURRENT_TIMESTAMP
     WHERE shipment_id = ?
+      ${payment ? `AND (
+        ${finalInvoiceCountExpression()} = 0 OR
+        ROUND(? + ${allocatedCreditExpression()}, 2) <= ${finalInvoiceTotalExpression()}
+      )
+      AND (
+        status <> 'COMPLETED' OR
+        ROUND(? + ${allocatedCreditExpression()}, 2) = ${finalInvoiceTotalExpression()}
+      )` : ''}
       ${requiredCreditUsageId ? 'AND EXISTS (SELECT 1 FROM customer_credit_usages WHERE credit_usage_id = ?)' : ''}
       ${requiredInvoiceState ? `AND EXISTS (
         SELECT 1 FROM shipment_invoices
@@ -544,6 +687,7 @@ function paymentUpdateStatement(db, shipmentId, actorId, payment = null, require
     ...parameters,
     actorId,
     shipmentId,
+    ...(payment ? [payment.cashReceivedAmount, payment.cashReceivedAmount] : []),
     ...(requiredCreditUsageId ? [requiredCreditUsageId] : []),
     ...(requiredInvoiceState ? [
       requiredInvoiceState.invoiceId,
@@ -570,6 +714,7 @@ async function recomputeShipmentCompletion(db, shipmentId, actorId) {
         AND all_ship_docs_drive_url IS NOT NULL
         AND digital_docs_sent_date IS NOT NULL
         AND (original_docs_required = 0 OR (dhl_sent_date IS NOT NULL AND dhl_tracking_no IS NOT NULL))
+        AND ${finalInvoicesMatchActualCargoExpression()}
         AND EXISTS (
           SELECT 1
           FROM delivery_instructions
@@ -616,13 +761,24 @@ async function recomputeShipmentCompletion(db, shipmentId, actorId) {
 
 async function findShipmentPaymentSummary(db, shipmentId) {
   return db.prepare(`
-    SELECT cash_received_amount,
+    SELECT shipment.status, cash_received_amount,
            ${finalInvoiceCountExpression('shipment.shipment_id')} AS final_invoice_count,
            ${finalInvoiceTotalExpression('shipment.shipment_id')} AS final_total,
            ${allocatedCreditExpression('shipment.shipment_id')} AS allocated_credit
     FROM phase6_shipments shipment
     WHERE shipment.shipment_id = ?
   `).bind(shipmentId).first();
+}
+
+function assertShipmentPaymentChangeAllowed(paymentSummary, cashReceivedAmount) {
+  if (!paymentSummary) throw codedError('SHIPMENT_NOT_FOUND');
+  if (Number(paymentSummary.final_invoice_count) === 0) return;
+  const coveredCents = moneyCents(cashReceivedAmount) + moneyCents(paymentSummary.allocated_credit);
+  const finalTotalCents = moneyCents(paymentSummary.final_total);
+  if (paymentSummary.status === 'COMPLETED' && coveredCents !== finalTotalCents) {
+    throw codedError('PAYMENT_COMPLETED_INVALIDATION');
+  }
+  if (coveredCents > finalTotalCents) throw codedError('PAYMENT_SETTLEMENT_EXCEEDED');
 }
 
 function moneyCents(value) {
@@ -836,6 +992,9 @@ export function createShippingDiRepository(db) {
       if (Object.keys(dto).length === 0) throw codedError('SERVICE_PARTNER_PAYLOAD_INVALID');
       const existing = await findServicePartner(db, partnerId);
       if (!existing) throw codedError('SERVICE_PARTNER_NOT_FOUND');
+      if (dto.partnerType !== undefined && dto.partnerType !== existing.partner_type) {
+        throw codedError('SERVICE_PARTNER_TYPE_IMMUTABLE');
+      }
       const partner = validateServicePartner({
         companyName: dto.companyName === undefined ? existing.partner_name : dto.companyName,
         partnerType: dto.partnerType === undefined ? existing.partner_type : dto.partnerType,
@@ -1073,6 +1232,7 @@ export function createShippingDiRepository(db) {
       const deliveryInstruction = await findDeliveryInstruction(db, diId);
       if (!deliveryInstruction) throw codedError('DI_NOT_FOUND');
       if (deliveryInstruction.status !== 'CONFIRMED') throw codedError('DI_NOT_CONFIRMED');
+      const shipment = await findPhase6Shipment(db, diId);
 
       const results = await db.batch([
         db.prepare(`
@@ -1084,7 +1244,15 @@ export function createShippingDiRepository(db) {
           oldStatus: deliveryInstruction.status,
           newStatus: 'CANCELLED',
           cancellationNote
-        })
+        }),
+        db.prepare(`
+          UPDATE phase6_shipments
+          SET status = 'CANCELLED', cancellation_note = ?, updated_by = ?, updated_at = CURRENT_TIMESTAMP
+          WHERE di_id = ? AND status = 'PLANNING'
+        `).bind(cancellationNote, actorId, diId),
+        ...(shipment ? [auditAfterMutationStatement(
+          db, 'SHIPMENT', shipment.shipment_id, 'SHIPMENT_CANCELLED', actorId, { cancellationNote }
+        )] : [])
       ]);
       if (!mutationApplied(results[0])) throw codedError('DI_NOT_CONFIRMED');
       return findDeliveryInstruction(db, diId);
@@ -1263,10 +1431,15 @@ export function createShippingDiRepository(db) {
         }
       }
 
+      const deliveryInstruction = await findDeliveryInstruction(db, shipment.di_id);
+      if (!deliveryInstruction) throw codedError('DI_NOT_FOUND');
+      await assertContainerPoLineCapacity(db, shipment, deliveryInstruction.lines, quantitiesByPoLine);
+
       const existingContainers = await listShipmentContainers(db, shipmentId);
       const nextContainerVersion = Number(shipment.container_version) + 1;
       const containerWriteToken = crypto.randomUUID();
       const eventType = existingContainers.length ? 'CONTAINER_UPDATED' : 'CONTAINER_ADDED';
+      const capacityGuard = containerPoLineCapacityGuard(deliveryInstruction.lines, quantitiesByPoLine);
       const statements = [
         db.prepare(`
           UPDATE phase6_shipments
@@ -1279,7 +1452,15 @@ export function createShippingDiRepository(db) {
               FROM shipment_invoices
               WHERE shipment_id = phase6_shipments.shipment_id AND version = 'FINAL'
             )
-        `).bind(nextContainerVersion, containerWriteToken, actorId, shipmentId, shipment.container_version),
+            ${capacityGuard.sql}
+        `).bind(
+          nextContainerVersion,
+          containerWriteToken,
+          actorId,
+          shipmentId,
+          shipment.container_version,
+          ...capacityGuard.parameters
+        ),
         db.prepare(`
           DELETE FROM shipment_containers
           WHERE shipment_id = ?
@@ -1352,6 +1533,7 @@ export function createShippingDiRepository(db) {
           LIMIT 1
         `).bind(shipmentId).first();
         if (finalInvoice) throw codedError('SHIPMENT_CONTAINERS_FINALIZED');
+        await assertContainerPoLineCapacity(db, shipment, deliveryInstruction.lines, quantitiesByPoLine);
         throw codedError('SHIPMENT_CONTAINERS_STALE');
       }
       const updatedShipment = await findPhase6Shipment(db, shipmentId);
@@ -1415,7 +1597,14 @@ export function createShippingDiRepository(db) {
     async createCustomerCredit(dto, actorId) {
       const credit = validateCustomerCredit(dto);
       const prior = await findCustomerCreditByRequestKey(db, credit.requestKey);
-      if (prior) return prior;
+      if (prior) {
+        if (
+          prior.customer_id !== credit.customerId ||
+          moneyCents(prior.amount) !== moneyCents(credit.amount) ||
+          prior.reason !== credit.reason
+        ) throw codedError('CREDIT_REQUEST_KEY_CONFLICT');
+        return prior;
+      }
       const customer = await db.prepare('SELECT customer_id FROM customers WHERE customer_id = ?').bind(credit.customerId).first();
       if (!customer) throw codedError('CREDIT_CUSTOMER_NOT_FOUND');
       const creditId = `CR-${crypto.randomUUID()}`;
@@ -1434,7 +1623,14 @@ export function createShippingDiRepository(db) {
       } catch (error) {
         if (!String(error?.message || '').includes('UNIQUE constraint failed: customer_credits.request_key')) throw error;
         const duplicate = await findCustomerCreditByRequestKey(db, credit.requestKey);
-        if (duplicate) return duplicate;
+        if (duplicate) {
+          if (
+            duplicate.customer_id !== credit.customerId ||
+            moneyCents(duplicate.amount) !== moneyCents(credit.amount) ||
+            duplicate.reason !== credit.reason
+          ) throw codedError('CREDIT_REQUEST_KEY_CONFLICT');
+          return duplicate;
+        }
         throw error;
       }
       return findCustomerCredit(db, creditId);
@@ -1475,6 +1671,10 @@ export function createShippingDiRepository(db) {
       const payment = validateShipmentPayment(dto);
       const shipment = await findPhase6Shipment(db, shipmentId);
       if (!shipment || shipment.shipment_id !== shipmentId) throw codedError('SHIPMENT_NOT_FOUND');
+      await assertShipmentPaymentChangeAllowed(
+        await findShipmentPaymentSummary(db, shipmentId),
+        payment.cashReceivedAmount
+      );
       const results = await db.batch([
         paymentUpdateStatement(db, shipmentId, actorId, payment),
         auditAfterMutationStatement(db, 'SHIPMENT', shipmentId, 'PAYMENT_UPDATED', actorId, {
@@ -1489,7 +1689,15 @@ export function createShippingDiRepository(db) {
     async useCustomerCredit(shipmentId, dto, actorId) {
       const usage = validateCustomerCreditUsage(dto);
       const priorUsage = await findCustomerCreditUsageByRequestKey(db, usage.requestKey);
-      if (priorUsage) return recomputeShipmentCompletion(db, priorUsage.shipment_id, actorId);
+      if (priorUsage) {
+        if (
+          priorUsage.shipment_id !== shipmentId ||
+          priorUsage.credit_id !== usage.creditId ||
+          priorUsage.invoice_id !== usage.invoiceId ||
+          moneyCents(priorUsage.amount) !== moneyCents(usage.amount)
+        ) throw codedError('CREDIT_USAGE_REQUEST_KEY_CONFLICT');
+        return recomputeShipmentCompletion(db, priorUsage.shipment_id, actorId);
+      }
       const shipment = await findShipmentCustomer(db, shipmentId);
       if (!shipment) throw codedError('SHIPMENT_NOT_FOUND');
       const credit = await findCustomerCredit(db, usage.creditId);
@@ -1547,7 +1755,15 @@ export function createShippingDiRepository(db) {
       } catch (error) {
         if (!String(error?.message || '').includes('UNIQUE constraint failed: customer_credit_usages.request_key')) throw error;
         const duplicate = await findCustomerCreditUsageByRequestKey(db, usage.requestKey);
-        if (duplicate) return recomputeShipmentCompletion(db, duplicate.shipment_id, actorId);
+        if (duplicate) {
+          if (
+            duplicate.shipment_id !== shipmentId ||
+            duplicate.credit_id !== usage.creditId ||
+            duplicate.invoice_id !== usage.invoiceId ||
+            moneyCents(duplicate.amount) !== moneyCents(usage.amount)
+          ) throw codedError('CREDIT_USAGE_REQUEST_KEY_CONFLICT');
+          return recomputeShipmentCompletion(db, duplicate.shipment_id, actorId);
+        }
         throw error;
       }
       if (!mutationApplied(results[0]) || !mutationApplied(results[1])) {

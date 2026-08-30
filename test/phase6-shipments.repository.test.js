@@ -196,6 +196,21 @@ test('confirming a DI materializes its single PLANNING Shipment', async () => {
   assert.equal(db.prepare('SELECT COUNT(*) AS n FROM phase6_shipments WHERE di_id = ?').get('DI-DRAFT').n, 1);
 });
 
+test('cancelling a confirmed DI also cancels its auto-created PLANNING Shipment', async () => {
+  const { db, wrappedDb } = await setupTestDb();
+  const repo = createShippingDiRepository(wrappedDb);
+  const confirmed = await repo.confirmDeliveryInstruction('DI-DRAFT', 'U_EXPORT');
+  const shipment = await repo.getPhase6Shipment(confirmed.di_id);
+
+  const cancelled = await repo.cancelDeliveryInstruction(confirmed.di_id, 'Customer cancelled the shipment', 'U_EXPORT');
+
+  assert.equal(cancelled.status, 'CANCELLED');
+  const cancelledShipment = await repo.getPhase6Shipment(shipment.shipment_id);
+  assert.equal(cancelledShipment.status, 'CANCELLED');
+  assert.equal(cancelledShipment.cancellation_note, 'Customer cancelled the shipment');
+  assert.equal(db.prepare("SELECT COUNT(*) AS n FROM shipment_audit_events WHERE entity_id = ? AND event_type = 'SHIPMENT_CANCELLED'").get(shipment.shipment_id).n, 1);
+});
+
 test('recording focused Booking fields moves the Shipment to BOOKED and its DI to IN_PROGRESS', async () => {
   const { db, wrappedDb } = await setupTestDb();
   const repo = createShippingDiRepository(wrappedDb);
@@ -502,6 +517,42 @@ test('container replacement validates every line before replacing actual data', 
 
   assert.equal(await repo.getShipmentActualQty(shipment.shipment_id), 9.5);
   assert.equal(db.prepare("SELECT COUNT(*) AS n FROM shipment_audit_events WHERE event_type = 'CONTAINER_UPDATED'").get().n, 0);
+});
+
+test('container growth cannot consume PO-line quantity reserved by another DI after partial actual release', async () => {
+  const { db, wrappedDb } = await setupTestDb();
+  const repo = createShippingDiRepository(wrappedDb);
+  db.prepare(`
+    INSERT INTO delivery_instruction_lines (
+      di_line_id, di_id, po_id, po_revision_id, po_revision_line_id, product_id,
+      planned_qty_mt, packing_snapshot, created_by
+    ) VALUES ('DIL-GLOBAL-1', 'DI-CONFIRMED', 'PO1', 'REV1', 'LINE-1', 'P1', 60, 'Jumbo Bag', 'U_EXPORT')
+  `).run();
+
+  const shipment = await bookedShipmentWithActualLoadingDate(repo);
+  await repo.replaceShipmentContainers(shipment.shipment_id, [{
+    containerNo: 'GLOBAL-1',
+    lines: [{ poRevisionLineId: 'LINE-1', numberOfBags: 30, netWeightMt: 30 }]
+  }], 'U_EXPORT');
+
+  const competingDi = await repo.createDeliveryInstruction({
+    customerId: 'C1', poId: 'PO1', poRevisionId: 'REV1', diNo: 'GLOBAL-RESERVATION-2',
+    shippingMonth: '2026-09', shippingPeriod: 'SECOND_HALF', containerPlan: '1 x 40HC',
+    lines: [{ poId: 'PO1', poRevisionId: 'REV1', poRevisionLineId: 'LINE-1', plannedQtyMt: 70, packingSnapshot: 'Jumbo Bag' }]
+  }, 'U_EXPORT');
+  assert.equal(competingDi.lines[0].planned_qty_mt, 70);
+
+  await assert.rejects(
+    () => repo.replaceShipmentContainers(shipment.shipment_id, [{
+      containerNo: 'GLOBAL-1',
+      lines: [{ poRevisionLineId: 'LINE-1', numberOfBags: 31, netWeightMt: 31 }]
+    }], 'U_EXPORT'),
+    /CONTAINER_PO_LINE_QTY_EXCEEDS_MAX/
+  );
+
+  assert.equal(await repo.getShipmentActualQty(shipment.shipment_id), 30);
+  const [balance] = await repo.getPoLineBalances('PO1');
+  assert.equal(balance.available_qty_mt, 0);
 });
 
 test('concurrent container replacements preserve one truthful winning actual state and audit event', async () => {
@@ -1000,6 +1051,26 @@ test('payment uses only FINAL invoice totals and reports unpaid, partial, and pa
   assert.equal(db.prepare("SELECT COUNT(*) AS n FROM shipment_audit_events WHERE entity_id = ? AND event_type = 'PAYMENT_UPDATED'").get(shipment.shipment_id).n, 3);
 });
 
+test('shipment detail DTO exposes the FINAL obligation and every payment contribution', async () => {
+  const { db, wrappedDb } = await setupTestDb();
+  const repo = createShippingDiRepository(wrappedDb);
+  const shipment = await loadedShipmentWithFinalInvoice(repo, db);
+  const credit = await repo.createCustomerCredit({
+    customerId: 'C1', amount: 100, reason: 'DTO credit', requestKey: 'payment-dto-credit'
+  }, 'U_EXPORT');
+  await repo.useCustomerCredit(shipment.shipment_id, {
+    creditId: credit.credit_id, amount: 100, requestKey: 'payment-dto-use'
+  }, 'U_EXPORT');
+  await repo.updateShipmentPayment(shipment.shipment_id, {
+    cashReceivedAmount: 250, paymentNote: 'DTO cash'
+  }, 'U_EXPORT');
+
+  const detail = await repo.getPhase6ShipmentByShipmentId(shipment.shipment_id);
+  assert.equal(detail.final_invoice_total, 3325);
+  assert.equal(detail.allocated_credit_amount, 100);
+  assert.equal(detail.payment_total, 350);
+});
+
 test('payment rounds monetary coverage to currency precision', async () => {
   const { db, wrappedDb } = await setupTestDb();
   const repo = createShippingDiRepository(wrappedDb);
@@ -1011,6 +1082,34 @@ test('payment rounds monetary coverage to currency precision', async () => {
   }, 'U_EXPORT');
   const rounded = await repo.updateShipmentPayment(shipment.shipment_id, { cashReceivedAmount: 0.3 }, 'U_EXPORT');
   assert.equal(rounded.payment_status, 'PAID');
+});
+
+test('cash updates cannot exceed the FINAL obligation after Customer Credit is irreversibly allocated', async () => {
+  const { db, wrappedDb } = await setupTestDb();
+  const repo = createShippingDiRepository(wrappedDb);
+  const shipment = await loadedShipmentWithFinalInvoice(repo, db);
+  const credit = await repo.createCustomerCredit({
+    customerId: 'C1', amount: 1000, reason: 'Commercial settlement', requestKey: 'exact-cap-credit'
+  }, 'U_EXPORT');
+  await repo.useCustomerCredit(shipment.shipment_id, {
+    creditId: credit.credit_id, amount: 1000, requestKey: 'exact-cap-use'
+  }, 'U_EXPORT');
+  const paid = await repo.updateShipmentPayment(shipment.shipment_id, {
+    cashReceivedAmount: 2325, paymentNote: 'Exact settlement'
+  }, 'U_EXPORT');
+  assert.equal(paid.payment_status, 'PAID');
+
+  await assert.rejects(
+    () => repo.updateShipmentPayment(shipment.shipment_id, {
+      cashReceivedAmount: 2325.01, paymentNote: 'Must not over-settle'
+    }, 'U_EXPORT'),
+    /PAYMENT_SETTLEMENT_EXCEEDED/
+  );
+
+  const unchanged = await repo.getPhase6Shipment(shipment.shipment_id);
+  assert.equal(unchanged.cash_received_amount, 2325);
+  assert.equal(unchanged.payment_status, 'PAID');
+  assert.equal((await repo.listCustomerCredits({ customerId: 'C1' }))[0].remaining_amount, 0);
 });
 
 test('credit and cash values reject fractions below the supported currency precision', async () => {
@@ -1080,6 +1179,32 @@ test('credit create and usage request keys are idempotent without duplicate bala
   assert.equal(db.prepare("SELECT COUNT(*) AS n FROM shipment_audit_events WHERE event_type = 'CUSTOMER_CREDIT_USED'").get().n, 3);
 });
 
+test('credit request keys cannot be replayed against a different payload or Shipment', async () => {
+  const { db, wrappedDb } = await setupTestDb();
+  const repo = createShippingDiRepository(wrappedDb);
+  const shipment = await loadedShipmentWithFinalInvoice(repo, db);
+  seedSecondFinalPaymentShipment(db);
+  const credit = await repo.createCustomerCredit({
+    customerId: 'C1', amount: 100, reason: 'Original credit', requestKey: 'bound-credit-create'
+  }, 'U_EXPORT');
+  await assert.rejects(
+    () => repo.createCustomerCredit({
+      customerId: 'C1', amount: 99, reason: 'Changed credit', requestKey: 'bound-credit-create'
+    }, 'U_EXPORT'),
+    /CREDIT_REQUEST_KEY_CONFLICT/
+  );
+  await repo.useCustomerCredit(shipment.shipment_id, {
+    creditId: credit.credit_id, amount: 50, requestKey: 'bound-credit-use'
+  }, 'U_EXPORT');
+  await assert.rejects(
+    () => repo.useCustomerCredit('S_FOR_C1_2', {
+      creditId: credit.credit_id, amount: 50, invoiceId: 'INV-PAY-2', requestKey: 'bound-credit-use'
+    }, 'U_EXPORT'),
+    /CREDIT_USAGE_REQUEST_KEY_CONFLICT/
+  );
+  assert.equal((await repo.listCustomerCredits({ customerId: 'C1' }))[0].remaining_amount, 50);
+});
+
 test('credit allocation cannot exceed a Shipment FINAL obligation, including concurrent requests', async () => {
   const { db, wrappedDb } = await setupTestDb();
   const repo = createShippingDiRepository(wrappedDb);
@@ -1119,6 +1244,29 @@ test('FINAL invoice materializes payment recorded before FINAL invoice creation'
   assert.equal((await repo.getPhase6Shipment(shipment.shipment_id)).payment_status, 'PAID');
 });
 
+test('paid partial FINAL invoicing cannot complete a Shipment before FINAL quantities equal all actual cargo', async () => {
+  const { db, wrappedDb } = await setupTestDb();
+  const repo = createShippingDiRepository(wrappedDb);
+  const shipment = await loadedShipmentForDocuments(repo, db);
+
+  await repo.createShipmentInvoice(shipment.shipment_id, {
+    invoiceNo: 'WCAT-PARTIAL-FINAL', version: 'FINAL', invoiceDate: '2026-09-15',
+    lines: [{ poRevisionLineId: 'LINE-1', qtyMt: 5 }]
+  }, 'U_EXPORT');
+  await repo.updateShipmentDocuments(shipment.shipment_id, {
+    allShipDocsDriveUrl: 'https://drive.google.com/drive/folders/partial-final',
+    digitalDocsSentDate: '2026-09-16', originalDocsRequired: false
+  }, 'U_EXPORT');
+  const paidPartial = await repo.updateShipmentPayment(shipment.shipment_id, {
+    cashReceivedAmount: 1750, paymentNote: 'Paid only the partial FINAL invoice'
+  }, 'U_EXPORT');
+
+  assert.equal(paidPartial.payment_status, 'PAID');
+  assert.equal(paidPartial.status, 'DOCS_SENT');
+  assert.equal((await repo.getDeliveryInstruction('DI-CONFIRMED')).status, 'IN_PROGRESS');
+  assert.equal(db.prepare("SELECT COUNT(*) AS n FROM shipment_audit_events WHERE entity_id = ? AND event_type = 'SHIPMENT_COMPLETED'").get(shipment.shipment_id).n, 0);
+});
+
 test('Shipment and DI complete only after document and payment requirements are satisfied', async () => {
   const { db, wrappedDb } = await setupTestDb();
   const repo = createShippingDiRepository(wrappedDb);
@@ -1140,6 +1288,32 @@ test('Shipment and DI complete only after document and payment requirements are 
   assert.equal(paid.payment_status, 'PAID');
   assert.equal((await repo.getDeliveryInstruction('DI-CONFIRMED')).status, 'COMPLETED');
   assert.equal(db.prepare("SELECT COUNT(*) AS n FROM shipment_audit_events WHERE entity_id = ? AND event_type = 'SHIPMENT_COMPLETED'").get(shipment.shipment_id).n, 1);
+});
+
+test('a COMPLETED Shipment rejects a payment change that would invalidate exact settlement', async () => {
+  const { db, wrappedDb } = await setupTestDb();
+  const repo = createShippingDiRepository(wrappedDb);
+  const shipment = await loadedShipmentWithFinalInvoice(repo, db);
+  await repo.updateShipmentDocuments(shipment.shipment_id, {
+    allShipDocsDriveUrl: 'https://drive.google.com/drive/folders/completed-payment',
+    digitalDocsSentDate: '2026-09-16', originalDocsRequired: false
+  }, 'U_EXPORT');
+  await repo.updateShipmentPayment(shipment.shipment_id, {
+    cashReceivedAmount: 3325, paymentNote: 'Settled'
+  }, 'U_EXPORT');
+
+  await assert.rejects(
+    () => repo.updateShipmentPayment(shipment.shipment_id, {
+      cashReceivedAmount: 1000, paymentNote: 'Invalidating edit'
+    }, 'U_EXPORT'),
+    /PAYMENT_COMPLETED_INVALIDATION/
+  );
+
+  const completed = await repo.getPhase6Shipment(shipment.shipment_id);
+  assert.equal(completed.status, 'COMPLETED');
+  assert.equal(completed.payment_status, 'PAID');
+  assert.equal(completed.cash_received_amount, 3325);
+  assert.equal((await repo.getDeliveryInstruction('DI-CONFIRMED')).status, 'COMPLETED');
 });
 
 test('payment-first completion waits for DHL-required documents and records one completion audit', async () => {

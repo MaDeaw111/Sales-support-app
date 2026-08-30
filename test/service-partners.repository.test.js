@@ -78,3 +78,19 @@ test('service partners reject unapproved partner properties and invalid values',
     /SERVICE_PARTNER_TYPE_INVALID/
   );
 });
+
+test('service partner type is immutable while name and status retain their update history', async () => {
+  const { db, wrappedDb } = await setupTestDb();
+  db.prepare("INSERT INTO users (user_id, email, password_hash, password_salt, role, status, full_name) VALUES ('U_EXPORT', 'export@example.com', 'hash', 'salt', 'EXPORT', 'ACTIVE', 'Export User')").run();
+  const repo = createShippingDiRepository(wrappedDb);
+  const partner = await repo.createServicePartner({ companyName: 'SGS', partnerType: 'SURVEYOR' }, 'U_EXPORT');
+
+  await assert.rejects(
+    () => repo.updateServicePartner(partner.partner_id, { partnerType: 'FORWARDER' }, 'U_EXPORT'),
+    /SERVICE_PARTNER_TYPE_IMMUTABLE/
+  );
+  const renamed = await repo.updateServicePartner(partner.partner_id, { companyName: 'SGS Thailand', status: 'INACTIVE' }, 'U_EXPORT');
+  assert.equal(renamed.partner_type, 'SURVEYOR');
+  assert.equal(renamed.partner_name, 'SGS Thailand');
+  assert.equal(renamed.status, 'INACTIVE');
+});

@@ -108,6 +108,28 @@ test('updatePhase6ShipmentSectionToApi uses the focused section endpoint', async
   }
 });
 
+test('finalizePhase6Invoice promotes a PRELIMINARY invoice through the focused FINAL endpoint', async () => {
+  const code = extractFunction('finalizePhase6Invoice(shipmentId, invoiceId)');
+  globalThis.document = { getElementById: () => ({ value: '[{"poRevisionLineId":"LINE-1","qtyMt":9.5}]' }) };
+  globalThis.fetch = async (url, options) => {
+    assert.equal(url, '/api/shipments-v2/S1/invoices/INV1/finalize');
+    assert.equal(options.method, 'PATCH');
+    assert.deepEqual(JSON.parse(options.body), { lines: [{ poRevisionLineId: 'LINE-1', qtyMt: 9.5 }] });
+    return success({ invoice: { invoice_id: 'INV1', version: 'FINAL' } });
+  };
+  globalThis.selectPhase6DeliveryInstruction = async () => {};
+  globalThis.state = { selectedPhase6DeliveryInstructionId: 'DI1' };
+
+  try {
+    await new Function(`return (${code.trim()});`)()('S1', 'INV1');
+  } finally {
+    delete globalThis.document;
+    delete globalThis.fetch;
+    delete globalThis.selectPhase6DeliveryInstruction;
+    delete globalThis.state;
+  }
+});
+
 test('Phase 6 adapters reject API errors without replacing displayed state', async () => {
   const code = extractFunction('loadDeliveryInstructionsFromApi()');
   globalThis.state = { deliveryInstructions: [{ di_id: 'KEEP' }] };
@@ -219,6 +241,7 @@ test('detail actions keep hostile IDs out of inline JavaScript and include confi
   assert.doesNotMatch(detail, /onclick=/);
   assert.match(detail, /action\('cancel-confirmed'/);
   assert.match(detail, /data-phase6-shipment-id=/);
+  assert.match(detail, /finalize-invoice/);
   const escape = new Function(`return (${extractFunction('escapePhase6Text(value)').trim()});`)();
   const hostile = `S'1 <img src=x onerror=alert(1)>`;
   globalThis.state = {
@@ -242,6 +265,12 @@ test('detail actions keep hostile IDs out of inline JavaScript and include confi
     delete globalThis.escapePhase6Text;
     delete globalThis.phase6PartnerOptions;
   }
+});
+
+test('booking fields become read-only after the Shipment is BOOKED', () => {
+  const detail = extractFunction('renderPhase6DeliveryInstructionDetail(di)');
+  assert.match(detail, /const bookingWritable = write && shipment\?\.status === 'PLANNING'/);
+  assert.match(detail, /name === 'save-booking' && !bookingWritable/);
 });
 
 test('Phase 6 refresh actions use the selected opaque reference', () => {
