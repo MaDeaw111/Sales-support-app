@@ -7,6 +7,7 @@ const DELIVERY_INSTRUCTION_WRITE_ROLES = ['ADMIN', 'MANAGER', 'EXPORT'];
 const SHIPMENT_BOOKING_WRITE_ROLES = ['ADMIN', 'MANAGER', 'EXPORT'];
 const SHIPMENT_SCHEDULE_WRITE_ROLES = ['ADMIN', 'MANAGER', 'EXPORT'];
 const SHIPMENT_CONTAINER_WRITE_ROLES = ['ADMIN', 'MANAGER', 'EXPORT'];
+const SHIPMENT_INVOICE_WRITE_ROLES = ['ADMIN', 'MANAGER', 'EXPORT'];
 
 function json(body, status = 200) {
   return new Response(JSON.stringify(body), {
@@ -171,6 +172,72 @@ export function createShippingDiHandler({ repo, resolveUser, db }) {
         return json(
           { status: 'ERROR', message: error.message },
           error.code === 'SHIPMENT_NOT_FOUND' ? 404 : 400
+        );
+      }
+    }
+
+    const shipmentInvoiceFinalizeMatch = path.match(/^\/api\/shipments-v2\/([^/]+)\/invoices\/([^/]+)\/finalize$/);
+    if (shipmentInvoiceFinalizeMatch && method === 'PATCH') {
+      if (!SHIPMENT_INVOICE_WRITE_ROLES.includes(caller.role)) return json({ status: 'ERROR', message: 'Permission denied.' }, 403);
+      const body = await readJson(request);
+      try {
+        const invoice = await activeRepo.finalizeShipmentInvoice(
+          decodeURIComponent(shipmentInvoiceFinalizeMatch[2]),
+          body?.lines,
+          caller.user_id,
+          decodeURIComponent(shipmentInvoiceFinalizeMatch[1])
+        );
+        return json({ status: 'SUCCESS', data: { invoice } });
+      } catch (error) {
+        return json(
+          { status: 'ERROR', message: error.message },
+          ['SHIPMENT_NOT_FOUND', 'INVOICE_NOT_FOUND'].includes(error.code) ? 404 : 400
+        );
+      }
+    }
+
+    const shipmentInvoicesMatch = path.match(/^\/api\/shipments-v2\/([^/]+)\/invoices$/);
+    if (shipmentInvoicesMatch && method === 'GET') {
+      if (!OPERATIONAL_READER_ROLES.includes(caller.role)) return json({ status: 'ERROR', message: 'Permission denied.' }, 403);
+      try {
+        const invoices = await activeRepo.getShipmentInvoices(decodeURIComponent(shipmentInvoicesMatch[1]));
+        return json({ status: 'SUCCESS', data: { invoices } });
+      } catch (error) {
+        return json({ status: 'ERROR', message: error.message }, error.code === 'SHIPMENT_NOT_FOUND' ? 404 : 400);
+      }
+    }
+
+    if (shipmentInvoicesMatch && method === 'POST') {
+      if (!SHIPMENT_INVOICE_WRITE_ROLES.includes(caller.role)) return json({ status: 'ERROR', message: 'Permission denied.' }, 403);
+      const body = await readJson(request);
+      try {
+        const invoice = await activeRepo.createShipmentInvoice(
+          decodeURIComponent(shipmentInvoicesMatch[1]),
+          body,
+          caller.user_id
+        );
+        return json({ status: 'SUCCESS', data: { invoice } });
+      } catch (error) {
+        return json({ status: 'ERROR', message: error.message }, error.code === 'SHIPMENT_NOT_FOUND' ? 404 : 400);
+      }
+    }
+
+    const shipmentInvoiceMatch = path.match(/^\/api\/shipments-v2\/([^/]+)\/invoices\/([^/]+)$/);
+    if (shipmentInvoiceMatch && method === 'PUT') {
+      if (!SHIPMENT_INVOICE_WRITE_ROLES.includes(caller.role)) return json({ status: 'ERROR', message: 'Permission denied.' }, 403);
+      const body = await readJson(request);
+      try {
+        const invoice = await activeRepo.updateShipmentInvoice(
+          decodeURIComponent(shipmentInvoiceMatch[2]),
+          body,
+          caller.user_id,
+          decodeURIComponent(shipmentInvoiceMatch[1])
+        );
+        return json({ status: 'SUCCESS', data: { invoice } });
+      } catch (error) {
+        return json(
+          { status: 'ERROR', message: error.message },
+          ['SHIPMENT_NOT_FOUND', 'INVOICE_NOT_FOUND'].includes(error.code) ? 404 : 400
         );
       }
     }

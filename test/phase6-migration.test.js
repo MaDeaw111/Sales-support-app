@@ -149,3 +149,30 @@ test('Phase 6 audit permits the approved loading-date events', async () => {
     ['PLANNED_LOADING_DATE_UPDATED', 'ACTUAL_LOADING_DATE_RECORDED']
   );
 });
+
+test('Phase 6 invoice schema has FINAL/PRELIMINARY versions, a Drive URL, and exact Invoice audit events', async () => {
+  const db = await setupThrough0006();
+  db.exec(await readMigration('0007_shipping_di_integration.sql'));
+  db.prepare("INSERT INTO users (user_id, email, password_hash, password_salt, role, status, full_name) VALUES ('U1', 'export@example.com', 'hash', 'salt', 'EXPORT', 'ACTIVE', 'Export User')").run();
+
+  const invoiceColumns = db.prepare('PRAGMA table_info(shipment_invoices)').all().map((column) => column.name);
+  for (const column of ['invoice_date', 'currency', 'version', 'note', 'drive_url']) {
+    assert.ok(invoiceColumns.includes(column), `${column} should exist on shipment_invoices`);
+  }
+  assert.equal(invoiceColumns.includes('status'), false, 'obsolete invoice status must not coexist with version');
+  const invoiceTableSql = db.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'shipment_invoices'").get().sql;
+  assert.match(invoiceTableSql, /UNIQUE\s*\(shipment_id,\s*invoice_no\)/i, 'invoice numbers are unique only within a Shipment');
+  assert.doesNotMatch(invoiceTableSql, /UNIQUE\s*\(invoice_no\)/i, 'the same manual invoice number can occur on another Shipment');
+
+  for (const [eventId, eventType] of [
+    ['EVT-INVOICE-1', 'INVOICE_RECORDED'],
+    ['EVT-INVOICE-2', 'INVOICE_FINALIZED']
+  ]) {
+    db.prepare('INSERT INTO shipment_audit_events (event_id, entity_type, entity_id, event_type, actor_id) VALUES (?, ?, ?, ?, ?)')
+      .run(eventId, 'INVOICE', 'INV-1', eventType, 'U1');
+  }
+  assert.throws(
+    () => db.prepare("INSERT INTO shipment_audit_events (event_id, entity_type, entity_id, event_type, actor_id) VALUES ('EVT-INVOICE-3', 'INVOICE', 'INV-1', 'INVOICE_ADDED', 'U1')").run(),
+    /CHECK constraint failed: event_type/
+  );
+});

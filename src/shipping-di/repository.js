@@ -9,6 +9,8 @@ import {
   validateShipmentBooking,
   validateShipmentSchedule,
   validateShipmentContainers,
+  validateShipmentInvoice,
+  validateShipmentInvoiceFinalization,
   calculateScheduleResult
 } from './validation.js';
 
@@ -127,6 +129,107 @@ async function listShipmentContainers(db, shipmentId) {
       lines: containerLines
     };
   }));
+}
+
+async function findShipmentInvoice(db, invoiceId) {
+  const invoice = await db.prepare(`
+    SELECT invoice_id, shipment_id, invoice_no, invoice_date, currency, version, note, drive_url,
+           created_by, created_at, updated_by, updated_at,
+           COALESCE((SELECT SUM(line_amount) FROM shipment_invoice_lines WHERE invoice_id = shipment_invoices.invoice_id), 0) AS total_amount
+    FROM shipment_invoices
+    WHERE invoice_id = ?
+  `).bind(invoiceId).first();
+  if (!invoice) return null;
+  const { results } = await db.prepare(`
+    SELECT po_revision_line_id, qty_mt, unit_price_snapshot, currency, line_amount
+    FROM shipment_invoice_lines
+    WHERE invoice_id = ?
+    ORDER BY rowid ASC
+  `).bind(invoiceId).all();
+  return {
+    ...invoice,
+    total_amount: Number(invoice.total_amount),
+    lines: (results || []).map((line) => ({
+      ...line,
+      qty_mt: Number(line.qty_mt),
+      unit_price_snapshot: Number(line.unit_price_snapshot),
+      line_amount: Number(line.line_amount)
+    }))
+  };
+}
+
+async function findShipmentInvoiceLineReferences(db, shipment, lines) {
+  const lineIds = lines.map((line) => line.poRevisionLineId);
+  const placeholders = lineIds.map(() => '?').join(', ');
+  const { results } = await db.prepare(`
+    WITH actual_by_line AS (
+      SELECT dil.po_revision_line_id, SUM(scl.qty_mt) AS actual_qty_mt
+      FROM shipment_container_lines scl
+      JOIN shipment_containers sc ON sc.container_id = scl.container_id
+      JOIN delivery_instruction_lines dil ON dil.di_line_id = scl.delivery_instruction_line_id
+      WHERE sc.shipment_id = ? AND sc.status <> 'CANCELLED'
+      GROUP BY dil.po_revision_line_id
+    )
+    SELECT dil.po_revision_line_id, prl.unit_price, revision.currency, prl.max_qty_mt, prl.tolerance_pct,
+           COALESCE(actual.actual_qty_mt, 0) AS actual_qty_mt
+    FROM delivery_instruction_lines dil
+    JOIN po_revision_lines prl ON prl.line_id = dil.po_revision_line_id
+    JOIN po_revisions revision ON revision.revision_id = prl.po_revision_id
+    LEFT JOIN actual_by_line actual ON actual.po_revision_line_id = dil.po_revision_line_id
+    WHERE dil.di_id = ? AND dil.po_revision_line_id IN (${placeholders})
+  `).bind(shipment.shipment_id, shipment.di_id, ...lineIds).all();
+  const references = new Map((results || []).map((line) => [line.po_revision_line_id, line]));
+  for (const lineId of lineIds) {
+    if (!references.has(lineId)) throw codedError('INVOICE_LINE_PO_LINE_INVALID');
+  }
+  return references;
+}
+
+async function resolveShipmentInvoiceLines(db, shipment, lines, { final, preliminary } = {}) {
+  const references = await findShipmentInvoiceLineReferences(db, shipment, lines);
+  let currency = null;
+  const resolved = lines.map((line) => {
+    const reference = references.get(line.poRevisionLineId);
+    const maxQtyMt = Number(reference.max_qty_mt);
+    const actualQtyMt = Number(reference.actual_qty_mt);
+    if (preliminary) {
+      if (Number(reference.tolerance_pct) <= 0) throw codedError('INVOICE_PRELIMINARY_FIXED_WEIGHT');
+      if (Math.abs(line.qtyMt - maxQtyMt) > 0.000001) throw codedError('INVOICE_PRELIMINARY_QTY_INVALID');
+    }
+    if (final) {
+      if (line.qtyMt > maxQtyMt + 0.000001) throw codedError('INVOICE_FINAL_QTY_EXCEEDS_PO_MAX');
+      if (Math.abs(line.qtyMt - actualQtyMt) > 0.000001) throw codedError('INVOICE_FINAL_QTY_MISMATCHES_ACTUAL');
+    }
+    if (currency && currency !== reference.currency) throw codedError('INVOICE_CURRENCY_MISMATCH');
+    currency = reference.currency;
+    const unitPriceSnapshot = Number(reference.unit_price);
+    return {
+      poRevisionLineId: line.poRevisionLineId,
+      qtyMt: line.qtyMt,
+      unitPriceSnapshot,
+      currency: reference.currency,
+      lineAmount: line.qtyMt * unitPriceSnapshot
+    };
+  });
+  return { currency, lines: resolved };
+}
+
+function shipmentInvoiceLineStatements(db, invoiceId, lines, actorId) {
+  return lines.map((line) => db.prepare(`
+    INSERT INTO shipment_invoice_lines (
+      invoice_line_id, invoice_id, po_revision_line_id, qty_mt, unit_price_snapshot, currency, line_amount, created_by, updated_by
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).bind(
+    `INVL-${crypto.randomUUID()}`,
+    invoiceId,
+    line.poRevisionLineId,
+    line.qtyMt,
+    line.unitPriceSnapshot,
+    line.currency,
+    line.lineAmount,
+    actorId,
+    actorId
+  ));
 }
 
 function shipmentCreationStatement(db, diId, actorId, requirePreviousMutation = false) {
@@ -898,6 +1001,124 @@ export function createShippingDiRepository(db) {
       const shipment = await findPhase6Shipment(db, shipmentId);
       if (!shipment || shipment.shipment_id !== shipmentId) throw codedError('SHIPMENT_NOT_FOUND');
       return listShipmentContainers(db, shipmentId);
+    },
+
+    async createShipmentInvoice(shipmentId, dto, actorId) {
+      const invoice = validateShipmentInvoice(dto);
+      const shipment = await findPhase6Shipment(db, shipmentId);
+      if (!shipment || shipment.shipment_id !== shipmentId) throw codedError('SHIPMENT_NOT_FOUND');
+      if (!['BOOKED', 'LOADED'].includes(shipment.status)) throw codedError('SHIPMENT_NOT_BOOKED');
+      if (invoice.version === 'FINAL' && shipment.status !== 'LOADED') throw codedError('INVOICE_FINAL_REQUIRES_ACTUAL_QTY');
+
+      const resolved = await resolveShipmentInvoiceLines(db, shipment, invoice.lines, {
+        preliminary: invoice.version === 'PRELIMINARY',
+        final: invoice.version === 'FINAL'
+      });
+      if (invoice.version === 'FINAL') {
+        const references = await findShipmentInvoiceLineReferences(db, shipment, invoice.lines);
+        if ([...references.values()].some((reference) => Number(reference.tolerance_pct) > 0)) {
+          throw codedError('INVOICE_FINALIZATION_REQUIRED');
+        }
+      }
+
+      const invoiceId = `INV-${crypto.randomUUID()}`;
+      const statements = [
+        db.prepare(`
+          INSERT INTO shipment_invoices (
+            invoice_id, shipment_id, invoice_no, invoice_date, currency, version, note, drive_url, created_by, updated_by
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `).bind(
+          invoiceId,
+          shipmentId,
+          invoice.invoiceNo,
+          invoice.invoiceDate,
+          resolved.currency,
+          invoice.version,
+          invoice.note,
+          invoice.driveUrl,
+          actorId,
+          actorId
+        ),
+        ...shipmentInvoiceLineStatements(db, invoiceId, resolved.lines, actorId),
+        auditStatement(db, 'INVOICE', invoiceId, 'INVOICE_RECORDED', actorId, {
+          shipmentId,
+          invoiceNo: invoice.invoiceNo,
+          version: invoice.version
+        })
+      ];
+      if (invoice.version === 'FINAL') {
+        statements.push(auditStatement(db, 'INVOICE', invoiceId, 'INVOICE_FINALIZED', actorId, { shipmentId }));
+      }
+      try {
+        await db.batch(statements);
+      } catch (error) {
+        if (String(error?.message || '').includes('UNIQUE constraint failed: shipment_invoices.shipment_id, shipment_invoices.invoice_no')) {
+          throw codedError('INVOICE_NUMBER_DUPLICATE');
+        }
+        throw error;
+      }
+      return findShipmentInvoice(db, invoiceId);
+    },
+
+    async updateShipmentInvoice(invoiceId, dto, actorId, expectedShipmentId = null) {
+      const invoice = validateShipmentInvoice(dto);
+      const existing = await findShipmentInvoice(db, invoiceId);
+      if (!existing) throw codedError('INVOICE_NOT_FOUND');
+      if (expectedShipmentId && existing.shipment_id !== expectedShipmentId) throw codedError('INVOICE_NOT_FOUND');
+      if (existing.version !== 'PRELIMINARY' || invoice.version !== 'PRELIMINARY') throw codedError('INVOICE_NOT_PRELIMINARY');
+      const shipment = await findPhase6Shipment(db, existing.shipment_id);
+      if (!shipment || shipment.shipment_id !== existing.shipment_id) throw codedError('SHIPMENT_NOT_FOUND');
+      const resolved = await resolveShipmentInvoiceLines(db, shipment, invoice.lines, { preliminary: true });
+      const results = await db.batch([
+        db.prepare(`
+          UPDATE shipment_invoices
+          SET invoice_no = ?, invoice_date = ?, currency = ?, note = ?, drive_url = ?, updated_by = ?, updated_at = CURRENT_TIMESTAMP
+          WHERE invoice_id = ? AND version = 'PRELIMINARY'
+        `).bind(invoice.invoiceNo, invoice.invoiceDate, resolved.currency, invoice.note, invoice.driveUrl, actorId, invoiceId),
+        db.prepare('DELETE FROM shipment_invoice_lines WHERE invoice_id = ?').bind(invoiceId),
+        ...shipmentInvoiceLineStatements(db, invoiceId, resolved.lines, actorId)
+      ]);
+      if (!mutationApplied(results[0])) throw codedError('INVOICE_NOT_PRELIMINARY');
+      return findShipmentInvoice(db, invoiceId);
+    },
+
+    async finalizeShipmentInvoice(invoiceId, lines, actorId, expectedShipmentId = null) {
+      const finalLines = validateShipmentInvoiceFinalization(lines);
+      const existing = await findShipmentInvoice(db, invoiceId);
+      if (!existing) throw codedError('INVOICE_NOT_FOUND');
+      if (expectedShipmentId && existing.shipment_id !== expectedShipmentId) throw codedError('INVOICE_NOT_FOUND');
+      if (existing.version !== 'PRELIMINARY') throw codedError('INVOICE_NOT_PRELIMINARY');
+      const shipment = await findPhase6Shipment(db, existing.shipment_id);
+      if (!shipment || shipment.shipment_id !== existing.shipment_id) throw codedError('SHIPMENT_NOT_FOUND');
+      if (shipment.status !== 'LOADED') throw codedError('INVOICE_FINAL_REQUIRES_ACTUAL_QTY');
+      const resolved = await resolveShipmentInvoiceLines(db, shipment, finalLines, { final: true });
+      const results = await db.batch([
+        db.prepare(`
+          UPDATE shipment_invoices
+          SET version = 'FINAL', currency = ?, updated_by = ?, updated_at = CURRENT_TIMESTAMP
+          WHERE invoice_id = ? AND version = 'PRELIMINARY'
+        `).bind(resolved.currency, actorId, invoiceId),
+        db.prepare('DELETE FROM shipment_invoice_lines WHERE invoice_id = ?').bind(invoiceId),
+        ...shipmentInvoiceLineStatements(db, invoiceId, resolved.lines, actorId),
+        auditAfterMutationStatement(db, 'INVOICE', invoiceId, 'INVOICE_FINALIZED', actorId, {
+          shipmentId: shipment.shipment_id,
+          invoiceNo: existing.invoice_no
+        })
+      ]);
+      if (!mutationApplied(results[0])) throw codedError('INVOICE_NOT_PRELIMINARY');
+      return findShipmentInvoice(db, invoiceId);
+    },
+
+    async getShipmentInvoices(shipmentId) {
+      const shipment = await findPhase6Shipment(db, shipmentId);
+      if (!shipment || shipment.shipment_id !== shipmentId) throw codedError('SHIPMENT_NOT_FOUND');
+      const { results } = await db.prepare(`
+        SELECT invoice_id
+        FROM shipment_invoices
+        WHERE shipment_id = ?
+        ORDER BY created_at ASC, rowid ASC
+      `).bind(shipmentId).all();
+      return Promise.all((results || []).map((invoice) => findShipmentInvoice(db, invoice.invoice_id)));
     },
 
     async getPhase6Shipment(identifier) {

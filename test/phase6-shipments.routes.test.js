@@ -150,3 +150,55 @@ test('worker dispatches the /api/shipments-v2 namespace to the Phase 6 handler',
   assert.equal(response.status, 401);
   assert.equal((await response.json()).message, 'Authentication required.');
 });
+
+test('Shipment Invoice routes expose reads and restrict Invoice writes to operational writers', async () => {
+  const calls = [];
+  let caller = { user_id: 'U_EXPORT', role: 'EXPORT' };
+  const invoice = { invoice_id: 'INV-1', invoice_no: 'WCAT001/2026', version: 'PRELIMINARY' };
+  const handler = createShippingDiHandler({
+    repo: {
+      createShipmentInvoice: async (...args) => {
+        calls.push(['create', ...args]);
+        return invoice;
+      },
+      updateShipmentInvoice: async (...args) => {
+        calls.push(['update', ...args]);
+        return invoice;
+      },
+      finalizeShipmentInvoice: async (...args) => {
+        calls.push(['finalize', ...args]);
+        return { ...invoice, version: 'FINAL' };
+      },
+      getShipmentInvoices: async (...args) => {
+        calls.push(['list', ...args]);
+        return [invoice];
+      }
+    },
+    resolveUser: async () => caller
+  });
+  const payload = { invoiceNo: 'WCAT001/2026', version: 'PRELIMINARY', lines: [{ poRevisionLineId: 'LINE-1', qtyMt: 105 }] };
+
+  const created = await handler(request('/api/shipments-v2/SHP-1/invoices', 'POST', payload));
+  assert.equal(created.status, 200);
+  assert.deepEqual((await created.json()).data.invoice, invoice);
+  assert.deepEqual(calls[0], ['create', 'SHP-1', payload, 'U_EXPORT']);
+
+  const listed = await handler(request('/api/shipments-v2/SHP-1/invoices'));
+  assert.equal(listed.status, 200);
+  assert.deepEqual((await listed.json()).data.invoices, [invoice]);
+  assert.deepEqual(calls[1], ['list', 'SHP-1']);
+
+  const updated = await handler(request('/api/shipments-v2/SHP-1/invoices/INV-1', 'PUT', payload));
+  assert.equal(updated.status, 200);
+  assert.deepEqual(calls[2], ['update', 'INV-1', payload, 'U_EXPORT', 'SHP-1']);
+
+  const finalized = await handler(request('/api/shipments-v2/SHP-1/invoices/INV-1/finalize', 'PATCH', { lines: [{ poRevisionLineId: 'LINE-1', qtyMt: 9.5 }] }));
+  assert.equal(finalized.status, 200);
+  assert.deepEqual(calls[3], ['finalize', 'INV-1', [{ poRevisionLineId: 'LINE-1', qtyMt: 9.5 }], 'U_EXPORT', 'SHP-1']);
+
+  caller = { user_id: 'U_SUPPORT', role: 'SALES_SUPPORT' };
+  assert.equal((await handler(request('/api/shipments-v2/SHP-1/invoices', 'POST', payload))).status, 403);
+  assert.equal((await handler(request('/api/shipments-v2/SHP-1/invoices/INV-1', 'PUT', payload))).status, 403);
+  assert.equal((await handler(request('/api/shipments-v2/SHP-1/invoices/INV-1/finalize', 'PATCH', { lines: [] }))).status, 403);
+  assert.equal((await handler(request('/api/shipments-v2/SHP-1/invoices'))).status, 200);
+});

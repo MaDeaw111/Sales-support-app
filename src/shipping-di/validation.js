@@ -27,6 +27,7 @@ const SHIPMENT_BOOKING_PROPERTIES = [
 const SHIPMENT_SCHEDULE_PROPERTIES = ['plannedLoadingDate', 'actualLoadingDate', 'scheduleNote'];
 const SHIPMENT_CONTAINER_PROPERTIES = ['containerNo', 'sealNo', 'lines'];
 const SHIPMENT_CONTAINER_LINE_PROPERTIES = ['poRevisionLineId', 'numberOfBags', 'netWeightMt'];
+const SHIPMENT_INVOICE_PROPERTIES = ['invoiceNo', 'version', 'invoiceDate', 'note', 'driveUrl', 'lines'];
 
 function codedError(code) {
   const error = new Error(code);
@@ -61,9 +62,9 @@ function optionalId(value, code) {
   return requiredId(value, code);
 }
 
-function validateGoogleDriveUrl(value) {
+function validateGoogleDriveUrl(value, code = 'DI_GOOGLE_DRIVE_URL_INVALID') {
   if (value === undefined || value === null) return null;
-  if (typeof value !== 'string' || !value.trim()) throw codedError('DI_GOOGLE_DRIVE_URL_INVALID');
+  if (typeof value !== 'string' || !value.trim()) throw codedError(code);
 
   try {
     const url = new URL(value);
@@ -71,11 +72,11 @@ function validateGoogleDriveUrl(value) {
       url.protocol !== 'https:' ||
       !['drive.google.com', 'docs.google.com'].includes(url.hostname)
     ) {
-      throw codedError('DI_GOOGLE_DRIVE_URL_INVALID');
+      throw codedError(code);
     }
   } catch (error) {
-    if (error.code === 'DI_GOOGLE_DRIVE_URL_INVALID') throw error;
-    throw codedError('DI_GOOGLE_DRIVE_URL_INVALID');
+    if (error.code === code) throw error;
+    throw codedError(code);
   }
 
   return value;
@@ -280,6 +281,56 @@ export function validateShipmentContainers(containers) {
     });
     return { containerNo, sealNo, lines };
   });
+}
+
+function validateInvoiceDate(value) {
+  if (value === undefined || value === null) return null;
+  try {
+    return optionalBookingDate(value);
+  } catch {
+    throw codedError('INVOICE_DATE_INVALID');
+  }
+}
+
+function validateInvoiceLines(lines) {
+  if (!Array.isArray(lines) || lines.length === 0) throw codedError('INVOICE_LINES_REQUIRED');
+  const lineIds = new Set();
+  return lines.map((line) => {
+    if (!line || typeof line !== 'object' || Array.isArray(line)) throw codedError('INVOICE_LINE_INVALID');
+    if (Object.keys(line).some((property) => !['poRevisionLineId', 'qtyMt'].includes(property))) {
+      throw codedError('INVOICE_LINE_PROPERTY_INVALID');
+    }
+    const poRevisionLineId = requiredId(line.poRevisionLineId, 'INVOICE_LINE_PO_LINE_REQUIRED');
+    if (lineIds.has(poRevisionLineId)) throw codedError('INVOICE_LINE_DUPLICATE');
+    lineIds.add(poRevisionLineId);
+    if (typeof line.qtyMt !== 'number' || !Number.isFinite(line.qtyMt) || line.qtyMt <= 0) {
+      throw codedError('INVOICE_LINE_QTY_INVALID');
+    }
+    return { poRevisionLineId, qtyMt: line.qtyMt };
+  });
+}
+
+export function validateShipmentInvoice(dto) {
+  if (!dto || typeof dto !== 'object' || Array.isArray(dto)) throw codedError('INVOICE_PAYLOAD_INVALID');
+  if (Object.keys(dto).some((property) => !SHIPMENT_INVOICE_PROPERTIES.includes(property))) {
+    throw codedError('INVOICE_PROPERTY_INVALID');
+  }
+  const invoiceNo = typeof dto.invoiceNo === 'string' ? dto.invoiceNo.trim() : '';
+  if (!invoiceNo) throw codedError('INVOICE_NUMBER_REQUIRED');
+  if (!['PRELIMINARY', 'FINAL'].includes(dto.version)) throw codedError('INVOICE_VERSION_INVALID');
+  if (dto.note !== undefined && dto.note !== null && typeof dto.note !== 'string') throw codedError('INVOICE_NOTE_INVALID');
+  return {
+    invoiceNo,
+    version: dto.version,
+    invoiceDate: validateInvoiceDate(dto.invoiceDate),
+    note: dto.note?.trim() || null,
+    driveUrl: validateGoogleDriveUrl(dto.driveUrl, 'INVOICE_DRIVE_URL_INVALID'),
+    lines: validateInvoiceLines(dto.lines)
+  };
+}
+
+export function validateShipmentInvoiceFinalization(lines) {
+  return validateInvoiceLines(lines);
 }
 
 export { codedError };
