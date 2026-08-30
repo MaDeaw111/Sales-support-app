@@ -2,6 +2,7 @@ import { resolveAuthenticatedUser } from '../auth/routes.js';
 import { createShippingDiRepository } from './repository.js';
 
 const OPERATIONAL_READER_ROLES = ['ADMIN', 'MANAGER', 'SALES_SUPPORT', 'EXPORT'];
+const PHASE6_READ_ROLES = [...OPERATIONAL_READER_ROLES, 'EXTERNAL_SALES', 'PRODUCTION_WAREHOUSE'];
 const SERVICE_PARTNER_WRITE_ROLES = ['ADMIN', 'MANAGER', 'EXPORT'];
 const DELIVERY_INSTRUCTION_WRITE_ROLES = ['ADMIN', 'MANAGER', 'EXPORT'];
 const SHIPMENT_BOOKING_WRITE_ROLES = ['ADMIN', 'MANAGER', 'EXPORT'];
@@ -27,9 +28,86 @@ async function readJson(request) {
   }
 }
 
+function pick(record, fields) {
+  return Object.fromEntries(fields
+    .filter((field) => Object.hasOwn(record, field))
+    .map((field) => [field, record[field]]));
+}
+
+function projectLinesForOperationalRead(lines) {
+  if (!Array.isArray(lines)) return undefined;
+  return lines.map((line) => pick(line, [
+    'di_line_id', 'po_revision_line_id', 'product_id', 'product_code', 'product_name',
+    'planned_qty_mt', 'qty_mt', 'net_weight_mt', 'number_of_bags', 'packing_snapshot', 'packing', 'packaging'
+  ]));
+}
+
+function projectContainersForOperationalRead(containers) {
+  if (!Array.isArray(containers)) return undefined;
+  return containers.map((container) => ({
+    ...pick(container, [
+      'container_id', 'container_no', 'container_type', 'seal_no', 'loading_date', 'status', 'total_net_weight_mt'
+    ]),
+    ...(Array.isArray(container.lines) ? { lines: projectLinesForOperationalRead(container.lines) } : {})
+  }));
+}
+
+export function projectShippingDiForRole(record, caller) {
+  if (!record || !caller) return record;
+  if (!['EXTERNAL_SALES', 'PRODUCTION_WAREHOUSE'].includes(caller.role)) return record;
+
+  const isShipment = Object.hasOwn(record, 'shipment_id');
+  const fields = caller.role === 'PRODUCTION_WAREHOUSE'
+    ? (isShipment
+      ? [
+          'shipment_id', 'di_id', 'status', 'planned_loading_date', 'actual_loading_date',
+          'schedule_result', 'actual_qty_mt', 'container_plan', 'lines', 'containers'
+        ]
+      : [
+          'di_id', 'customer_id', 'di_no', 'shipping_month', 'shipping_period', 'status',
+          'planned_qty_mt', 'actual_qty_mt', 'container_plan', 'lines', 'containers'
+        ])
+    : (isShipment
+      ? [
+          'shipment_id', 'di_id', 'customer_id', 'status', 'booking_no', 'vessel', 'etd', 'eta',
+          'planned_loading_date', 'actual_loading_date', 'schedule_result', 'actual_qty_mt', 'lines', 'containers'
+        ]
+      : [
+          'di_id', 'customer_id', 'po_id', 'po_revision_id', 'di_no', 'shipping_month',
+          'shipping_period', 'status', 'lines', 'planned_qty_mt', 'actual_qty_mt', 'container_plan'
+        ]);
+  const projection = pick(record, fields);
+  if (Array.isArray(record.lines)) projection.lines = projectLinesForOperationalRead(record.lines);
+  if (Array.isArray(record.containers)) projection.containers = projectContainersForOperationalRead(record.containers);
+  return projection;
+}
+
 export function createShippingDiHandler({ repo, resolveUser, db }) {
   const activeRepo = repo || createShippingDiRepository(db);
   const activeResolveUser = resolveUser || resolveAuthenticatedUser;
+
+  async function canAccessShippingDiCustomer(caller, customerId) {
+    if (caller.role !== 'EXTERNAL_SALES') return true;
+    if (!customerId || !db?.prepare) return false;
+    const customer = await db.prepare(`
+      SELECT owner_user_id
+      FROM customers
+      WHERE customer_id = ?
+    `).bind(customerId).first();
+    return customer?.owner_user_id === caller.user_id;
+  }
+
+  async function customerIdForShippingRecord(record) {
+    if (!record) return null;
+    if (record.customer_id || record.customerId) return record.customer_id || record.customerId;
+    if (!record.di_id || typeof activeRepo.getDeliveryInstruction !== 'function') return null;
+    const deliveryInstruction = await activeRepo.getDeliveryInstruction(record.di_id);
+    return deliveryInstruction?.customer_id || deliveryInstruction?.customerId || null;
+  }
+
+  async function canReadShippingDiRecord(caller, record) {
+    return canAccessShippingDiCustomer(caller, await customerIdForShippingRecord(record));
+  }
 
   return async function handle(request, env) {
     const caller = await activeResolveUser(request, env);
@@ -60,13 +138,20 @@ export function createShippingDiHandler({ repo, resolveUser, db }) {
     }
 
     if (path === '/api/delivery-instructions' && method === 'GET') {
-      if (!OPERATIONAL_READER_ROLES.includes(caller.role)) return json({ status: 'ERROR', message: 'Permission denied.' }, 403);
+      if (!PHASE6_READ_ROLES.includes(caller.role)) return json({ status: 'ERROR', message: 'Permission denied.' }, 403);
+      if (caller.role === 'EXTERNAL_SALES' && !db?.prepare) return json({ status: 'ERROR', message: 'Permission denied.' }, 403);
       const deliveryInstructions = await activeRepo.listDeliveryInstructions({
         customerId: url.searchParams.get('customerId') || undefined,
         poId: url.searchParams.get('poId') || undefined,
         status: url.searchParams.get('status') || undefined
       });
-      return json({ status: 'SUCCESS', data: { deliveryInstructions } });
+      const visibleInstructions = [];
+      for (const deliveryInstruction of deliveryInstructions) {
+        if (await canReadShippingDiRecord(caller, deliveryInstruction)) {
+          visibleInstructions.push(projectShippingDiForRole(deliveryInstruction, caller));
+        }
+      }
+      return json({ status: 'SUCCESS', data: { deliveryInstructions: visibleInstructions } });
     }
 
     const poBalanceMatch = path.match(/^\/api\/delivery-instructions\/po-balance\/([^/]+)$/);
@@ -135,10 +220,20 @@ export function createShippingDiHandler({ repo, resolveUser, db }) {
 
     const deliveryInstructionShipmentMatch = path.match(/^\/api\/delivery-instructions\/([^/]+)\/shipment$/);
     if (deliveryInstructionShipmentMatch && method === 'GET') {
-      if (!OPERATIONAL_READER_ROLES.includes(caller.role)) return json({ status: 'ERROR', message: 'Permission denied.' }, 403);
+      if (!PHASE6_READ_ROLES.includes(caller.role)) return json({ status: 'ERROR', message: 'Permission denied.' }, 403);
       const shipment = await activeRepo.getPhase6Shipment(decodeURIComponent(deliveryInstructionShipmentMatch[1]));
       if (!shipment) return json({ status: 'ERROR', message: 'SHIPMENT_NOT_FOUND' }, 404);
-      return json({ status: 'SUCCESS', data: { shipment } });
+      if (!await canReadShippingDiRecord(caller, shipment)) return json({ status: 'ERROR', message: 'Permission denied.' }, 403);
+      return json({ status: 'SUCCESS', data: { shipment: projectShippingDiForRole(shipment, caller) } });
+    }
+
+    const shipmentMatch = path.match(/^\/api\/shipments-v2\/([^/]+)$/);
+    if (shipmentMatch && method === 'GET') {
+      if (!PHASE6_READ_ROLES.includes(caller.role)) return json({ status: 'ERROR', message: 'Permission denied.' }, 403);
+      const shipment = await activeRepo.getPhase6Shipment(decodeURIComponent(shipmentMatch[1]));
+      if (!shipment) return json({ status: 'ERROR', message: 'SHIPMENT_NOT_FOUND' }, 404);
+      if (!await canReadShippingDiRecord(caller, shipment)) return json({ status: 'ERROR', message: 'Permission denied.' }, 403);
+      return json({ status: 'SUCCESS', data: { shipment: projectShippingDiForRole(shipment, caller) } });
     }
 
     const shipmentBookingMatch = path.match(/^\/api\/shipments-v2\/([^/]+)\/booking$/);
