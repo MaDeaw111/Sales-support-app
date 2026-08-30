@@ -240,7 +240,8 @@ function deliveryInstructionLineReservationStatement(db, diId, deliveryInstructi
            END,
            requested.packing_snapshot, requested.created_by, requested.updated_by
     FROM requested_line requested
-    WHERE EXISTS (
+    WHERE changes() > 0
+      AND EXISTS (
       SELECT 1
       FROM delivery_instructions current_di
       WHERE current_di.di_id = requested.di_id
@@ -475,13 +476,10 @@ export function createShippingDiRepository(db) {
           diId,
           existing.lifecycle_version
         ),
-        auditAfterMutationStatement(db, 'DI', diId, 'DI_UPDATED', actorId, {
-          old: deliveryInstructionSnapshot(existing),
-          new: deliveryInstructionSnapshot(deliveryInstruction)
-        }),
         db.prepare(`
           DELETE FROM delivery_instruction_lines
-          WHERE di_id = ?
+          WHERE changes() = 1
+            AND di_id = ?
             AND EXISTS (
               SELECT 1 FROM delivery_instructions
               WHERE di_id = ? AND status = 'DRAFT' AND lifecycle_version = ?
@@ -498,6 +496,10 @@ export function createShippingDiRepository(db) {
           existing.lifecycle_version + 1
         ));
       }
+      statements.push(auditAfterMutationStatement(db, 'DI', diId, 'DI_UPDATED', actorId, {
+        old: deliveryInstructionSnapshot(existing),
+        new: deliveryInstructionSnapshot(deliveryInstruction)
+      }));
       try {
         const results = await db.batch(statements);
         if (!mutationApplied(results[0])) throw codedError('DI_NOT_DRAFT');

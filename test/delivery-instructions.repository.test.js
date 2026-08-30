@@ -486,6 +486,50 @@ test('a PATCH-first conflict rejects the stale confirmation with one DRAFT audit
   assert.deepEqual((await repo.getShippingDiHistory(created.di_id)).map((event) => event.event_type), ['DI_CREATED', 'DI_UPDATED']);
 });
 
+test('same-DI PATCH conflict leaves the losing header, lines, and audit event unapplied', async () => {
+  let releaseStalePatchRead;
+  const stalePatchReadReleased = new Promise((resolve) => {
+    releaseStalePatchRead = resolve;
+  });
+  let captureStalePatchRead;
+  const stalePatchReadCaptured = new Promise((resolve) => {
+    captureStalePatchRead = resolve;
+  });
+  let pauseNextRead = false;
+  const { wrappedDb } = await setupTestDb({
+    pauseFirst: async () => {
+      if (!pauseNextRead) return;
+      pauseNextRead = false;
+      captureStalePatchRead();
+      await stalePatchReadReleased;
+    }
+  });
+  const repo = createShippingDiRepository(wrappedDb);
+  const created = await repo.createDeliveryInstruction(diPayload({ note: 'Before PATCH' }), 'U_EXPORT');
+  pauseNextRead = true;
+
+  const stalePatch = repo.updateDraftDeliveryInstruction(created.di_id, {
+    note: 'Loser PATCH',
+    lines: [{ poId: 'PO-2026-015', poRevisionId: 'REV-1', poRevisionLineId: 'LINE-10', plannedQtyMt: 5, packingSnapshot: 'Jumbo Bag' }]
+  }, 'U_EXPORT');
+  await stalePatchReadCaptured;
+  const winner = await repo.updateDraftDeliveryInstruction(created.di_id, {
+    note: 'Winner PATCH',
+    lines: [{ poId: 'PO-2026-015', poRevisionId: 'REV-1', poRevisionLineId: 'LINE-20', plannedQtyMt: 10, packingSnapshot: 'Jumbo Bag' }]
+  }, 'U_EXPORT');
+  releaseStalePatchRead();
+
+  await assert.rejects(() => stalePatch, /DI_NOT_DRAFT/);
+  assert.equal(winner.note, 'Winner PATCH');
+  const finalDi = await repo.getDeliveryInstruction(created.di_id);
+  assert.equal(finalDi.note, 'Winner PATCH');
+  assert.deepEqual(finalDi.lines.map((line) => ({
+    po_revision_line_id: line.po_revision_line_id,
+    planned_qty_mt: line.planned_qty_mt
+  })), [{ po_revision_line_id: 'LINE-20', planned_qty_mt: 10 }]);
+  assert.deepEqual((await repo.getShippingDiHistory(created.di_id)).map((event) => event.event_type), ['DI_CREATED', 'DI_UPDATED']);
+});
+
 test('DELETE and confirmation conflicts preserve exactly one winning DRAFT transition', async () => {
   const { wrappedDb } = await setupTestDb();
   const repo = createShippingDiRepository(wrappedDb);

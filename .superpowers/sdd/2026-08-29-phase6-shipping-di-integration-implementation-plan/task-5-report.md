@@ -93,3 +93,20 @@ The Fix Round 1 status predicate prevented confirmation-first stale writes, but 
 - `node --test test/delivery-instructions.repository.test.js test/delivery-instructions.routes.test.js test/phase6-migration.test.js` — 25 passed, 0 failed.
 - `npm test` — 200 passed, 0 failed, 0 skipped.
 - `git diff --check` — no whitespace errors.
+
+## Fix round 3: atomic same-DI PATCH line guard
+
+### Root cause and RED evidence
+
+The lifecycle-version check protected a stale PATCH header, but its following line DELETE/INSERT statements could still match the winning request's incremented version. That allowed the stale request to commit replacement lines without a header update or audit event. The deterministic same-DI PATCH/PATCH regression paused the losing PATCH after its DRAFT read, completed the winner, and then released the loser. It failed with the stale `LINE-10` quantity of 5 persisted instead of the winner's `LINE-20` quantity of 10.
+
+### Fix
+
+The guarded header update is now the first batch statement. The line DELETE requires that successful header mutation (`changes() = 1`) and the request's newly incremented lifecycle version. Every replacement-line reservation requires the preceding guarded mutation to have succeeded and rechecks that same current DI version. The audit insert comes after the complete guarded line chain, so it is written only for a fully successful PATCH. A stale PATCH therefore returns `DI_NOT_DRAFT` with no header, line, reservation, or audit side effect.
+
+### Fix-round verification
+
+- Deterministic same-DI PATCH/PATCH race: winner's header and exact lines persist, loser rejects `DI_NOT_DRAFT`, and history contains only `DI_CREATED`, `DI_UPDATED`.
+- `node --test test/delivery-instructions.repository.test.js` — 19 passed, 0 failed.
+- `node --test test/delivery-instructions.repository.test.js test/delivery-instructions.routes.test.js test/phase6-migration.test.js` — 26 passed, 0 failed.
+- `npm test` — 201 passed, 0 failed, 0 skipped.
