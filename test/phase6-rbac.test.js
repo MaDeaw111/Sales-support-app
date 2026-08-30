@@ -103,11 +103,14 @@ test('EXTERNAL_SALES is owner-scoped and shipment-v2 lookup never treats a DI id
   let caller = { user_id: 'U_SALES', role: 'EXTERNAL_SALES' };
   const handler = createShippingDiHandler({ repo, db: wrappedDb, resolveUser: async () => caller });
 
-  assert.equal((await handler(request('/api/delivery-instructions/DI1/shipment'))).status, 200);
+  const workspace = await handler(request('/api/delivery-instructions/workspace'));
+  const detailRef = (await workspace.json()).data.deliveryInstructions[0].detail_ref;
+  assert.equal((await handler(request(`/api/delivery-instructions/${detailRef}/shipment`))).status, 200);
+  assert.equal((await handler(request('/api/delivery-instructions/DI1/shipment'))).status, 404);
   assert.equal((await handler(request('/api/shipments-v2/DI1'))).status, 404);
 
   db.prepare("UPDATE customers SET owner_user_id = 'U_OTHER' WHERE customer_id = 'C1'").run();
-  assert.equal((await handler(request('/api/delivery-instructions/DI1/shipment'))).status, 403);
+  assert.equal((await handler(request(`/api/delivery-instructions/${detailRef}/shipment`))).status, 404);
   assert.equal((await handler(request('/api/shipments-v2/S1'))).status, 403);
   caller = { user_id: 'U_WAREHOUSE', role: 'PRODUCTION_WAREHOUSE' };
   assert.equal((await handler(request('/api/shipments-v2/S1'))).status, 200);
@@ -131,4 +134,66 @@ test('workspace list is server-projected for external sales and warehouse loadin
   assert.equal(row.product_summary, 'Tapioca Pellet 65%');
   assert.equal(row.actual_loading_date, '2026-09-10');
   assert.equal('payment_status' in row, false);
+  assert.equal('schedule_result' in row, false);
+});
+
+test('restricted workspace queries ignore hidden commercial filters and issue opaque detail references', async () => {
+  const { repo, wrappedDb } = await setupRbacFixture();
+  const handler = createShippingDiHandler({
+    repo,
+    db: wrappedDb,
+    resolveUser: async () => ({ user_id: 'U_SALES', role: 'EXTERNAL_SALES' })
+  });
+
+  const baseline = await handler(request('/api/delivery-instructions/workspace'));
+  const filtered = await handler(request('/api/delivery-instructions/workspace?paymentStatus=PAID&search=EGSU2548896'));
+  const baselineRows = (await baseline.json()).data.deliveryInstructions;
+  const filteredRows = (await filtered.json()).data.deliveryInstructions;
+
+  assert.equal(filteredRows.length, baselineRows.length);
+  assert.match(baselineRows[0].detail_ref, /^[a-f0-9]{64}$/);
+  assert.equal('di_id' in baselineRows[0], false);
+});
+
+test('warehouse workspace filter parameters cannot infer hidden schedule or payment state', async () => {
+  const { repo, wrappedDb } = await setupRbacFixture();
+  const handler = createShippingDiHandler({
+    repo,
+    db: wrappedDb,
+    resolveUser: async () => ({ user_id: 'U_WAREHOUSE', role: 'PRODUCTION_WAREHOUSE' })
+  });
+  const baseline = await handler(request('/api/delivery-instructions/workspace'));
+  const filtered = await handler(request('/api/delivery-instructions/workspace?search=BK-1&scheduleResult=ON_PLAN&paymentStatus=PAID'));
+  const baselineRows = (await baseline.json()).data.deliveryInstructions;
+  const filteredRows = (await filtered.json()).data.deliveryInstructions;
+
+  assert.equal(filteredRows.length, baselineRows.length);
+  assert.equal('schedule_result' in filteredRows[0], false);
+  assert.equal('payment_status' in filteredRows[0], false);
+});
+
+test('restricted opaque detail references cannot select a different customer with the same DI number', async () => {
+  const { db, repo, wrappedDb } = await setupRbacFixture();
+  db.prepare("INSERT INTO customers (customer_id, customer_code, customer_name, owner_user_id) VALUES ('C2', 'CUST2', 'Second Owned Customer', 'U_SALES')").run();
+  db.prepare("INSERT INTO po_headers (po_id, customer_id, created_by) VALUES ('PO2', 'C2', 'U_EXPORT')").run();
+  db.prepare("INSERT INTO po_revisions (revision_id, po_id, revision_no, status, ownership_type_snapshot, currency, incoterm, delivery_start, delivery_end, valid_until, created_by) VALUES ('REV2', 'PO2', 0, 'ACTIVE', 'ASSIGNED_SALES', 'USD', 'FOB', '2026-09-01', '2026-09-30', '2026-12-31', 'U_EXPORT')").run();
+  db.prepare("INSERT INTO po_revision_lines (line_id, po_revision_id, line_no, product_id, spec_source, spec_revision_id, contract_qty_mt, tolerance_pct, min_qty_mt, max_qty_mt, unit_price, packaging, container_type, loading_pattern) VALUES ('LINE2', 'REV2', 10, 'P1', 'STANDARD', 'SPEC1', 20, 0, 20, 20, 350, 'Jumbo Bag', '40HC', 'Floor loaded')").run();
+  db.prepare("INSERT INTO delivery_instructions (di_id, customer_id, po_id, po_revision_id, di_no, shipping_month, shipping_period, container_plan, status, created_by) VALUES ('DI2', 'C2', 'PO2', 'REV2', 'CUSTOMER-DI-1', '2026-09', 'FIRST_HALF', '1 × 40''HC', 'IN_PROGRESS', 'U_EXPORT')").run();
+  db.prepare("INSERT INTO delivery_instruction_lines (di_line_id, di_id, po_id, po_revision_id, po_revision_line_id, product_id, planned_qty_mt, packing_snapshot, created_by) VALUES ('DIL2', 'DI2', 'PO2', 'REV2', 'LINE2', 'P1', 20, 'Jumbo Bag', 'U_EXPORT')").run();
+  db.prepare("INSERT INTO phase6_shipments (shipment_id, di_id, status, booking_no, created_by, updated_by) VALUES ('S2', 'DI2', 'BOOKED', 'BK-2', 'U_EXPORT', 'U_EXPORT')").run();
+
+  const handler = createShippingDiHandler({
+    repo,
+    db: wrappedDb,
+    resolveUser: async () => ({ user_id: 'U_SALES', role: 'EXTERNAL_SALES' })
+  });
+  const workspace = await handler(request('/api/delivery-instructions/workspace'));
+  const rows = (await workspace.json()).data.deliveryInstructions;
+  assert.equal(rows.filter((row) => row.di_no === 'CUSTOMER-DI-1').length, 2);
+  assert.notEqual(rows[0].detail_ref, rows[1].detail_ref);
+
+  const response = await handler(request(`/api/delivery-instructions/${rows.find((row) => row.booking_no === 'BK-2').detail_ref}/shipment`));
+  assert.equal(response.status, 200);
+  assert.equal((await response.json()).data.shipment.booking_no, 'BK-2');
+  assert.equal((await handler(request('/api/delivery-instructions/CUSTOMER-DI-1/shipment'))).status, 404);
 });

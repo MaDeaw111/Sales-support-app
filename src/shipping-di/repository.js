@@ -1823,17 +1823,6 @@ export function createShippingDiRepository(db) {
       return (results || []).map((row) => ({ ...row, planned_qty_mt: Number(row.planned_qty_mt) }));
     },
 
-    async getPhase6ShipmentByDeliveryInstructionReference(reference) {
-      const deliveryInstruction = await db.prepare(`
-        SELECT di_id FROM delivery_instructions
-        WHERE di_id = ? OR di_no = ?
-        ORDER BY CASE WHEN di_id = ? THEN 0 ELSE 1 END, created_at DESC
-        LIMIT 1
-      `).bind(reference, reference, reference).first();
-      if (!deliveryInstruction) return null;
-      return findPhase6ShipmentReadModel(db, deliveryInstruction.di_id, 'di_id');
-    },
-
     async suggestPartnersForCustomer(customerId) {
       const latest = await db.prepare(`
         SELECT surveyor_partner_id, forwarder_partner_id

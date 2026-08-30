@@ -81,6 +81,17 @@ export function projectShippingDiWorkspaceForRole(record, caller) {
   return record;
 }
 
+function isRestrictedPhase6Caller(caller) {
+  return caller?.role === 'EXTERNAL_SALES' || caller?.role === 'PRODUCTION_WAREHOUSE';
+}
+
+async function scopedWorkspaceDetailReference(caller, deliveryInstructionId) {
+  const source = `phase6-workspace:${caller.user_id}:${caller.role}:${deliveryInstructionId}`;
+  const bytes = new TextEncoder().encode(source);
+  const digest = await crypto.subtle.digest('SHA-256', bytes);
+  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('');
+}
+
 export function createShippingDiHandler({ repo, resolveUser, db }) {
   const activeRepo = repo || createShippingDiRepository(db);
   const activeResolveUser = resolveUser || resolveAuthenticatedUser;
@@ -156,18 +167,23 @@ export function createShippingDiHandler({ repo, resolveUser, db }) {
     if (path === '/api/delivery-instructions/workspace' && method === 'GET') {
       if (!PHASE6_READ_ROLES.includes(caller.role)) return json({ status: 'ERROR', message: 'Permission denied.' }, 403);
       if (caller.role === 'EXTERNAL_SALES' && !db?.prepare) return json({ status: 'ERROR', message: 'Permission denied.' }, 403);
+      const restricted = isRestrictedPhase6Caller(caller);
       const deliveryInstructions = await activeRepo.listDeliveryInstructionWorkspace({
-        search: url.searchParams.get('search') || undefined,
+        // Restricted projections do not expose the commercial fields searched here.
+        // Ignore those predicates before querying so result counts cannot reveal them.
+        search: restricted ? undefined : (url.searchParams.get('search') || undefined),
         diStatus: url.searchParams.get('diStatus') || undefined,
         shipmentStatus: url.searchParams.get('shipmentStatus') || undefined,
         shippingMonth: url.searchParams.get('shippingMonth') || undefined,
-        scheduleResult: url.searchParams.get('scheduleResult') || undefined,
-        paymentStatus: url.searchParams.get('paymentStatus') || undefined
+        scheduleResult: caller.role === 'PRODUCTION_WAREHOUSE' ? undefined : (url.searchParams.get('scheduleResult') || undefined),
+        paymentStatus: restricted ? undefined : (url.searchParams.get('paymentStatus') || undefined)
       });
       const visibleInstructions = [];
       for (const deliveryInstruction of deliveryInstructions) {
         if (await canReadShippingDiRecord(caller, deliveryInstruction)) {
-          visibleInstructions.push(projectShippingDiWorkspaceForRole(deliveryInstruction, caller));
+          const projected = projectShippingDiWorkspaceForRole(deliveryInstruction, caller);
+          if (restricted) projected.detail_ref = await scopedWorkspaceDetailReference(caller, deliveryInstruction.di_id);
+          visibleInstructions.push(projected);
         }
       }
       return json({ status: 'SUCCESS', data: { deliveryInstructions: visibleInstructions } });
@@ -241,9 +257,20 @@ export function createShippingDiHandler({ repo, resolveUser, db }) {
     if (deliveryInstructionShipmentMatch && method === 'GET') {
       if (!PHASE6_READ_ROLES.includes(caller.role)) return json({ status: 'ERROR', message: 'Permission denied.' }, 403);
       const reference = decodeURIComponent(deliveryInstructionShipmentMatch[1]);
-      const shipment = typeof activeRepo.getPhase6ShipmentByDeliveryInstructionReference === 'function'
-        ? await activeRepo.getPhase6ShipmentByDeliveryInstructionReference(reference)
-        : await activeRepo.getPhase6ShipmentByDeliveryInstructionId(reference);
+      let shipment = null;
+      if (isRestrictedPhase6Caller(caller)) {
+        // A restricted client can only resolve an opaque reference issued in its
+        // own workspace projection. Never resolve a public DI number globally.
+        const candidates = await activeRepo.listDeliveryInstructionWorkspace({});
+        for (const candidate of candidates) {
+          if (!await canReadShippingDiRecord(caller, candidate)) continue;
+          if (await scopedWorkspaceDetailReference(caller, candidate.di_id) !== reference) continue;
+          shipment = await activeRepo.getPhase6ShipmentByDeliveryInstructionId(candidate.di_id);
+          break;
+        }
+      } else {
+        shipment = await activeRepo.getPhase6ShipmentByDeliveryInstructionId(reference);
+      }
       if (!shipment) return json({ status: 'ERROR', message: 'SHIPMENT_NOT_FOUND' }, 404);
       if (!await canReadShippingDiRecord(caller, shipment)) return json({ status: 'ERROR', message: 'Permission denied.' }, 403);
       return json({ status: 'SUCCESS', data: { shipment: projectShippingDiForRole(shipment, caller) } });
@@ -444,6 +471,12 @@ export function createShippingDiHandler({ repo, resolveUser, db }) {
     }
 
     const deliveryInstructionMatch = path.match(/^\/api\/delivery-instructions\/([^/]+)$/);
+    if (deliveryInstructionMatch && method === 'GET') {
+      if (!DELIVERY_INSTRUCTION_WRITE_ROLES.includes(caller.role)) return json({ status: 'ERROR', message: 'Permission denied.' }, 403);
+      const deliveryInstruction = await activeRepo.getDeliveryInstruction(decodeURIComponent(deliveryInstructionMatch[1]));
+      if (!deliveryInstruction) return json({ status: 'ERROR', message: 'DI_NOT_FOUND' }, 404);
+      return json({ status: 'SUCCESS', data: { deliveryInstruction } });
+    }
     if (deliveryInstructionMatch && method === 'PATCH') {
       if (!DELIVERY_INSTRUCTION_WRITE_ROLES.includes(caller.role)) return json({ status: 'ERROR', message: 'Permission denied.' }, 403);
       const body = await readJson(request);
