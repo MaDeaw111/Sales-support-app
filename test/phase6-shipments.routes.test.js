@@ -277,3 +277,12 @@ test('Customer Credit and Payment routes expose reads and restrict writes to ope
   assert.equal((await handler(request('/api/shipments-v2/SHP-1/payment', 'PUT', paymentPayload))).status, 403);
   assert.equal((await handler(request('/api/customer-credits?customerId=C1'))).status, 200);
 });
+
+test('Shipment completion remains automatic with no manual completion route', async () => {
+  const handler = createShippingDiHandler({
+    repo: {},
+    resolveUser: async () => ({ user_id: 'U_EXPORT', role: 'EXPORT' })
+  });
+
+  assert.equal((await handler(request('/api/shipments-v2/SHP-1/complete', 'PATCH'))).status, 404);
+});

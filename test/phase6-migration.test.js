@@ -182,7 +182,7 @@ test('Phase 6 invoice schema has required dates, optimistic versions, and exact 
   );
 });
 
-test('Phase 6 credit schema is lightweight and accepts the approved payment audit events', async () => {
+test('Phase 6 credit schema is lightweight and accepts the approved payment and completion audit events', async () => {
   const db = await setupThrough0006();
   db.exec(await readMigration('0007_shipping_di_integration.sql'));
   db.prepare("INSERT INTO users (user_id, email, password_hash, password_salt, role, status, full_name) VALUES ('U1', 'export@example.com', 'hash', 'salt', 'EXPORT', 'ACTIVE', 'Export User')").run();
@@ -192,7 +192,8 @@ test('Phase 6 credit schema is lightweight and accepts the approved payment audi
   for (const [eventId, eventType] of [
     ['EVT-CREDIT-1', 'CUSTOMER_CREDIT_CREATED'],
     ['EVT-CREDIT-2', 'CUSTOMER_CREDIT_USED'],
-    ['EVT-PAYMENT-1', 'PAYMENT_UPDATED']
+    ['EVT-PAYMENT-1', 'PAYMENT_UPDATED'],
+    ['EVT-COMPLETION-1', 'SHIPMENT_COMPLETED']
   ]) {
     db.prepare('INSERT INTO shipment_audit_events (event_id, entity_type, entity_id, event_type, actor_id) VALUES (?, ?, ?, ?, ?)')
       .run(eventId, eventType.startsWith('CUSTOMER') ? 'CREDIT' : 'SHIPMENT', 'SHP-1', eventType, 'U1');

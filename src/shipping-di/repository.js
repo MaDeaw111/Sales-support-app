@@ -489,6 +489,65 @@ function paymentUpdateStatement(db, shipmentId, actorId, payment = null, require
   );
 }
 
+async function recomputeShipmentCompletion(db, shipmentId, actorId) {
+  const shipment = await findPhase6Shipment(db, shipmentId);
+  if (!shipment || shipment.shipment_id !== shipmentId) throw codedError('SHIPMENT_NOT_FOUND');
+  if (!isDocumentRequirementSatisfied(shipment) || shipment.payment_status !== 'PAID') return shipment;
+
+  await db.batch([
+    db.prepare(`
+      UPDATE phase6_shipments
+      SET status = 'COMPLETED', updated_by = ?, updated_at = CURRENT_TIMESTAMP
+      WHERE shipment_id = ?
+        AND status = 'DOCS_SENT'
+        AND payment_status = 'PAID'
+        AND all_ship_docs_drive_url IS NOT NULL
+        AND digital_docs_sent_date IS NOT NULL
+        AND (original_docs_required = 0 OR (dhl_sent_date IS NOT NULL AND dhl_tracking_no IS NOT NULL))
+        AND EXISTS (
+          SELECT 1
+          FROM delivery_instructions
+          WHERE di_id = phase6_shipments.di_id AND status = 'IN_PROGRESS'
+        )
+    `).bind(actorId, shipmentId),
+    db.prepare(`
+      UPDATE delivery_instructions
+      SET status = 'COMPLETED', lifecycle_version = lifecycle_version + 1,
+          updated_by = ?, updated_at = CURRENT_TIMESTAMP
+      WHERE di_id = (SELECT di_id FROM phase6_shipments WHERE shipment_id = ?)
+        AND status = 'IN_PROGRESS'
+        AND EXISTS (
+          SELECT 1
+          FROM phase6_shipments
+          WHERE shipment_id = ? AND status = 'COMPLETED'
+        )
+    `).bind(actorId, shipmentId, shipmentId),
+    db.prepare(`
+      INSERT INTO shipment_audit_events (event_id, entity_type, entity_id, event_type, actor_id, metadata_json)
+      SELECT ?, 'SHIPMENT', ?, 'SHIPMENT_COMPLETED', ?, ?
+      WHERE EXISTS (
+        SELECT 1
+        FROM phase6_shipments shipment
+        JOIN delivery_instructions instruction ON instruction.di_id = shipment.di_id
+        WHERE shipment.shipment_id = ? AND shipment.status = 'COMPLETED' AND instruction.status = 'COMPLETED'
+      )
+        AND NOT EXISTS (
+          SELECT 1
+          FROM shipment_audit_events
+          WHERE entity_type = 'SHIPMENT' AND entity_id = ? AND event_type = 'SHIPMENT_COMPLETED'
+        )
+    `).bind(
+      `EVT-${crypto.randomUUID()}`,
+      shipmentId,
+      actorId,
+      JSON.stringify({ documentRequirementSatisfied: true, paymentStatus: 'PAID' }),
+      shipmentId,
+      shipmentId
+    )
+  ]);
+  return findPhase6Shipment(db, shipmentId);
+}
+
 async function findShipmentPaymentSummary(db, shipmentId) {
   return db.prepare(`
     SELECT cash_received_amount,
@@ -1280,7 +1339,7 @@ export function createShippingDiRepository(db) {
         ] : [])
       ]);
       if (!mutationApplied(results[0])) throw codedError('SHIPMENT_NOT_LOADED');
-      return findPhase6Shipment(db, shipmentId);
+      return recomputeShipmentCompletion(db, shipmentId, actorId);
     },
 
     async createCustomerCredit(dto, actorId) {
@@ -1335,7 +1394,11 @@ export function createShippingDiRepository(db) {
       const shipment = await findPhase6Shipment(db, shipmentId);
       if (!shipment || shipment.shipment_id !== shipmentId) throw codedError('SHIPMENT_NOT_FOUND');
       await db.batch([paymentUpdateStatement(db, shipmentId, actorId)]);
-      return findPhase6Shipment(db, shipmentId);
+      return recomputeShipmentCompletion(db, shipmentId, actorId);
+    },
+
+    async recomputeShipmentCompletion(shipmentId, actorId) {
+      return recomputeShipmentCompletion(db, shipmentId, actorId);
     },
 
     async updateShipmentPayment(shipmentId, dto, actorId) {
@@ -1350,13 +1413,13 @@ export function createShippingDiRepository(db) {
         })
       ]);
       if (!mutationApplied(results[0])) throw codedError('SHIPMENT_NOT_FOUND');
-      return findPhase6Shipment(db, shipmentId);
+      return recomputeShipmentCompletion(db, shipmentId, actorId);
     },
 
     async useCustomerCredit(shipmentId, dto, actorId) {
       const usage = validateCustomerCreditUsage(dto);
       const priorUsage = await findCustomerCreditUsageByRequestKey(db, usage.requestKey);
-      if (priorUsage) return findPhase6Shipment(db, priorUsage.shipment_id);
+      if (priorUsage) return recomputeShipmentCompletion(db, priorUsage.shipment_id, actorId);
       const shipment = await findShipmentCustomer(db, shipmentId);
       if (!shipment) throw codedError('SHIPMENT_NOT_FOUND');
       const credit = await findCustomerCredit(db, usage.creditId);
@@ -1414,7 +1477,7 @@ export function createShippingDiRepository(db) {
       } catch (error) {
         if (!String(error?.message || '').includes('UNIQUE constraint failed: customer_credit_usages.request_key')) throw error;
         const duplicate = await findCustomerCreditUsageByRequestKey(db, usage.requestKey);
-        if (duplicate) return findPhase6Shipment(db, duplicate.shipment_id);
+        if (duplicate) return recomputeShipmentCompletion(db, duplicate.shipment_id, actorId);
         throw error;
       }
       if (!mutationApplied(results[0]) || !mutationApplied(results[1])) {
@@ -1422,7 +1485,7 @@ export function createShippingDiRepository(db) {
         if (moneyCents(afterCredit?.remaining_amount) < moneyCents(usage.amount)) throw codedError('CREDIT_BALANCE_EXCEEDED');
         throw codedError('CREDIT_SHIPMENT_BALANCE_EXCEEDED');
       }
-      return findPhase6Shipment(db, shipmentId);
+      return recomputeShipmentCompletion(db, shipmentId, actorId);
     },
 
     async createShipmentInvoice(shipmentId, dto, actorId) {
@@ -1505,6 +1568,7 @@ export function createShippingDiRepository(db) {
         }
         throw error;
       }
+      if (invoice.version === 'FINAL') await recomputeShipmentCompletion(db, shipmentId, actorId);
       return findShipmentInvoice(db, invoiceId);
     },
 
@@ -1585,6 +1649,7 @@ export function createShippingDiRepository(db) {
         paymentUpdateStatement(db, shipment.shipment_id, actorId, null, null, invoiceState)
       ]);
       if (!mutationApplied(results[0]) || !mutationApplied(results[1])) throw codedError('INVOICE_NOT_PRELIMINARY');
+      await recomputeShipmentCompletion(db, shipment.shipment_id, actorId);
       return findShipmentInvoice(db, invoiceId);
     },
 

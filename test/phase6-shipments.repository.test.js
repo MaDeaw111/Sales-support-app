@@ -1106,3 +1106,77 @@ test('FINAL invoice materializes payment recorded before FINAL invoice creation'
   }, 'U_EXPORT');
   assert.equal((await repo.getPhase6Shipment(shipment.shipment_id)).payment_status, 'PAID');
 });
+
+test('Shipment and DI complete only after document and payment requirements are satisfied', async () => {
+  const { db, wrappedDb } = await setupTestDb();
+  const repo = createShippingDiRepository(wrappedDb);
+  const shipment = await loadedShipmentWithFinalInvoice(repo, db);
+
+  const documents = await repo.updateShipmentDocuments(shipment.shipment_id, {
+    allShipDocsDriveUrl: 'https://drive.google.com/drive/folders/completion-docs',
+    digitalDocsSentDate: '2026-09-01',
+    originalDocsRequired: false
+  }, 'U_EXPORT');
+  assert.equal(documents.status, 'DOCS_SENT');
+  assert.equal((await repo.getDeliveryInstruction('DI-CONFIRMED')).status, 'IN_PROGRESS');
+
+  const paid = await repo.updateShipmentPayment(shipment.shipment_id, {
+    cashReceivedAmount: 3325,
+    paymentNote: 'Settled'
+  }, 'U_EXPORT');
+  assert.equal(paid.status, 'COMPLETED');
+  assert.equal(paid.payment_status, 'PAID');
+  assert.equal((await repo.getDeliveryInstruction('DI-CONFIRMED')).status, 'COMPLETED');
+  assert.equal(db.prepare("SELECT COUNT(*) AS n FROM shipment_audit_events WHERE entity_id = ? AND event_type = 'SHIPMENT_COMPLETED'").get(shipment.shipment_id).n, 1);
+});
+
+test('payment-first completion waits for DHL-required documents and records one completion audit', async () => {
+  const { db, wrappedDb } = await setupTestDb();
+  const repo = createShippingDiRepository(wrappedDb);
+  const shipment = await loadedShipmentWithFinalInvoice(repo, db);
+
+  const paid = await repo.updateShipmentPayment(shipment.shipment_id, { cashReceivedAmount: 3325 }, 'U_EXPORT');
+  assert.equal(paid.status, 'LOADED');
+  assert.equal(paid.payment_status, 'PAID');
+
+  const completed = await repo.updateShipmentDocuments(shipment.shipment_id, {
+    allShipDocsDriveUrl: 'https://drive.google.com/drive/folders/dhl-completion-docs',
+    digitalDocsSentDate: '2026-09-01',
+    originalDocsRequired: true,
+    dhlSentDate: '2026-09-02',
+    dhlTrackingNo: 'DHL-COMPLETE'
+  }, 'U_EXPORT');
+  assert.equal(completed.status, 'COMPLETED');
+  assert.equal((await repo.getDeliveryInstruction('DI-CONFIRMED')).status, 'COMPLETED');
+
+  await repo.updateShipmentPayment(shipment.shipment_id, { cashReceivedAmount: 3325 }, 'U_EXPORT');
+  assert.equal(db.prepare("SELECT COUNT(*) AS n FROM shipment_audit_events WHERE entity_id = ? AND event_type = 'SHIPMENT_COMPLETED'").get(shipment.shipment_id).n, 1);
+});
+
+test('concurrent document and payment writes complete exactly once after either write ordering', async () => {
+  let releaseFirstBatch;
+  const firstBatchReleased = new Promise((resolve) => { releaseFirstBatch = resolve; });
+  let captureFirstBatch;
+  const firstBatchCaptured = new Promise((resolve) => { captureFirstBatch = resolve; });
+  let armPause = false;
+  const { db, wrappedDb } = await setupTestDb({
+    pauseQueuedFirstBatch: () => armPause ? (captureFirstBatch(), firstBatchReleased) : null
+  });
+  const repo = createShippingDiRepository(wrappedDb);
+  const shipment = await loadedShipmentWithFinalInvoice(repo, db);
+  armPause = true;
+
+  const documents = repo.updateShipmentDocuments(shipment.shipment_id, {
+    allShipDocsDriveUrl: 'https://drive.google.com/drive/folders/race-completion-docs',
+    digitalDocsSentDate: '2026-09-01',
+    originalDocsRequired: false
+  }, 'U_EXPORT');
+  await firstBatchCaptured;
+  const payment = repo.updateShipmentPayment(shipment.shipment_id, { cashReceivedAmount: 3325 }, 'U_EXPORT');
+  releaseFirstBatch();
+  await Promise.all([documents, payment]);
+
+  assert.equal((await repo.getPhase6Shipment(shipment.shipment_id)).status, 'COMPLETED');
+  assert.equal((await repo.getDeliveryInstruction('DI-CONFIRMED')).status, 'COMPLETED');
+  assert.equal(db.prepare("SELECT COUNT(*) AS n FROM shipment_audit_events WHERE entity_id = ? AND event_type = 'SHIPMENT_COMPLETED'").get(shipment.shipment_id).n, 1);
+});
