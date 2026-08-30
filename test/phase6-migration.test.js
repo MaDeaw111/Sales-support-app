@@ -109,6 +109,17 @@ test('Phase 6 schema creates every shipping DI table and required lookup indexes
   assert.ok(shipmentColumns.includes('final_invoice_write_token'), 'shipments retain a FINAL invoice reservation token');
 });
 
+test('Phase 6 follow-on migration persists the DI container plan without rewriting prior tables', async () => {
+  const db = await setupThrough0006();
+  db.exec(await readMigration('0007_shipping_di_integration.sql'));
+  db.exec(await readMigration('0008_delivery_instruction_container_plan.sql'));
+
+  const columns = db.prepare('PRAGMA table_info(delivery_instructions)').all();
+  const planColumn = columns.find((column) => column.name === 'container_plan');
+  assert.equal(planColumn.notnull, 1);
+  assert.equal(planColumn.dflt_value, "'[]'");
+});
+
 test('Phase 6 service partners permit the approved SURVEYOR type and reject OTHER', async () => {
   const db = await setupThrough0006();
   db.exec(await readMigration('0007_shipping_di_integration.sql'));

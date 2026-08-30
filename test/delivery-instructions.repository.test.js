@@ -13,7 +13,8 @@ async function setupTestDb({ collisionDiNo = null, failLineId = null, pauseFirst
     '0004_commercial_shipment_control.sql',
     '0005_po_management.sql',
     '0006_customer_ownership_type.sql',
-    '0007_shipping_di_integration.sql'
+    '0007_shipping_di_integration.sql',
+    '0008_delivery_instruction_container_plan.sql'
   ]) {
     db.exec(await readFile(new URL(`../migrations/${migration}`, import.meta.url), 'utf8'));
   }
@@ -103,10 +104,21 @@ function diPayload(overrides = {}) {
     diNo: null,
     shippingMonth: '2026-09',
     shippingPeriod: 'FIRST_HALF',
+    containerPlan: "2 × 40'HC",
     lines: [{ poId: 'PO-2026-015', poRevisionId: 'REV-1', poRevisionLineId: 'LINE-10', plannedQtyMt: 25, packingSnapshot: 'Jumbo Bag' }],
     ...overrides
   };
 }
+
+test('DI creation persists the approved container plan before any actual containers exist', async () => {
+  const { db, wrappedDb } = await setupTestDb();
+  const repo = createShippingDiRepository(wrappedDb);
+
+  const created = await repo.createDeliveryInstruction(diPayload({ containerPlan: "2 × 40'HC" }), 'U_EXPORT');
+
+  assert.equal(created.container_plan, "2 × 40'HC");
+  assert.equal(db.prepare('SELECT container_plan FROM delivery_instructions WHERE di_id = ?').get(created.di_id).container_plan, "2 × 40'HC");
+});
 
 test('internal DI number increments only within its PO and every line is an exact Phase 5F line', async () => {
   const { wrappedDb } = await setupTestDb();
@@ -372,6 +384,7 @@ test('DI lifecycle only permits DRAFT editing, confirmation, and never-confirmed
       diNo: created.di_no,
       shippingMonth: '2026-09',
       shippingPeriod: 'FIRST_HALF',
+      containerPlan: "2 × 40'HC",
       note: 'Initial instruction',
       googleDriveUrl: null,
       surveyorPartnerId: null,
@@ -385,6 +398,7 @@ test('DI lifecycle only permits DRAFT editing, confirmation, and never-confirmed
       diNo: created.di_no,
       shippingMonth: '2026-09',
       shippingPeriod: 'FIRST_HALF',
+      containerPlan: "2 × 40'HC",
       note: 'Updated instruction',
       googleDriveUrl: null,
       surveyorPartnerId: null,

@@ -14,7 +14,8 @@ async function setupTestDb({ pauseFirstBatch, pauseQueuedFirstBatch } = {}) {
     '0004_commercial_shipment_control.sql',
     '0005_po_management.sql',
     '0006_customer_ownership_type.sql',
-    '0007_shipping_di_integration.sql'
+    '0007_shipping_di_integration.sql',
+    '0008_delivery_instruction_container_plan.sql'
   ]) {
     db.exec(await readFile(new URL(`../migrations/${migration}`, import.meta.url), 'utf8'));
   }

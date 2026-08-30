@@ -11,26 +11,35 @@ function request(path, method = 'GET', body = null) {
   });
 }
 
-test('GET /api/delivery-instructions/:id/shipment exposes the separate rich Shipment to operational readers', async () => {
+test('Phase 6 read routes use their explicit Shipment-ID and DI-ID repository contracts', async () => {
   const shipment = { shipment_id: 'SHP-1', di_id: 'DI-1', status: 'PLANNING' };
   const lookups = [];
   const handler = createShippingDiHandler({
     repo: {
-      getPhase6Shipment: async (identifier) => {
-        lookups.push(identifier);
+      getPhase6ShipmentByDeliveryInstructionId: async (identifier) => {
+        lookups.push(['di', identifier]);
         return identifier === 'DI-1' ? shipment : null;
+      },
+      getPhase6ShipmentByShipmentId: async (identifier) => {
+        lookups.push(['shipment', identifier]);
+        return identifier === 'SHP-1' ? shipment : null;
       }
     },
     resolveUser: async () => ({ user_id: 'U_SUPPORT', role: 'SALES_SUPPORT' })
   });
 
   const response = await handler(request('/api/delivery-instructions/DI-1/shipment'));
+  const shipmentResponse = await handler(request('/api/shipments-v2/SHP-1'));
   const missing = await handler(request('/api/delivery-instructions/DI-MISSING/shipment'));
+  const crossIdentifier = await handler(request('/api/shipments-v2/DI-1'));
 
   assert.equal(response.status, 200);
   assert.deepEqual((await response.json()).data.shipment, shipment);
+  assert.equal(shipmentResponse.status, 200);
+  assert.deepEqual((await shipmentResponse.json()).data.shipment, shipment);
   assert.equal(missing.status, 404);
-  assert.deepEqual(lookups, ['DI-1', 'DI-MISSING']);
+  assert.equal(crossIdentifier.status, 404);
+  assert.deepEqual(lookups, [['di', 'DI-1'], ['shipment', 'SHP-1'], ['di', 'DI-MISSING'], ['shipment', 'DI-1']]);
 });
 
 test('PUT /api/shipments-v2/:id/booking lets operational writers record focused Booking data', async () => {

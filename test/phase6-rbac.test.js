@@ -14,7 +14,8 @@ async function setupRbacFixture() {
   for (const migration of [
     '0001_auth.sql', '0002_customers.sql', '0003_product_specs.sql',
     '0004_commercial_shipment_control.sql', '0005_po_management.sql',
-    '0006_customer_ownership_type.sql', '0007_shipping_di_integration.sql'
+    '0006_customer_ownership_type.sql', '0007_shipping_di_integration.sql',
+    '0008_delivery_instruction_container_plan.sql'
   ]) {
     db.exec(await readFile(new URL(`../migrations/${migration}`, import.meta.url), 'utf8'));
   }
@@ -29,10 +30,10 @@ async function setupRbacFixture() {
   db.prepare("INSERT INTO po_headers (po_id, customer_id, created_by) VALUES ('PO1', 'C1', 'U_EXPORT')").run();
   db.prepare("INSERT INTO po_revisions (revision_id, po_id, revision_no, status, ownership_type_snapshot, currency, incoterm, delivery_start, delivery_end, valid_until, created_by) VALUES ('REV1', 'PO1', 0, 'ACTIVE', 'ASSIGNED_SALES', 'USD', 'FOB', '2026-09-01', '2026-09-30', '2026-12-31', 'U_EXPORT')").run();
   db.prepare("INSERT INTO po_revision_lines (line_id, po_revision_id, line_no, product_id, spec_source, spec_revision_id, contract_qty_mt, tolerance_pct, min_qty_mt, max_qty_mt, unit_price, packaging, container_type, loading_pattern) VALUES ('LINE1', 'REV1', 10, 'P1', 'STANDARD', 'SPEC1', 20, 0, 20, 20, 350, 'Jumbo Bag', '40HC', 'Floor loaded')").run();
-  db.prepare("INSERT INTO delivery_instructions (di_id, customer_id, po_id, po_revision_id, di_no, shipping_month, shipping_period, status, created_by) VALUES ('DI1', 'C1', 'PO1', 'REV1', 'CUSTOMER-DI-1', '2026-09', 'FIRST_HALF', 'IN_PROGRESS', 'U_EXPORT')").run();
+  db.prepare("INSERT INTO delivery_instructions (di_id, customer_id, po_id, po_revision_id, di_no, shipping_month, shipping_period, container_plan, status, created_by) VALUES ('DI1', 'C1', 'PO1', 'REV1', 'CUSTOMER-DI-1', '2026-09', 'FIRST_HALF', '2 × 40''HC', 'IN_PROGRESS', 'U_EXPORT')").run();
   db.prepare("INSERT INTO delivery_instruction_lines (di_line_id, di_id, po_id, po_revision_id, po_revision_line_id, product_id, planned_qty_mt, packing_snapshot, created_by) VALUES ('DIL1', 'DI1', 'PO1', 'REV1', 'LINE1', 'P1', 20, 'Jumbo Bag', 'U_EXPORT')").run();
   db.prepare("INSERT INTO phase6_shipments (shipment_id, di_id, status, booking_no, vessel, planned_loading_date, actual_loading_date, schedule_result, cash_received_amount, payment_status, payment_note, created_by, updated_by) VALUES ('S1', 'DI1', 'LOADED', 'BK-1', 'MV Internal', '2026-09-08', '2026-09-10', 'ON_PLAN', 7000, 'PAID', 'Internal payment note', 'U_EXPORT', 'U_EXPORT')").run();
-  db.prepare("INSERT INTO shipment_containers (container_id, shipment_id, container_no, container_type, seal_no, status, created_by, updated_by) VALUES ('CONT1', 'S1', 'EGSU2548896', '40HC', 'SEAL-1', 'LOADED', 'U_EXPORT', 'U_EXPORT')").run();
+  db.prepare("INSERT INTO shipment_containers (container_id, shipment_id, container_no, container_type, seal_no, status, created_by, updated_by) VALUES ('CONT1', 'S1', 'EGSU2548896', '20GP', 'SEAL-1', 'LOADED', 'U_EXPORT', 'U_EXPORT')").run();
   db.prepare("INSERT INTO shipment_container_lines (container_line_id, container_id, delivery_instruction_line_id, number_of_bags, qty_mt, created_by, updated_by) VALUES ('CONTL1', 'CONT1', 'DIL1', 10, 20, 'U_EXPORT', 'U_EXPORT')").run();
 
   const wrappedDb = {
@@ -66,7 +67,7 @@ test('PRODUCTION_WAREHOUSE receives the exact loading read model from repository
     planned_loading_date: '2026-09-08',
     actual_loading_date: '2026-09-10',
     products: [{ product_code: 'THP-65', product_name: 'Tapioca Pellet 65%', planned_qty_mt: 20, packing_snapshot: 'Jumbo Bag' }],
-    container_plan: [{ container_type: '40HC', container_count: 1 }],
+    container_plan: "2 × 40'HC",
     containers: [{
       container_no: 'EGSU2548896',
       seal_no: 'SEAL-1',

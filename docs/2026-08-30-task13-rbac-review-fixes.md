@@ -10,6 +10,10 @@ only the Shipment-ID lookup, while `GET /api/delivery-instructions/:id/shipment`
 uses the DI-specific lookup. A DI identifier therefore cannot resolve through
 the Shipment-ID route.
 
+The route contracts are explicit: `getPhase6ShipmentByShipmentId` serves the
+Shipment namespace and `getPhase6ShipmentByDeliveryInstructionId` serves the
+DI namespace. Route handlers do not fall back to the generic lookup.
+
 ## Approved role projections
 
 `EXTERNAL_SALES` receives only the owned-Customer operational-progress fields:
@@ -23,16 +27,17 @@ container/seal/bag/quantity details. It receives no status, internal IDs,
 Customer/PO references, commercial, payment, invoice, credit, document, or
 audit data.
 
-## Container-plan derivation
+## Persisted DI container plan
 
-Phase 6 stores no independent planned-container field. The read model derives
-`container_plan` solely from non-cancelled `shipment_containers.container_type`:
-one `{ container_type, container_count }` item per actual container type. It
-does not infer a count from quantities or create a new persisted field. When no
-actual container type is recorded, the plan is an empty array.
+Migration `0008_delivery_instruction_container_plan.sql` adds the additive
+`delivery_instructions.container_plan` field. DI create and DRAFT update
+payloads require a non-empty `containerPlan` value and persist it with the DI.
+The Warehouse read model returns this planned value directly, before any actual
+containers exist. Actual container records remain a separate loading fact and
+never derive or replace the DI plan.
 
 ## Verification
 
 `test/phase6-rbac.test.js` now uses a real migrated D1 fixture and asserts the
 complete response shapes for both restricted roles, Customer ownership changes,
-and strict Shipment-ID lookup behavior.
+persisted DI container-plan behavior, and strict Shipment-ID lookup behavior.

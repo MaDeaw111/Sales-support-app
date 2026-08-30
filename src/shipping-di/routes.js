@@ -50,11 +50,10 @@ export function projectShippingDiForRole(record, caller) {
   }
   if (caller.role === 'PRODUCTION_WAREHOUSE') {
     return {
-      ...pickPresent(record, ['planned_loading_date', 'actual_loading_date']),
+      ...pickPresent(record, ['planned_loading_date', 'actual_loading_date', 'container_plan']),
       products: (record.products || []).map((product) => pick(product, [
         'product_code', 'product_name', 'planned_qty_mt', 'packing_snapshot'
       ])),
-      container_plan: (record.container_plan || []).map((plan) => pick(plan, ['container_type', 'container_count'])),
       containers: (record.containers || []).map((container) => ({
         ...pick(container, ['container_no', 'seal_no']),
         lines: (container.lines || []).map((line) => pick(line, [
@@ -205,9 +204,9 @@ export function createShippingDiHandler({ repo, resolveUser, db }) {
     const deliveryInstructionShipmentMatch = path.match(/^\/api\/delivery-instructions\/([^/]+)\/shipment$/);
     if (deliveryInstructionShipmentMatch && method === 'GET') {
       if (!PHASE6_READ_ROLES.includes(caller.role)) return json({ status: 'ERROR', message: 'Permission denied.' }, 403);
-      const shipment = typeof activeRepo.getPhase6ShipmentForDeliveryInstruction === 'function'
-        ? await activeRepo.getPhase6ShipmentForDeliveryInstruction(decodeURIComponent(deliveryInstructionShipmentMatch[1]))
-        : await activeRepo.getPhase6Shipment(decodeURIComponent(deliveryInstructionShipmentMatch[1]));
+      const shipment = await activeRepo.getPhase6ShipmentByDeliveryInstructionId(
+        decodeURIComponent(deliveryInstructionShipmentMatch[1])
+      );
       if (!shipment) return json({ status: 'ERROR', message: 'SHIPMENT_NOT_FOUND' }, 404);
       if (!await canReadShippingDiRecord(caller, shipment)) return json({ status: 'ERROR', message: 'Permission denied.' }, 403);
       return json({ status: 'SUCCESS', data: { shipment: projectShippingDiForRole(shipment, caller) } });
@@ -216,9 +215,7 @@ export function createShippingDiHandler({ repo, resolveUser, db }) {
     const shipmentMatch = path.match(/^\/api\/shipments-v2\/([^/]+)$/);
     if (shipmentMatch && method === 'GET') {
       if (!PHASE6_READ_ROLES.includes(caller.role)) return json({ status: 'ERROR', message: 'Permission denied.' }, 403);
-      const shipment = typeof activeRepo.getPhase6ShipmentById === 'function'
-        ? await activeRepo.getPhase6ShipmentById(decodeURIComponent(shipmentMatch[1]))
-        : await activeRepo.getPhase6Shipment(decodeURIComponent(shipmentMatch[1]));
+      const shipment = await activeRepo.getPhase6ShipmentByShipmentId(decodeURIComponent(shipmentMatch[1]));
       if (!shipment) return json({ status: 'ERROR', message: 'SHIPMENT_NOT_FOUND' }, 404);
       if (!await canReadShippingDiRecord(caller, shipment)) return json({ status: 'ERROR', message: 'Permission denied.' }, 403);
       return json({ status: 'SUCCESS', data: { shipment: projectShippingDiForRole(shipment, caller) } });

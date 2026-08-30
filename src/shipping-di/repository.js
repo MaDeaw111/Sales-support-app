@@ -57,7 +57,7 @@ function isAvailabilityReservationFailure(error) {
 
 async function findDeliveryInstruction(db, diId) {
   const deliveryInstruction = await db.prepare(`
-    SELECT di_id, customer_id, po_id, po_revision_id, di_no, shipping_month, shipping_period,
+    SELECT di_id, customer_id, po_id, po_revision_id, di_no, shipping_month, shipping_period, container_plan,
            status, lifecycle_version, note, cancellation_note, di_drive_url, surveyor_partner_id, forwarder_partner_id,
            created_by, created_at, updated_by, updated_at
     FROM delivery_instructions
@@ -139,7 +139,7 @@ async function listShipmentContainers(db, shipmentId) {
 
 async function findPhase6ShipmentReadModel(db, identifier, lookupField) {
   const shipment = await db.prepare(`
-    SELECT shipment.shipment_id, shipment.di_id, instruction.customer_id, instruction.di_no,
+    SELECT shipment.shipment_id, shipment.di_id, instruction.customer_id, instruction.di_no, instruction.container_plan,
            shipment.status, shipment.booking_no, shipment.forwarder_partner_id,
            shipment.shipping_line_partner_id, shipment.trucking_partner_id, shipment.vessel,
            shipment.etd, shipment.eta, shipment.planned_loading_date, shipment.actual_loading_date,
@@ -194,17 +194,9 @@ async function findPhase6ShipmentReadModel(db, identifier, lookupField) {
     }
   }
   const containers = [...containersByNumber.values()];
-  const planCounts = new Map();
-  for (const container of containers) {
-    if (container.container_type) {
-      planCounts.set(container.container_type, Number(planCounts.get(container.container_type) || 0) + 1);
-    }
-  }
   return {
     ...shipment,
     products: (products || []).map((product) => ({ ...product, planned_qty_mt: Number(product.planned_qty_mt) })),
-    // A Phase 6 container plan is a display-only count grouped from actual, non-cancelled container types.
-    container_plan: [...planCounts].map(([container_type, container_count]) => ({ container_type, container_count })),
     containers
   };
 }
@@ -432,6 +424,7 @@ function deliveryInstructionSnapshot(deliveryInstruction) {
     diNo: value('diNo', 'di_no'),
     shippingMonth: value('shippingMonth', 'shipping_month'),
     shippingPeriod: value('shippingPeriod', 'shipping_period'),
+    containerPlan: value('containerPlan', 'container_plan'),
     note: deliveryInstruction.note,
     googleDriveUrl: value('googleDriveUrl', 'di_drive_url'),
     surveyorPartnerId: value('surveyorPartnerId', 'surveyor_partner_id'),
@@ -666,6 +659,7 @@ function deliveryInstructionUpdateDto(existing, dto) {
     diNo: existing.di_no,
     shippingMonth: existing.shipping_month,
     shippingPeriod: existing.shipping_period,
+    containerPlan: existing.container_plan,
     note: existing.note,
     googleDriveUrl: existing.di_drive_url,
     surveyorPartnerId: existing.surveyor_partner_id,
@@ -678,7 +672,7 @@ function deliveryInstructionUpdateDto(existing, dto) {
       packingSnapshot: line.packing_snapshot
     }))
   };
-  return validateDeliveryInstruction({ ...existingDto, ...patch });
+  return validateDeliveryInstruction({ ...existingDto, ...patch }, { requireContainerPlan: false });
 }
 
 async function validateDeliveryInstructionReferences(db, deliveryInstruction) {
@@ -874,8 +868,8 @@ export function createShippingDiRepository(db) {
         const statements = [db.prepare(`
           INSERT INTO delivery_instructions (
             di_id, customer_id, po_id, po_revision_id, di_no, shipping_month, shipping_period,
-            status, note, di_drive_url, surveyor_partner_id, forwarder_partner_id, created_by, updated_by
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, 'DRAFT', ?, ?, ?, ?, ?, ?)
+            container_plan, status, note, di_drive_url, surveyor_partner_id, forwarder_partner_id, created_by, updated_by
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'DRAFT', ?, ?, ?, ?, ?, ?)
         `).bind(
           diId,
           deliveryInstruction.customerId,
@@ -884,6 +878,7 @@ export function createShippingDiRepository(db) {
           diNo,
           deliveryInstruction.shippingMonth,
           deliveryInstruction.shippingPeriod,
+          deliveryInstruction.containerPlan,
           deliveryInstruction.note,
           deliveryInstruction.googleDriveUrl,
           deliveryInstruction.surveyorPartnerId,
@@ -997,7 +992,7 @@ export function createShippingDiRepository(db) {
         db.prepare(`
           UPDATE delivery_instructions
           SET customer_id = ?, po_id = ?, po_revision_id = ?, di_no = ?, shipping_month = ?, shipping_period = ?,
-              note = ?, di_drive_url = ?, surveyor_partner_id = ?, forwarder_partner_id = ?,
+              container_plan = ?, note = ?, di_drive_url = ?, surveyor_partner_id = ?, forwarder_partner_id = ?,
               lifecycle_version = lifecycle_version + 1, updated_by = ?, updated_at = CURRENT_TIMESTAMP
           WHERE di_id = ? AND status = 'DRAFT' AND lifecycle_version = ?
         `).bind(
@@ -1007,6 +1002,7 @@ export function createShippingDiRepository(db) {
           deliveryInstruction.diNo,
           deliveryInstruction.shippingMonth,
           deliveryInstruction.shippingPeriod,
+          deliveryInstruction.containerPlan,
           deliveryInstruction.note,
           deliveryInstruction.googleDriveUrl,
           deliveryInstruction.surveyorPartnerId,
@@ -1741,17 +1737,17 @@ export function createShippingDiRepository(db) {
       return findPhase6Shipment(db, identifier);
     },
 
-    async getPhase6ShipmentById(shipmentId) {
+    async getPhase6ShipmentByShipmentId(shipmentId) {
       return findPhase6ShipmentReadModel(db, shipmentId, 'shipment_id');
     },
 
-    async getPhase6ShipmentForDeliveryInstruction(diId) {
+    async getPhase6ShipmentByDeliveryInstructionId(diId) {
       return findPhase6ShipmentReadModel(db, diId, 'di_id');
     },
 
     async listDeliveryInstructions(filters = {}) {
       let query = `
-        SELECT di_id, customer_id, po_id, po_revision_id, di_no, shipping_month, shipping_period,
+        SELECT di_id, customer_id, po_id, po_revision_id, di_no, shipping_month, shipping_period, container_plan,
                status, lifecycle_version, note, cancellation_note, di_drive_url, surveyor_partner_id, forwarder_partner_id,
                created_by, created_at, updated_by, updated_at
         FROM delivery_instructions
