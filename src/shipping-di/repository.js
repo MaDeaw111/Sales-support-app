@@ -5,7 +5,8 @@ import {
   validateDeliveryInstructionAvailabilityLines,
   validateDeliveryInstructionUpdate,
   validateCancellationNote,
-  validateServicePartner
+  validateServicePartner,
+  validateShipmentBooking
 } from './validation.js';
 
 async function nextId(db) {
@@ -64,6 +65,34 @@ async function findDeliveryInstruction(db, diId) {
     ORDER BY prl.line_no ASC
   `).bind(diId).all();
   return { ...deliveryInstruction, lines: lines || [] };
+}
+
+async function findPhase6Shipment(db, identifier) {
+  return db.prepare(`
+    SELECT shipment_id, di_id, status, booking_no, forwarder_partner_id, shipping_line_partner_id,
+           trucking_partner_id, vessel, etd, eta, planned_loading_date, actual_loading_date,
+           schedule_result, schedule_note, all_ship_docs_drive_url, digital_docs_sent_date,
+           original_docs_required, dhl_sent_date, dhl_tracking_no, docs_note, cash_received_amount,
+           payment_status, payment_note, cancellation_note, created_by, created_at, updated_by, updated_at
+    FROM phase6_shipments
+    WHERE shipment_id = ? OR di_id = ?
+    LIMIT 1
+  `).bind(identifier, identifier).first();
+}
+
+function shipmentCreationStatement(db, diId, actorId, requirePreviousMutation = false) {
+  const shipmentId = `SHP-${crypto.randomUUID()}`;
+  return db.prepare(`
+    INSERT INTO phase6_shipments (shipment_id, di_id, status, created_by, updated_by)
+    SELECT ?, di_id, 'PLANNING', ?, ?
+    FROM delivery_instructions
+    WHERE di_id = ? AND status = 'CONFIRMED'
+      ${requirePreviousMutation ? 'AND changes() = 1' : ''}
+  `).bind(shipmentId, actorId, actorId, diId);
+}
+
+function isShipmentAlreadyExists(error) {
+  return String(error?.message || '').includes('UNIQUE constraint failed: phase6_shipments.di_id');
 }
 
 async function validateSelectedPartner(db, partnerId, partnerType, code) {
@@ -521,6 +550,7 @@ export function createShippingDiRepository(db) {
           SET status = 'CONFIRMED', lifecycle_version = lifecycle_version + 1, updated_by = ?, updated_at = CURRENT_TIMESTAMP
           WHERE di_id = ? AND status = 'DRAFT' AND lifecycle_version = ?
         `).bind(actorId, diId, deliveryInstruction.lifecycle_version),
+        shipmentCreationStatement(db, diId, actorId, true),
         auditAfterMutationStatement(db, 'DI', diId, 'DI_CONFIRMED', actorId, {
           oldStatus: deliveryInstruction.status,
           newStatus: 'CONFIRMED'
@@ -579,6 +609,75 @@ export function createShippingDiRepository(db) {
 
     async getDeliveryInstruction(diId) {
       return findDeliveryInstruction(db, diId);
+    },
+
+    async createShipmentForDeliveryInstruction(diId, actorId) {
+      const existing = await findPhase6Shipment(db, diId);
+      if (existing) throw codedError('SHIPMENT_ALREADY_EXISTS');
+
+      const deliveryInstruction = await findDeliveryInstruction(db, diId);
+      if (!deliveryInstruction) throw codedError('DI_NOT_FOUND');
+      if (deliveryInstruction.status !== 'CONFIRMED') throw codedError('DI_NOT_CONFIRMED');
+
+      try {
+        const result = await shipmentCreationStatement(db, diId, actorId).run();
+        if (!mutationApplied(result)) throw codedError('DI_NOT_CONFIRMED');
+      } catch (error) {
+        if (isShipmentAlreadyExists(error)) throw codedError('SHIPMENT_ALREADY_EXISTS');
+        throw error;
+      }
+      return findPhase6Shipment(db, diId);
+    },
+
+    async recordShipmentBooking(shipmentId, dto, actorId) {
+      const booking = validateShipmentBooking(dto);
+      const shipment = await findPhase6Shipment(db, shipmentId);
+      if (!shipment || shipment.shipment_id !== shipmentId) throw codedError('SHIPMENT_NOT_FOUND');
+      if (shipment.status !== 'PLANNING') throw codedError('SHIPMENT_NOT_PLANNING');
+
+      const deliveryInstruction = await findDeliveryInstruction(db, shipment.di_id);
+      if (!deliveryInstruction || deliveryInstruction.status !== 'CONFIRMED') throw codedError('DI_NOT_CONFIRMED');
+      await validateSelectedPartner(db, booking.forwarderPartnerId, 'FORWARDER', 'SHIPMENT_FORWARDER_INVALID');
+      await validateSelectedPartner(db, booking.shippingLinePartnerId, 'SHIPPING_LINE', 'SHIPMENT_SHIPPING_LINE_INVALID');
+      await validateSelectedPartner(db, booking.truckingPartnerId, 'TRUCKING', 'SHIPMENT_TRUCKING_INVALID');
+
+      const results = await db.batch([
+        db.prepare(`
+          UPDATE phase6_shipments
+          SET status = 'BOOKED', booking_no = ?, forwarder_partner_id = ?, shipping_line_partner_id = ?,
+              trucking_partner_id = ?, vessel = ?, etd = ?, eta = ?, planned_loading_date = ?,
+              updated_by = ?, updated_at = CURRENT_TIMESTAMP
+          WHERE shipment_id = ? AND status = 'PLANNING'
+            AND EXISTS (
+              SELECT 1 FROM delivery_instructions
+              WHERE di_id = phase6_shipments.di_id AND status = 'CONFIRMED'
+            )
+        `).bind(
+          booking.bookingNo,
+          booking.forwarderPartnerId,
+          booking.shippingLinePartnerId,
+          booking.truckingPartnerId,
+          booking.vessel,
+          booking.etd,
+          booking.eta,
+          booking.plannedLoadingDate,
+          actorId,
+          shipmentId
+        ),
+        db.prepare(`
+          UPDATE delivery_instructions
+          SET status = 'IN_PROGRESS', lifecycle_version = lifecycle_version + 1,
+              updated_by = ?, updated_at = CURRENT_TIMESTAMP
+          WHERE di_id = ? AND status = 'CONFIRMED' AND changes() = 1
+        `).bind(actorId, shipment.di_id),
+        auditAfterMutationStatement(db, 'SHIPMENT', shipmentId, 'BOOKING_RECORDED', actorId, booking)
+      ]);
+      if (!mutationApplied(results[0]) || !mutationApplied(results[1])) throw codedError('SHIPMENT_NOT_PLANNING');
+      return findPhase6Shipment(db, shipmentId);
+    },
+
+    async getPhase6Shipment(identifier) {
+      return findPhase6Shipment(db, identifier);
     },
 
     async listDeliveryInstructions(filters = {}) {

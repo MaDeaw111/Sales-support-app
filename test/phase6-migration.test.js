@@ -112,3 +112,16 @@ test('Phase 6 service partners permit the approved SURVEYOR type and reject OTHE
     /CHECK constraint failed: partner_type/
   );
 });
+
+test('Phase 6 audit permits BOOKING_RECORDED and rejects obsolete BOOKING_UPDATED', async () => {
+  const db = await setupThrough0006();
+  db.exec(await readMigration('0007_shipping_di_integration.sql'));
+  db.prepare("INSERT INTO users (user_id, email, password_hash, password_salt, role, status, full_name) VALUES ('U1', 'export@example.com', 'hash', 'salt', 'EXPORT', 'ACTIVE', 'Export User')").run();
+
+  db.prepare("INSERT INTO shipment_audit_events (event_id, entity_type, entity_id, event_type, actor_id) VALUES ('EVT-1', 'SHIPMENT', 'SHP-1', 'BOOKING_RECORDED', 'U1')").run();
+  assert.equal(db.prepare("SELECT event_type FROM shipment_audit_events WHERE event_id = 'EVT-1'").get().event_type, 'BOOKING_RECORDED');
+  assert.throws(
+    () => db.prepare("INSERT INTO shipment_audit_events (event_id, entity_type, entity_id, event_type, actor_id) VALUES ('EVT-2', 'SHIPMENT', 'SHP-1', 'BOOKING_UPDATED', 'U1')").run(),
+    /CHECK constraint failed: event_type/
+  );
+});

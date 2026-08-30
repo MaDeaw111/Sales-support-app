@@ -14,6 +14,16 @@ const DELIVERY_INSTRUCTION_PROPERTIES = [
   'forwarderPartnerId',
   'note'
 ];
+const SHIPMENT_BOOKING_PROPERTIES = [
+  'bookingNo',
+  'forwarderPartnerId',
+  'shippingLinePartnerId',
+  'truckingPartnerId',
+  'vessel',
+  'etd',
+  'eta',
+  'plannedLoadingDate'
+];
 
 function codedError(code) {
   const error = new Error(code);
@@ -139,6 +149,46 @@ export function validateDeliveryInstructionUpdate(dto) {
 export function validateCancellationNote(note) {
   if (typeof note !== 'string' || !note.trim()) throw codedError('CANCEL_NOTE_REQUIRED');
   return note.trim();
+}
+
+function optionalBookingText(value) {
+  if (value === undefined || value === null) return null;
+  if (typeof value !== 'string' || !value.trim()) throw codedError('SHIPMENT_BOOKING_VALUE_INVALID');
+  return value.trim();
+}
+
+function optionalBookingDate(value) {
+  if (value === undefined || value === null) return null;
+  if (typeof value !== 'string' || !/^\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$/.test(value)) {
+    throw codedError('SHIPMENT_BOOKING_DATE_INVALID');
+  }
+  const [year, month, day] = value.split('-').map(Number);
+  const date = new Date(Date.UTC(year, month - 1, day));
+  if (date.getUTCFullYear() !== year || date.getUTCMonth() !== month - 1 || date.getUTCDate() !== day) {
+    throw codedError('SHIPMENT_BOOKING_DATE_INVALID');
+  }
+  return value;
+}
+
+export function validateShipmentBooking(dto) {
+  if (!dto || typeof dto !== 'object' || Array.isArray(dto)) throw codedError('SHIPMENT_BOOKING_PAYLOAD_INVALID');
+  if (Object.keys(dto).some((property) => !SHIPMENT_BOOKING_PROPERTIES.includes(property))) {
+    throw codedError('SHIPMENT_BOOKING_PROPERTY_INVALID');
+  }
+
+  const bookingNo = typeof dto.bookingNo === 'string' ? dto.bookingNo.trim() : '';
+  if (!bookingNo) throw codedError('SHIPMENT_BOOKING_NUMBER_REQUIRED');
+
+  return {
+    bookingNo,
+    forwarderPartnerId: optionalId(dto.forwarderPartnerId, 'SHIPMENT_FORWARDER_INVALID'),
+    shippingLinePartnerId: optionalId(dto.shippingLinePartnerId, 'SHIPMENT_SHIPPING_LINE_INVALID'),
+    truckingPartnerId: optionalId(dto.truckingPartnerId, 'SHIPMENT_TRUCKING_INVALID'),
+    vessel: optionalBookingText(dto.vessel),
+    etd: optionalBookingDate(dto.etd),
+    eta: optionalBookingDate(dto.eta),
+    plannedLoadingDate: optionalBookingDate(dto.plannedLoadingDate)
+  };
 }
 
 export { codedError };
