@@ -305,7 +305,7 @@ function deliveryInstructionLineReservationStatement(db, diId, deliveryInstructi
                          ON container.container_id = container_line.container_id
                        JOIN phase6_shipments shipment
                          ON shipment.shipment_id = container.shipment_id
-                       WHERE actual_di_line.di_id = planned_di.di_id
+                       WHERE actual_di_line.di_line_id = planned_di_line.di_line_id
                          AND shipment.status <> 'CANCELLED'
                          AND container.status <> 'CANCELLED'
                      )
@@ -479,7 +479,7 @@ export function createShippingDiRepository(db) {
                                  ON container.container_id = container_line.container_id
                                JOIN phase6_shipments shipment
                                  ON shipment.shipment_id = container.shipment_id
-                               WHERE actual_di_line.di_id = planned_di.di_id
+                               WHERE actual_di_line.di_line_id = planned_di_line.di_line_id
                                  AND shipment.status <> 'CANCELLED'
                                  AND container.status <> 'CANCELLED'
                              )
@@ -967,7 +967,7 @@ export function createShippingDiRepository(db) {
               JOIN shipment_container_lines scl ON scl.delivery_instruction_line_id = actual_dil.di_line_id
               JOIN shipment_containers sc ON sc.container_id = scl.container_id
               JOIN phase6_shipments s ON s.shipment_id = sc.shipment_id
-              WHERE actual_dil.di_id = di.di_id
+              WHERE actual_dil.di_line_id = dil.di_line_id
                 AND s.status <> 'CANCELLED'
                 AND sc.status <> 'CANCELLED'
             )
@@ -1006,7 +1006,7 @@ export function createShippingDiRepository(db) {
               JOIN shipment_container_lines scl ON scl.delivery_instruction_line_id = actual_dil.di_line_id
               JOIN shipment_containers sc ON sc.container_id = scl.container_id
               JOIN phase6_shipments s ON s.shipment_id = sc.shipment_id
-              WHERE actual_dil.di_id = dil.di_id
+              WHERE actual_dil.di_line_id = dil.di_line_id
                 AND s.status <> 'CANCELLED'
                 AND sc.status <> 'CANCELLED'
             )

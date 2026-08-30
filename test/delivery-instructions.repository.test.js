@@ -257,13 +257,20 @@ test('PO line balance subtracts planned only until that DI has actual container 
       di_line_id, di_id, po_id, po_revision_id, po_revision_line_id, product_id, planned_qty_mt, packing_snapshot, created_by
     ) VALUES ('DIL-1', 'DI-1', 'PO-2026-015', 'REV-1', 'LINE-10', 'P1', 10, 'Jumbo Bag', 'U_EXPORT')
   `).run();
+  db.prepare(`
+    INSERT INTO delivery_instruction_lines (
+      di_line_id, di_id, po_id, po_revision_id, po_revision_line_id, product_id, planned_qty_mt, packing_snapshot, created_by
+    ) VALUES ('DIL-2', 'DI-1', 'PO-2026-015', 'REV-1', 'LINE-20', 'P1', 10, 'Jumbo Bag', 'U_EXPORT')
+  `).run();
   db.prepare("INSERT INTO phase6_shipments (shipment_id, di_id, status, created_by) VALUES ('SHIP-1', 'DI-1', 'LOADED', 'U_EXPORT')").run();
   db.prepare("INSERT INTO shipment_containers (container_id, shipment_id, container_no, container_type, status, created_by) VALUES ('CONT-1', 'SHIP-1', 'TGHU1234567', '20GP', 'LOADED', 'U_EXPORT')").run();
   db.prepare("INSERT INTO shipment_container_lines (container_line_id, container_id, delivery_instruction_line_id, number_of_bags, qty_mt, created_by) VALUES ('CL-1', 'CONT-1', 'DIL-1', 8, 8, 'U_EXPORT')").run();
 
-  const [balance] = await repo.getPoLineBalances('PO-2026-015');
+  const balances = await repo.getPoLineBalances('PO-2026-015');
+  const balanceByLine = new Map(balances.map((balance) => [balance.po_revision_line_id, balance]));
 
-  assert.equal(balance.available_qty_mt, 92); // 100 max - 8 actual; not 100 - 10 - 8
+  assert.equal(balanceByLine.get('LINE-10').available_qty_mt, 92); // 100 max - 8 actual; not 100 - 10 - 8
+  assert.equal(balanceByLine.get('LINE-20').available_qty_mt, 90); // its plan remains reserved until this exact line has actuals
 });
 
 test('DI creation rejects planned quantity above the exact PO line maximum', async () => {
