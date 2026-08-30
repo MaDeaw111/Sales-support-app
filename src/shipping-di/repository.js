@@ -6,7 +6,9 @@ import {
   validateDeliveryInstructionUpdate,
   validateCancellationNote,
   validateServicePartner,
-  validateShipmentBooking
+  validateShipmentBooking,
+  validateShipmentSchedule,
+  calculateScheduleResult
 } from './validation.js';
 
 async function nextId(db) {
@@ -673,6 +675,53 @@ export function createShippingDiRepository(db) {
         auditAfterMutationStatement(db, 'SHIPMENT', shipmentId, 'BOOKING_RECORDED', actorId, booking)
       ]);
       if (!mutationApplied(results[0]) || !mutationApplied(results[1])) throw codedError('SHIPMENT_NOT_PLANNING');
+      return findPhase6Shipment(db, shipmentId);
+    },
+
+    async updateShipmentSchedule(shipmentId, dto, actorId) {
+      const schedule = validateShipmentSchedule(dto);
+      const shipment = await findPhase6Shipment(db, shipmentId);
+      if (!shipment || shipment.shipment_id !== shipmentId) throw codedError('SHIPMENT_NOT_FOUND');
+      if (shipment.status !== 'BOOKED') throw codedError('SHIPMENT_NOT_BOOKED');
+
+      const deliveryInstruction = await findDeliveryInstruction(db, shipment.di_id);
+      if (!deliveryInstruction) throw codedError('DI_NOT_FOUND');
+
+      if (schedule.plannedLoadingDate !== undefined) {
+        const results = await db.batch([
+          db.prepare(`
+            UPDATE phase6_shipments
+            SET planned_loading_date = ?, updated_by = ?, updated_at = CURRENT_TIMESTAMP
+            WHERE shipment_id = ? AND status = 'BOOKED'
+          `).bind(schedule.plannedLoadingDate, actorId, shipmentId),
+          auditAfterMutationStatement(db, 'SHIPMENT', shipmentId, 'PLANNED_LOADING_DATE_UPDATED', actorId, {
+            old: shipment.planned_loading_date,
+            new: schedule.plannedLoadingDate
+          })
+        ]);
+        if (!mutationApplied(results[0])) throw codedError('SHIPMENT_NOT_BOOKED');
+      } else {
+        const scheduleResult = calculateScheduleResult(
+          deliveryInstruction.shipping_month,
+          deliveryInstruction.shipping_period,
+          schedule.actualLoadingDate
+        );
+        const scheduleNote = schedule.scheduleNote === undefined ? shipment.schedule_note : schedule.scheduleNote;
+        const results = await db.batch([
+          db.prepare(`
+            UPDATE phase6_shipments
+            SET status = 'LOADED', actual_loading_date = ?, schedule_result = ?, schedule_note = ?,
+                updated_by = ?, updated_at = CURRENT_TIMESTAMP
+            WHERE shipment_id = ? AND status = 'BOOKED'
+          `).bind(schedule.actualLoadingDate, scheduleResult, scheduleNote, actorId, shipmentId),
+          auditAfterMutationStatement(db, 'SHIPMENT', shipmentId, 'ACTUAL_LOADING_DATE_RECORDED', actorId, {
+            actualLoadingDate: schedule.actualLoadingDate,
+            scheduleResult,
+            scheduleNote
+          })
+        ]);
+        if (!mutationApplied(results[0])) throw codedError('SHIPMENT_NOT_BOOKED');
+      }
       return findPhase6Shipment(db, shipmentId);
     },
 

@@ -24,6 +24,7 @@ const SHIPMENT_BOOKING_PROPERTIES = [
   'eta',
   'plannedLoadingDate'
 ];
+const SHIPMENT_SCHEDULE_PROPERTIES = ['plannedLoadingDate', 'actualLoadingDate', 'scheduleNote'];
 
 function codedError(code) {
   const error = new Error(code);
@@ -170,6 +171,15 @@ function optionalBookingDate(value) {
   return value;
 }
 
+function requiredScheduleDate(value) {
+  if (typeof value !== 'string' || !value) throw codedError('SHIPMENT_SCHEDULE_DATE_REQUIRED');
+  try {
+    return optionalBookingDate(value);
+  } catch {
+    throw codedError('SHIPMENT_SCHEDULE_DATE_INVALID');
+  }
+}
+
 export function validateShipmentBooking(dto) {
   if (!dto || typeof dto !== 'object' || Array.isArray(dto)) throw codedError('SHIPMENT_BOOKING_PAYLOAD_INVALID');
   if (Object.keys(dto).some((property) => !SHIPMENT_BOOKING_PROPERTIES.includes(property))) {
@@ -188,6 +198,41 @@ export function validateShipmentBooking(dto) {
     etd: optionalBookingDate(dto.etd),
     eta: optionalBookingDate(dto.eta),
     plannedLoadingDate: optionalBookingDate(dto.plannedLoadingDate)
+  };
+}
+
+export function calculateScheduleResult(shippingMonth, shippingPeriod, actualLoadingDate) {
+  const actualDate = requiredScheduleDate(actualLoadingDate);
+  const actualMonth = actualDate.slice(0, 7);
+  const actualDay = Number(actualDate.slice(8, 10));
+  if (actualMonth !== shippingMonth) return 'OUT_OF_PLAN';
+  if (shippingPeriod === 'FIRST_HALF') return actualDay <= 15 ? 'ON_PLAN' : 'OUT_OF_PLAN';
+  if (shippingPeriod === 'SECOND_HALF') return actualDay >= 16 ? 'ON_PLAN' : 'OUT_OF_PLAN';
+  throw codedError('DI_SHIPPING_PERIOD_INVALID');
+}
+
+export function validateShipmentSchedule(dto) {
+  if (!dto || typeof dto !== 'object' || Array.isArray(dto) || Object.keys(dto).length === 0) {
+    throw codedError('SHIPMENT_SCHEDULE_PAYLOAD_INVALID');
+  }
+  if (Object.keys(dto).some((property) => !SHIPMENT_SCHEDULE_PROPERTIES.includes(property))) {
+    throw codedError('SHIPMENT_SCHEDULE_PROPERTY_INVALID');
+  }
+
+  const hasPlannedLoadingDate = Object.hasOwn(dto, 'plannedLoadingDate');
+  const hasActualLoadingDate = Object.hasOwn(dto, 'actualLoadingDate');
+  if (hasPlannedLoadingDate === hasActualLoadingDate) throw codedError('SHIPMENT_SCHEDULE_DATE_REQUIRED');
+  if (Object.hasOwn(dto, 'scheduleNote') && !hasActualLoadingDate) {
+    throw codedError('SHIPMENT_SCHEDULE_NOTE_WITHOUT_ACTUAL_LOADING_DATE');
+  }
+  if (dto.scheduleNote !== undefined && dto.scheduleNote !== null && typeof dto.scheduleNote !== 'string') {
+    throw codedError('SHIPMENT_SCHEDULE_NOTE_INVALID');
+  }
+
+  return {
+    plannedLoadingDate: hasPlannedLoadingDate ? requiredScheduleDate(dto.plannedLoadingDate) : undefined,
+    actualLoadingDate: hasActualLoadingDate ? requiredScheduleDate(dto.actualLoadingDate) : undefined,
+    scheduleNote: dto.scheduleNote === undefined ? undefined : dto.scheduleNote?.trim() || null
   };
 }
 

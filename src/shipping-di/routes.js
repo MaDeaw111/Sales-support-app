@@ -5,6 +5,7 @@ const OPERATIONAL_READER_ROLES = ['ADMIN', 'MANAGER', 'SALES_SUPPORT', 'EXPORT']
 const SERVICE_PARTNER_WRITE_ROLES = ['ADMIN', 'MANAGER', 'EXPORT'];
 const DELIVERY_INSTRUCTION_WRITE_ROLES = ['ADMIN', 'MANAGER', 'EXPORT'];
 const SHIPMENT_BOOKING_WRITE_ROLES = ['ADMIN', 'MANAGER', 'EXPORT'];
+const SHIPMENT_SCHEDULE_WRITE_ROLES = ['ADMIN', 'MANAGER', 'EXPORT'];
 
 function json(body, status = 200) {
   return new Response(JSON.stringify(body), {
@@ -123,6 +124,25 @@ export function createShippingDiHandler({ repo, resolveUser, db }) {
       try {
         const shipment = await activeRepo.recordShipmentBooking(
           decodeURIComponent(shipmentBookingMatch[1]),
+          body,
+          caller.user_id
+        );
+        return json({ status: 'SUCCESS', data: { shipment } });
+      } catch (error) {
+        return json(
+          { status: 'ERROR', message: error.message },
+          error.code === 'SHIPMENT_NOT_FOUND' ? 404 : 400
+        );
+      }
+    }
+
+    const shipmentScheduleMatch = path.match(/^\/api\/shipments-v2\/([^/]+)\/schedule$/);
+    if (shipmentScheduleMatch && method === 'PUT') {
+      if (!SHIPMENT_SCHEDULE_WRITE_ROLES.includes(caller.role)) return json({ status: 'ERROR', message: 'Permission denied.' }, 403);
+      const body = await readJson(request);
+      try {
+        const shipment = await activeRepo.updateShipmentSchedule(
+          decodeURIComponent(shipmentScheduleMatch[1]),
           body,
           caller.user_id
         );

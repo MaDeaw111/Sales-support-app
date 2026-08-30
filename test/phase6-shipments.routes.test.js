@@ -59,6 +59,32 @@ test('PUT /api/shipments-v2/:id/booking lets operational writers record focused 
   assert.equal(calls.length, 1);
 });
 
+test('PUT /api/shipments-v2/:id/schedule lets operational writers update loading dates', async () => {
+  const calls = [];
+  const scheduled = { shipment_id: 'SHP-1', status: 'LOADED', actual_loading_date: '2026-09-15', schedule_result: 'ON_PLAN' };
+  let caller = { user_id: 'U_EXPORT', role: 'EXPORT' };
+  const handler = createShippingDiHandler({
+    repo: {
+      updateShipmentSchedule: async (...args) => {
+        calls.push(args);
+        return scheduled;
+      }
+    },
+    resolveUser: async () => caller
+  });
+  const payload = { actualLoadingDate: '2026-09-15' };
+
+  const response = await handler(request('/api/shipments-v2/SHP-1/schedule', 'PUT', payload));
+
+  assert.equal(response.status, 200);
+  assert.deepEqual((await response.json()).data.shipment, scheduled);
+  assert.deepEqual(calls, [['SHP-1', payload, 'U_EXPORT']]);
+
+  caller = { user_id: 'U_SUPPORT', role: 'SALES_SUPPORT' };
+  assert.equal((await handler(request('/api/shipments-v2/SHP-1/schedule', 'PUT', payload))).status, 403);
+  assert.equal(calls.length, 1);
+});
+
 test('Phase 6 Shipment routes require authentication and map missing records to 404', async () => {
   const unauthenticated = createShippingDiHandler({
     repo: {},
@@ -72,6 +98,11 @@ test('Phase 6 Shipment routes require authentication and map missing records to 
         const error = new Error('SHIPMENT_NOT_FOUND');
         error.code = 'SHIPMENT_NOT_FOUND';
         throw error;
+      },
+      updateShipmentSchedule: async () => {
+        const error = new Error('SHIPMENT_NOT_FOUND');
+        error.code = 'SHIPMENT_NOT_FOUND';
+        throw error;
       }
     },
     resolveUser: async () => ({ user_id: 'U_EXPORT', role: 'EXPORT' })
@@ -79,6 +110,10 @@ test('Phase 6 Shipment routes require authentication and map missing records to 
   const response = await missing(request('/api/shipments-v2/SHP-MISSING/booking', 'PUT', { bookingNo: 'BK-01' }));
   assert.equal(response.status, 404);
   assert.equal((await response.json()).message, 'SHIPMENT_NOT_FOUND');
+
+  const scheduleResponse = await missing(request('/api/shipments-v2/SHP-MISSING/schedule', 'PUT', { actualLoadingDate: '2026-09-15' }));
+  assert.equal(scheduleResponse.status, 404);
+  assert.equal((await scheduleResponse.json()).message, 'SHIPMENT_NOT_FOUND');
 });
 
 test('worker dispatches the /api/shipments-v2 namespace to the Phase 6 handler', async () => {

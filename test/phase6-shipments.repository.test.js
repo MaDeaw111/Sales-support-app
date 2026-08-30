@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { DatabaseSync } from 'node:sqlite';
 import { createShippingDiRepository } from '../src/shipping-di/repository.js';
+import { calculateScheduleResult } from '../src/shipping-di/validation.js';
 
 async function setupTestDb() {
   const db = new DatabaseSync(':memory:');
@@ -214,4 +215,72 @@ test('Booking rejects fields outside its focused contract and mismatched partner
   assert.equal(unchanged.booking_no, null);
   assert.equal((await repo.getDeliveryInstruction('DI-CONFIRMED')).status, 'CONFIRMED');
   assert.equal(db.prepare("SELECT COUNT(*) AS n FROM shipment_audit_events WHERE event_type = 'BOOKING_RECORDED'").get().n, 0);
+});
+
+test('schedule result compares Actual Loading Date to the Customer shipping half-month', () => {
+  assert.equal(calculateScheduleResult('2026-09', 'FIRST_HALF', '2026-09-15'), 'ON_PLAN');
+  assert.equal(calculateScheduleResult('2026-09', 'FIRST_HALF', '2026-09-16'), 'OUT_OF_PLAN');
+  assert.equal(calculateScheduleResult('2026-09', 'SECOND_HALF', '2026-09-16'), 'ON_PLAN');
+  assert.equal(calculateScheduleResult('2026-02', 'SECOND_HALF', '2026-02-28'), 'ON_PLAN');
+  assert.equal(calculateScheduleResult('2026-09', 'SECOND_HALF', '2026-10-01'), 'OUT_OF_PLAN');
+});
+
+test('schedule updates retain only the latest planned date and audit its old and new values', async () => {
+  const { db, wrappedDb } = await setupTestDb();
+  const repo = createShippingDiRepository(wrappedDb);
+  const shipment = await repo.createShipmentForDeliveryInstruction('DI-CONFIRMED', 'U_EXPORT');
+  await repo.recordShipmentBooking(shipment.shipment_id, {
+    bookingNo: 'BK-01',
+    etd: '2026-10-01',
+    plannedLoadingDate: '2026-09-08'
+  }, 'U_EXPORT');
+
+  const updated = await repo.updateShipmentSchedule(shipment.shipment_id, {
+    plannedLoadingDate: '2026-09-14'
+  }, 'U_EXPORT');
+
+  assert.equal(updated.status, 'BOOKED');
+  assert.equal(updated.planned_loading_date, '2026-09-14');
+  assert.equal(updated.actual_loading_date, null);
+  assert.equal(updated.schedule_result, null);
+  const audit = db.prepare("SELECT event_type, metadata_json FROM shipment_audit_events WHERE event_type = 'PLANNED_LOADING_DATE_UPDATED'").get();
+  assert.equal(audit.event_type, 'PLANNED_LOADING_DATE_UPDATED');
+  assert.deepEqual(JSON.parse(audit.metadata_json), {
+    old: '2026-09-08',
+    new: '2026-09-14'
+  });
+});
+
+test('actual loading records an audit, sets LOADED, and ignores ETD for the schedule result', async () => {
+  const { db, wrappedDb } = await setupTestDb();
+  const repo = createShippingDiRepository(wrappedDb);
+  const shipment = await repo.createShipmentForDeliveryInstruction('DI-CONFIRMED', 'U_EXPORT');
+  await repo.recordShipmentBooking(shipment.shipment_id, {
+    bookingNo: 'BK-01',
+    etd: '2026-10-01'
+  }, 'U_EXPORT');
+
+  const updated = await repo.updateShipmentSchedule(shipment.shipment_id, {
+    actualLoadingDate: '2026-09-15',
+    scheduleNote: 'Loaded within the agreed period.'
+  }, 'U_EXPORT');
+
+  assert.deepEqual({
+    status: updated.status,
+    actualLoadingDate: updated.actual_loading_date,
+    scheduleResult: updated.schedule_result,
+    scheduleNote: updated.schedule_note
+  }, {
+    status: 'LOADED',
+    actualLoadingDate: '2026-09-15',
+    scheduleResult: 'ON_PLAN',
+    scheduleNote: 'Loaded within the agreed period.'
+  });
+  const audit = db.prepare("SELECT event_type, metadata_json FROM shipment_audit_events WHERE event_type = 'ACTUAL_LOADING_DATE_RECORDED'").get();
+  assert.equal(audit.event_type, 'ACTUAL_LOADING_DATE_RECORDED');
+  assert.deepEqual(JSON.parse(audit.metadata_json), {
+    actualLoadingDate: '2026-09-15',
+    scheduleResult: 'ON_PLAN',
+    scheduleNote: 'Loaded within the agreed period.'
+  });
 });

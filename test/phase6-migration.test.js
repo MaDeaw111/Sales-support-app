@@ -125,3 +125,21 @@ test('Phase 6 audit permits BOOKING_RECORDED and rejects obsolete BOOKING_UPDATE
     /CHECK constraint failed: event_type/
   );
 });
+
+test('Phase 6 audit permits the approved loading-date events', async () => {
+  const db = await setupThrough0006();
+  db.exec(await readMigration('0007_shipping_di_integration.sql'));
+  db.prepare("INSERT INTO users (user_id, email, password_hash, password_salt, role, status, full_name) VALUES ('U1', 'export@example.com', 'hash', 'salt', 'EXPORT', 'ACTIVE', 'Export User')").run();
+
+  for (const [eventId, eventType] of [
+    ['EVT-1', 'PLANNED_LOADING_DATE_UPDATED'],
+    ['EVT-2', 'ACTUAL_LOADING_DATE_RECORDED']
+  ]) {
+    db.prepare('INSERT INTO shipment_audit_events (event_id, entity_type, entity_id, event_type, actor_id) VALUES (?, ?, ?, ?, ?)')
+      .run(eventId, 'SHIPMENT', 'SHP-1', eventType, 'U1');
+  }
+  assert.deepEqual(
+    db.prepare("SELECT event_type FROM shipment_audit_events WHERE entity_id = 'SHP-1' ORDER BY event_id").all().map((event) => event.event_type),
+    ['PLANNED_LOADING_DATE_UPDATED', 'ACTUAL_LOADING_DATE_RECORDED']
+  );
+});
