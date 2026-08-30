@@ -58,6 +58,20 @@ test('Phase 6 migration is additive and retains Phase 5E shipment anchors', asyn
   );
 });
 
+test('legacy and Phase 6 Shipment namespaces remain independent', async () => {
+  const db = await setupThrough0006();
+  seedDeliveryInstructionReferences(db);
+  db.prepare("INSERT INTO pos (po_id, customer_id, product_id, incoterm, po_date, status) VALUES ('PO-LEGACY', 'C1', 'P1', 'FOB', '2026-09-01', 'ACTIVE')").run();
+  db.prepare("INSERT INTO shipments (shipment_id, po_id, is_one_container, status) VALUES ('SH_LEGACY', 'PO-LEGACY', 1, 'ACTIVE')").run();
+
+  db.exec(await readMigration('0007_shipping_di_integration.sql'));
+  db.prepare("INSERT INTO delivery_instructions (di_id, customer_id, po_id, po_revision_id, di_no, shipping_month, shipping_period, container_plan, status, created_by) VALUES ('DI_PHASE6', 'C1', 'PO1', 'REV1', 'DI-PHASE6', '2026-09', 'FIRST_HALF', '1 x 20GP', 'CONFIRMED', 'U1')").run();
+  db.prepare("INSERT INTO phase6_shipments (shipment_id, di_id, status, created_by) VALUES ('SH_PHASE6', 'DI_PHASE6', 'PLANNING', 'U1')").run();
+
+  assert.equal(db.prepare("SELECT COUNT(*) AS n FROM shipments WHERE shipment_id = 'SH_LEGACY'").get().n, 1);
+  assert.equal(db.prepare("SELECT COUNT(*) AS n FROM phase6_shipments WHERE shipment_id = 'SH_PHASE6'").get().n, 1);
+});
+
 test('Phase 6 schema creates every shipping DI table and required lookup indexes', async () => {
   const db = await setupThrough0006();
   db.exec(await readMigration('0007_shipping_di_integration.sql'));
