@@ -139,6 +139,27 @@ async function loadedShipmentForDocuments(repo, db) {
   return shipment;
 }
 
+async function loadedShipmentWithFinalInvoice(repo, db) {
+  const shipment = await loadedShipmentForDocuments(repo, db);
+  await repo.createShipmentInvoice(shipment.shipment_id, {
+    invoiceNo: `WCAT-PAY-${shipment.shipment_id}`,
+    version: 'FINAL',
+    invoiceDate: '2026-09-15',
+    lines: [{ poRevisionLineId: 'LINE-1', qtyMt: 9.5 }]
+  }, 'U_EXPORT');
+  return shipment;
+}
+
+function seedSecondFinalPaymentShipment(db) {
+  db.prepare("INSERT INTO delivery_instructions (di_id, customer_id, po_id, po_revision_id, di_no, shipping_month, shipping_period, status, created_by) VALUES ('DI-PAY-2', 'C1', 'PO1', 'REV1', 'PAY-2', '2026-09', 'FIRST_HALF', 'IN_PROGRESS', 'U_EXPORT')").run();
+  db.prepare("INSERT INTO delivery_instruction_lines (di_line_id, di_id, po_id, po_revision_id, po_revision_line_id, product_id, planned_qty_mt, packing_snapshot, created_by) VALUES ('DIL-PAY-2', 'DI-PAY-2', 'PO1', 'REV1', 'LINE-2', 'P1', 1, 'Jumbo Bag', 'U_EXPORT')").run();
+  db.prepare("INSERT INTO phase6_shipments (shipment_id, di_id, status, actual_loading_date, created_by, updated_by) VALUES ('S_FOR_C1_2', 'DI-PAY-2', 'LOADED', '2026-09-15', 'U_EXPORT', 'U_EXPORT')").run();
+  db.prepare("INSERT INTO shipment_containers (container_id, shipment_id, container_no, created_by, updated_by) VALUES ('CONT-PAY-2', 'S_FOR_C1_2', 'PAY-CONT-2', 'U_EXPORT', 'U_EXPORT')").run();
+  db.prepare("INSERT INTO shipment_container_lines (container_line_id, container_id, delivery_instruction_line_id, number_of_bags, qty_mt, created_by, updated_by) VALUES ('CONTL-PAY-2', 'CONT-PAY-2', 'DIL-PAY-2', 1, 1, 'U_EXPORT', 'U_EXPORT')").run();
+  db.prepare("INSERT INTO shipment_invoices (invoice_id, shipment_id, invoice_no, invoice_date, currency, version, invoice_write_token, final_container_version, created_by, updated_by) VALUES ('INV-PAY-2', 'S_FOR_C1_2', 'WCAT-PAY-2', '2026-09-15', 'USD', 'FINAL', 'TOKEN-PAY-2', 0, 'U_EXPORT', 'U_EXPORT')").run();
+  db.prepare("INSERT INTO shipment_invoice_lines (invoice_line_id, invoice_id, po_revision_line_id, qty_mt, unit_price_snapshot, currency, line_amount, created_by, updated_by) VALUES ('INVL-PAY-2', 'INV-PAY-2', 'LINE-2', 1, 350, 'USD', 350, 'U_EXPORT', 'U_EXPORT')").run();
+}
+
 test('a confirmed DI creates exactly one separate rich Shipment in PLANNING', async () => {
   const { db, wrappedDb } = await setupTestDb();
   const repo = createShippingDiRepository(wrappedDb);
@@ -891,4 +912,77 @@ test('DHL-required document delivery audits both email and DHL without individua
   assert.equal(db.prepare("SELECT COUNT(*) AS n FROM shipment_audit_events WHERE entity_id = ? AND event_type = 'DOCS_EMAIL_SENT'").get(shipment.shipment_id).n, 1);
   assert.equal(db.prepare("SELECT COUNT(*) AS n FROM shipment_audit_events WHERE entity_id = ? AND event_type = 'DOCS_DHL_SENT'").get(shipment.shipment_id).n, 1);
   assert.equal(db.prepare('SELECT COUNT(*) AS n FROM shipment_document_links').get().n, 0);
+});
+
+test('credit cannot cross Customers or exceed remaining balance', async () => {
+  const { db, wrappedDb } = await setupTestDb();
+  db.prepare("INSERT INTO customers (customer_id, customer_code, customer_name) VALUES ('C2', 'CUST2', 'Customer Two')").run();
+  db.prepare("INSERT INTO po_headers (po_id, customer_id, created_by) VALUES ('PO2', 'C2', 'U_EXPORT')").run();
+  db.prepare("INSERT INTO po_revisions (revision_id, po_id, revision_no, status, ownership_type_snapshot, currency, incoterm, delivery_start, delivery_end, valid_until, created_by) VALUES ('REV2', 'PO2', 0, 'ACTIVE', 'HOUSE_ACCOUNT', 'USD', 'FOB', '2026-09-01', '2026-09-30', '2026-12-31', 'U_EXPORT')").run();
+  db.prepare("INSERT INTO delivery_instructions (di_id, customer_id, po_id, po_revision_id, di_no, shipping_month, shipping_period, status, created_by) VALUES ('DI-C2', 'C2', 'PO2', 'REV2', 'C2-1', '2026-09', 'FIRST_HALF', 'CONFIRMED', 'U_EXPORT')").run();
+  db.prepare("INSERT INTO phase6_shipments (shipment_id, di_id, created_by, updated_by) VALUES ('S_FOR_C2', 'DI-C2', 'U_EXPORT', 'U_EXPORT')").run();
+  const repo = createShippingDiRepository(wrappedDb);
+  const shipment = await loadedShipmentWithFinalInvoice(repo, db);
+  seedSecondFinalPaymentShipment(db);
+
+  const credit = await repo.createCustomerCredit({ customerId: 'C1', amount: 100, reason: 'Commercial adjustment' }, 'U_EXPORT');
+  await assert.rejects(
+    () => repo.useCustomerCredit('S_FOR_C2', { creditId: credit.credit_id, amount: 1 }, 'U_EXPORT'),
+    /CREDIT_CUSTOMER_MISMATCH/
+  );
+  await assert.rejects(
+    () => repo.useCustomerCredit(shipment.shipment_id, { creditId: credit.credit_id, amount: 101 }, 'U_EXPORT'),
+    /CREDIT_BALANCE_EXCEEDED/
+  );
+  await assert.rejects(
+    () => repo.useCustomerCredit(shipment.shipment_id, { creditId: credit.credit_id, amount: 1, invoiceId: 'INV-PAY-2' }, 'U_EXPORT'),
+    /CREDIT_INVOICE_SHIPMENT_MISMATCH/
+  );
+
+  const updated = await repo.useCustomerCredit(shipment.shipment_id, { creditId: credit.credit_id, amount: 40 }, 'U_EXPORT');
+  assert.equal(updated.payment_status, 'PARTIAL');
+  await repo.useCustomerCredit('S_FOR_C1_2', { creditId: credit.credit_id, amount: 60, invoiceId: 'INV-PAY-2' }, 'U_EXPORT');
+  assert.equal((await repo.listCustomerCredits({ customerId: 'C1' }))[0].remaining_amount, 0);
+  assert.equal(db.prepare("SELECT COUNT(*) AS n FROM shipment_audit_events WHERE entity_id = ? AND event_type = 'CUSTOMER_CREDIT_USED'").get(credit.credit_id).n, 2);
+});
+
+test('concurrent credit usage cannot overdraw one Customer credit', async () => {
+  const { db, wrappedDb } = await setupTestDb();
+  const repo = createShippingDiRepository(wrappedDb);
+  const shipment = await loadedShipmentWithFinalInvoice(repo, db);
+  const credit = await repo.createCustomerCredit({ customerId: 'C1', amount: 100, reason: 'Commercial adjustment' }, 'U_EXPORT');
+
+  const results = await Promise.allSettled([
+    repo.useCustomerCredit(shipment.shipment_id, { creditId: credit.credit_id, amount: 60 }, 'U_EXPORT'),
+    repo.useCustomerCredit(shipment.shipment_id, { creditId: credit.credit_id, amount: 60 }, 'U_EXPORT')
+  ]);
+
+  assert.equal(results.filter((result) => result.status === 'fulfilled').length, 1);
+  assert.match(String(results.find((result) => result.status === 'rejected').reason), /CREDIT_BALANCE_EXCEEDED/);
+  assert.equal((await repo.listCustomerCredits({ customerId: 'C1' }))[0].remaining_amount, 40);
+  assert.equal(db.prepare('SELECT COUNT(*) AS n FROM customer_credit_usages').get().n, 1);
+});
+
+test('payment uses only FINAL invoice totals and reports unpaid, partial, and paid coverage', async () => {
+  const { db, wrappedDb } = await setupTestDb();
+  const repo = createShippingDiRepository(wrappedDb);
+  const shipment = await loadedShipmentForDocuments(repo, db);
+
+  const beforeFinal = await repo.updateShipmentPayment(shipment.shipment_id, { cashReceivedAmount: 1, paymentNote: 'Advance' }, 'U_EXPORT');
+  assert.equal(beforeFinal.payment_status, 'UNPAID');
+  db.prepare('UPDATE po_revision_lines SET tolerance_pct = 5 WHERE line_id = ?').run('LINE-1');
+  await repo.createShipmentInvoice(shipment.shipment_id, {
+    invoiceNo: 'WCAT-PRELIM-PAY',
+    version: 'PRELIMINARY',
+    invoiceDate: '2026-09-15',
+    lines: [{ poRevisionLineId: 'LINE-1', qtyMt: 100 }]
+  }, 'U_EXPORT');
+  await repo.finalizeShipmentInvoice((await repo.getShipmentInvoices(shipment.shipment_id))[0].invoice_id, [{
+    poRevisionLineId: 'LINE-1', qtyMt: 9.5
+  }], 'U_EXPORT');
+  const partial = await repo.updateShipmentPayment(shipment.shipment_id, { cashReceivedAmount: 1000, paymentNote: 'Partial collection' }, 'U_EXPORT');
+  assert.equal(partial.payment_status, 'PARTIAL');
+  const paid = await repo.updateShipmentPayment(shipment.shipment_id, { cashReceivedAmount: 3325, paymentNote: 'Settled' }, 'U_EXPORT');
+  assert.equal(paid.payment_status, 'PAID');
+  assert.equal(db.prepare("SELECT COUNT(*) AS n FROM shipment_audit_events WHERE entity_id = ? AND event_type = 'PAYMENT_UPDATED'").get(shipment.shipment_id).n, 3);
 });

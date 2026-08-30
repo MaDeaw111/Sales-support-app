@@ -231,3 +231,49 @@ test('PUT /api/shipments-v2/:id/documents lets operational writers record shipme
   assert.equal((await handler(request('/api/shipments-v2/SHP-1/documents', 'PUT', payload))).status, 403);
   assert.equal(calls.length, 1);
 });
+
+test('Customer Credit and Payment routes expose reads and restrict writes to operational writers', async () => {
+  const calls = [];
+  let caller = { user_id: 'U_EXPORT', role: 'EXPORT' };
+  const credit = { credit_id: 'CR-1', customer_id: 'C1', amount: 100, remaining_amount: 100 };
+  const shipment = { shipment_id: 'SHP-1', payment_status: 'PARTIAL' };
+  const handler = createShippingDiHandler({
+    repo: {
+      createCustomerCredit: async (...args) => {
+        calls.push(['createCredit', ...args]);
+        return credit;
+      },
+      listCustomerCredits: async (...args) => {
+        calls.push(['listCredits', ...args]);
+        return [credit];
+      },
+      updateShipmentPayment: async (...args) => {
+        calls.push(['payment', ...args]);
+        return shipment;
+      }
+    },
+    resolveUser: async () => caller
+  });
+  const creditPayload = { customerId: 'C1', amount: 100, reason: 'Commercial adjustment' };
+  const paymentPayload = { cashReceivedAmount: 50, paymentNote: 'Partial collection' };
+
+  const created = await handler(request('/api/customer-credits', 'POST', creditPayload));
+  assert.equal(created.status, 200);
+  assert.deepEqual((await created.json()).data.credit, credit);
+  assert.deepEqual(calls[0], ['createCredit', creditPayload, 'U_EXPORT']);
+
+  const listed = await handler(request('/api/customer-credits?customerId=C1'));
+  assert.equal(listed.status, 200);
+  assert.deepEqual((await listed.json()).data.customerCredits, [credit]);
+  assert.deepEqual(calls[1], ['listCredits', { customerId: 'C1' }]);
+
+  const updated = await handler(request('/api/shipments-v2/SHP-1/payment', 'PUT', paymentPayload));
+  assert.equal(updated.status, 200);
+  assert.deepEqual((await updated.json()).data.shipment, shipment);
+  assert.deepEqual(calls[2], ['payment', 'SHP-1', paymentPayload, 'U_EXPORT']);
+
+  caller = { user_id: 'U_SUPPORT', role: 'SALES_SUPPORT' };
+  assert.equal((await handler(request('/api/customer-credits', 'POST', creditPayload))).status, 403);
+  assert.equal((await handler(request('/api/shipments-v2/SHP-1/payment', 'PUT', paymentPayload))).status, 403);
+  assert.equal((await handler(request('/api/customer-credits?customerId=C1'))).status, 200);
+});

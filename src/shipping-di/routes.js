@@ -9,6 +9,8 @@ const SHIPMENT_SCHEDULE_WRITE_ROLES = ['ADMIN', 'MANAGER', 'EXPORT'];
 const SHIPMENT_CONTAINER_WRITE_ROLES = ['ADMIN', 'MANAGER', 'EXPORT'];
 const SHIPMENT_INVOICE_WRITE_ROLES = ['ADMIN', 'MANAGER', 'EXPORT'];
 const SHIPMENT_DOCUMENT_WRITE_ROLES = ['ADMIN', 'MANAGER', 'EXPORT'];
+const CUSTOMER_CREDIT_WRITE_ROLES = ['ADMIN', 'MANAGER', 'EXPORT'];
+const SHIPMENT_PAYMENT_WRITE_ROLES = ['ADMIN', 'MANAGER', 'EXPORT'];
 
 function json(body, status = 200) {
   return new Response(JSON.stringify(body), {
@@ -112,6 +114,25 @@ export function createShippingDiHandler({ repo, resolveUser, db }) {
       }
     }
 
+    if (path === '/api/customer-credits' && method === 'GET') {
+      if (!OPERATIONAL_READER_ROLES.includes(caller.role)) return json({ status: 'ERROR', message: 'Permission denied.' }, 403);
+      const customerCredits = await activeRepo.listCustomerCredits({
+        customerId: url.searchParams.get('customerId') || undefined
+      });
+      return json({ status: 'SUCCESS', data: { customerCredits } });
+    }
+
+    if (path === '/api/customer-credits' && method === 'POST') {
+      if (!CUSTOMER_CREDIT_WRITE_ROLES.includes(caller.role)) return json({ status: 'ERROR', message: 'Permission denied.' }, 403);
+      const body = await readJson(request);
+      try {
+        const credit = await activeRepo.createCustomerCredit(body, caller.user_id);
+        return json({ status: 'SUCCESS', data: { credit } });
+      } catch (error) {
+        return json({ status: 'ERROR', message: error.message }, 400);
+      }
+    }
+
     const deliveryInstructionShipmentMatch = path.match(/^\/api\/delivery-instructions\/([^/]+)\/shipment$/);
     if (deliveryInstructionShipmentMatch && method === 'GET') {
       if (!OPERATIONAL_READER_ROLES.includes(caller.role)) return json({ status: 'ERROR', message: 'Permission denied.' }, 403);
@@ -184,6 +205,25 @@ export function createShippingDiHandler({ repo, resolveUser, db }) {
       try {
         const shipment = await activeRepo.updateShipmentDocuments(
           decodeURIComponent(shipmentDocumentsMatch[1]),
+          body,
+          caller.user_id
+        );
+        return json({ status: 'SUCCESS', data: { shipment } });
+      } catch (error) {
+        return json(
+          { status: 'ERROR', message: error.message },
+          error.code === 'SHIPMENT_NOT_FOUND' ? 404 : 400
+        );
+      }
+    }
+
+    const shipmentPaymentMatch = path.match(/^\/api\/shipments-v2\/([^/]+)\/payment$/);
+    if (shipmentPaymentMatch && method === 'PUT') {
+      if (!SHIPMENT_PAYMENT_WRITE_ROLES.includes(caller.role)) return json({ status: 'ERROR', message: 'Permission denied.' }, 403);
+      const body = await readJson(request);
+      try {
+        const shipment = await activeRepo.updateShipmentPayment(
+          decodeURIComponent(shipmentPaymentMatch[1]),
           body,
           caller.user_id
         );

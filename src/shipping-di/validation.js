@@ -36,6 +36,9 @@ const SHIPMENT_DOCUMENT_PROPERTIES = [
   'dhlTrackingNo',
   'docsNote'
 ];
+const CUSTOMER_CREDIT_PROPERTIES = ['customerId', 'amount', 'reason'];
+const CUSTOMER_CREDIT_USAGE_PROPERTIES = ['creditId', 'amount', 'invoiceId'];
+const SHIPMENT_PAYMENT_PROPERTIES = ['cashReceivedAmount', 'paymentNote'];
 
 function codedError(code) {
   const error = new Error(code);
@@ -357,6 +360,52 @@ export function validateShipmentInvoice(dto) {
 
 export function validateShipmentInvoiceFinalization(lines) {
   return validateInvoiceLines(lines);
+}
+
+export function validateCustomerCredit(dto) {
+  if (!dto || typeof dto !== 'object' || Array.isArray(dto)) throw codedError('CREDIT_PAYLOAD_INVALID');
+  if (Object.keys(dto).some((property) => !CUSTOMER_CREDIT_PROPERTIES.includes(property))) {
+    throw codedError('CREDIT_PROPERTY_INVALID');
+  }
+  const customerId = requiredId(dto.customerId, 'CREDIT_CUSTOMER_REQUIRED');
+  if (typeof dto.amount !== 'number' || !Number.isFinite(dto.amount) || dto.amount <= 0) {
+    throw codedError('CREDIT_AMOUNT_INVALID');
+  }
+  const reason = typeof dto.reason === 'string' ? dto.reason.trim() : '';
+  if (!reason) throw codedError('CREDIT_REASON_REQUIRED');
+  return { customerId, amount: dto.amount, reason };
+}
+
+export function validateCustomerCreditUsage(dto) {
+  if (!dto || typeof dto !== 'object' || Array.isArray(dto)) throw codedError('CREDIT_USAGE_PAYLOAD_INVALID');
+  if (Object.keys(dto).some((property) => !CUSTOMER_CREDIT_USAGE_PROPERTIES.includes(property))) {
+    throw codedError('CREDIT_USAGE_PROPERTY_INVALID');
+  }
+  const creditId = requiredId(dto.creditId, 'CREDIT_USAGE_CREDIT_REQUIRED');
+  if (typeof dto.amount !== 'number' || !Number.isFinite(dto.amount) || dto.amount <= 0) {
+    throw codedError('CREDIT_USAGE_AMOUNT_INVALID');
+  }
+  const invoiceId = dto.invoiceId === undefined || dto.invoiceId === null
+    ? null
+    : requiredId(dto.invoiceId, 'CREDIT_USAGE_INVOICE_INVALID');
+  return { creditId, amount: dto.amount, invoiceId };
+}
+
+export function validateShipmentPayment(dto) {
+  if (!dto || typeof dto !== 'object' || Array.isArray(dto)) throw codedError('PAYMENT_PAYLOAD_INVALID');
+  if (Object.keys(dto).some((property) => !SHIPMENT_PAYMENT_PROPERTIES.includes(property))) {
+    throw codedError('PAYMENT_PROPERTY_INVALID');
+  }
+  if (typeof dto.cashReceivedAmount !== 'number' || !Number.isFinite(dto.cashReceivedAmount) || dto.cashReceivedAmount < 0) {
+    throw codedError('PAYMENT_CASH_RECEIVED_AMOUNT_INVALID');
+  }
+  if (dto.paymentNote !== undefined && dto.paymentNote !== null && typeof dto.paymentNote !== 'string') {
+    throw codedError('PAYMENT_NOTE_INVALID');
+  }
+  return {
+    cashReceivedAmount: dto.cashReceivedAmount,
+    paymentNote: dto.paymentNote === undefined ? null : dto.paymentNote?.trim() || null
+  };
 }
 
 function requiredDocumentDate(value, requiredCode, invalidCode) {
