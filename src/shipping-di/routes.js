@@ -65,6 +65,22 @@ export function projectShippingDiForRole(record, caller) {
   return record;
 }
 
+export function projectShippingDiWorkspaceForRole(record, caller) {
+  if (caller.role === 'EXTERNAL_SALES') {
+    return pickPresent(record, [
+      'di_no', 'di_status', 'shipping_month', 'shipping_period', 'container_plan',
+      'booking_no', 'planned_loading_date', 'actual_loading_date', 'schedule_result', 'shipment_status'
+    ]);
+  }
+  if (caller.role === 'PRODUCTION_WAREHOUSE') {
+    return pickPresent(record, [
+      'di_no', 'product_summary', 'packing_summary', 'planned_qty_mt', 'container_plan',
+      'planned_loading_date', 'actual_loading_date', 'shipment_status'
+    ]);
+  }
+  return record;
+}
+
 export function createShippingDiHandler({ repo, resolveUser, db }) {
   const activeRepo = repo || createShippingDiRepository(db);
   const activeResolveUser = resolveUser || resolveAuthenticatedUser;
@@ -137,6 +153,26 @@ export function createShippingDiHandler({ repo, resolveUser, db }) {
       return json({ status: 'SUCCESS', data: { deliveryInstructions: visibleInstructions } });
     }
 
+    if (path === '/api/delivery-instructions/workspace' && method === 'GET') {
+      if (!PHASE6_READ_ROLES.includes(caller.role)) return json({ status: 'ERROR', message: 'Permission denied.' }, 403);
+      if (caller.role === 'EXTERNAL_SALES' && !db?.prepare) return json({ status: 'ERROR', message: 'Permission denied.' }, 403);
+      const deliveryInstructions = await activeRepo.listDeliveryInstructionWorkspace({
+        search: url.searchParams.get('search') || undefined,
+        diStatus: url.searchParams.get('diStatus') || undefined,
+        shipmentStatus: url.searchParams.get('shipmentStatus') || undefined,
+        shippingMonth: url.searchParams.get('shippingMonth') || undefined,
+        scheduleResult: url.searchParams.get('scheduleResult') || undefined,
+        paymentStatus: url.searchParams.get('paymentStatus') || undefined
+      });
+      const visibleInstructions = [];
+      for (const deliveryInstruction of deliveryInstructions) {
+        if (await canReadShippingDiRecord(caller, deliveryInstruction)) {
+          visibleInstructions.push(projectShippingDiWorkspaceForRole(deliveryInstruction, caller));
+        }
+      }
+      return json({ status: 'SUCCESS', data: { deliveryInstructions: visibleInstructions } });
+    }
+
     const poBalanceMatch = path.match(/^\/api\/delivery-instructions\/po-balance\/([^/]+)$/);
     if (poBalanceMatch && method === 'GET') {
       if (!OPERATIONAL_READER_ROLES.includes(caller.role)) return json({ status: 'ERROR', message: 'Permission denied.' }, 403);
@@ -204,9 +240,10 @@ export function createShippingDiHandler({ repo, resolveUser, db }) {
     const deliveryInstructionShipmentMatch = path.match(/^\/api\/delivery-instructions\/([^/]+)\/shipment$/);
     if (deliveryInstructionShipmentMatch && method === 'GET') {
       if (!PHASE6_READ_ROLES.includes(caller.role)) return json({ status: 'ERROR', message: 'Permission denied.' }, 403);
-      const shipment = await activeRepo.getPhase6ShipmentByDeliveryInstructionId(
-        decodeURIComponent(deliveryInstructionShipmentMatch[1])
-      );
+      const reference = decodeURIComponent(deliveryInstructionShipmentMatch[1]);
+      const shipment = typeof activeRepo.getPhase6ShipmentByDeliveryInstructionReference === 'function'
+        ? await activeRepo.getPhase6ShipmentByDeliveryInstructionReference(reference)
+        : await activeRepo.getPhase6ShipmentByDeliveryInstructionId(reference);
       if (!shipment) return json({ status: 'ERROR', message: 'SHIPMENT_NOT_FOUND' }, 404);
       if (!await canReadShippingDiRecord(caller, shipment)) return json({ status: 'ERROR', message: 'Permission denied.' }, 403);
       return json({ status: 'SUCCESS', data: { shipment: projectShippingDiForRole(shipment, caller) } });
@@ -323,6 +360,20 @@ export function createShippingDiHandler({ repo, resolveUser, db }) {
           { status: 'ERROR', message: error.message },
           error.code === 'SHIPMENT_NOT_FOUND' ? 404 : 400
         );
+      }
+    }
+
+    const shipmentCreditUsageMatch = path.match(/^\/api\/shipments-v2\/([^/]+)\/credit-usage$/);
+    if (shipmentCreditUsageMatch && method === 'POST') {
+      if (!CUSTOMER_CREDIT_WRITE_ROLES.includes(caller.role)) return json({ status: 'ERROR', message: 'Permission denied.' }, 403);
+      const body = await readJson(request);
+      try {
+        const shipment = await activeRepo.useCustomerCredit(
+          decodeURIComponent(shipmentCreditUsageMatch[1]), body, caller.user_id
+        );
+        return json({ status: 'SUCCESS', data: { shipment } });
+      } catch (error) {
+        return json({ status: 'ERROR', message: error.message }, error.code === 'SHIPMENT_NOT_FOUND' ? 404 : 400);
       }
     }
 

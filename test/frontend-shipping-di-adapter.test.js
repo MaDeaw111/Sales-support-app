@@ -36,7 +36,7 @@ test('loadDeliveryInstructionsFromApi replaces only Phase 6 state', async () => 
   let renders = 0;
   globalThis.renderView = () => { renders++; };
   globalThis.fetch = async (url) => {
-    assert.equal(url, '/api/delivery-instructions');
+    assert.equal(url, '/api/delivery-instructions/workspace');
     return success({ deliveryInstructions: [{ di_id: 'DI1', status: 'DRAFT' }] });
   };
 
@@ -123,4 +123,17 @@ test('Phase 6 adapters reject API errors without replacing displayed state', asy
     delete globalThis.renderView;
     delete globalThis.fetch;
   }
+});
+
+test('shipping view keeps legacy and Phase 6 workspaces selectable', () => {
+  const renderShipping = extractFunction('renderShipping(container)');
+  assert.match(renderShipping, /state\.shippingWorkspace/);
+  assert.match(renderShipping, /renderShippingDiWorkspace\(container\)/);
+  assert.match(renderShipping, /renderLegacyShippingWorkspace\(container\)/);
+});
+
+test('DRAFT DI selection does not fetch a shipment before confirmation', () => {
+  const selectDeliveryInstruction = extractFunction('selectPhase6DeliveryInstruction(diId)');
+  assert.match(selectDeliveryInstruction, /di\.di_status === 'DRAFT'/);
+  assert.match(selectDeliveryInstruction, /return;/);
 });

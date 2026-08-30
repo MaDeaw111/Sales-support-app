@@ -112,3 +112,23 @@ test('EXTERNAL_SALES is owner-scoped and shipment-v2 lookup never treats a DI id
   caller = { user_id: 'U_WAREHOUSE', role: 'PRODUCTION_WAREHOUSE' };
   assert.equal((await handler(request('/api/shipments-v2/S1'))).status, 200);
 });
+
+test('workspace list is server-projected for external sales and warehouse loading work', async () => {
+  const { repo, wrappedDb } = await setupRbacFixture();
+  let caller = { user_id: 'U_SALES', role: 'EXTERNAL_SALES' };
+  const handler = createShippingDiHandler({ repo, db: wrappedDb, resolveUser: async () => caller });
+
+  let response = await handler(request('/api/delivery-instructions/workspace?search=BK-1'));
+  let row = (await response.json()).data.deliveryInstructions[0];
+  assert.equal(response.status, 200);
+  assert.equal(row.di_no, 'CUSTOMER-DI-1');
+  assert.equal('di_id' in row, false);
+  assert.equal('payment_status' in row, false);
+
+  caller = { user_id: 'U_WAREHOUSE', role: 'PRODUCTION_WAREHOUSE' };
+  response = await handler(request('/api/delivery-instructions/workspace'));
+  row = (await response.json()).data.deliveryInstructions[0];
+  assert.equal(row.product_summary, 'Tapioca Pellet 65%');
+  assert.equal(row.actual_loading_date, '2026-09-10');
+  assert.equal('payment_status' in row, false);
+});

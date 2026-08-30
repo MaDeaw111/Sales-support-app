@@ -93,3 +93,31 @@ test('delivery-instruction lifecycle routes keep DRAFT edits and confirm availab
   caller = { user_id: 'U_SUPPORT', role: 'SALES_SUPPORT' };
   assert.equal((await handler(request('/api/delivery-instructions/DI-1/confirm', 'POST'))).status, 403);
 });
+
+test('workspace list forwards approved filters and returns one API-backed DI/shipment row', async () => {
+  let receivedFilters;
+  const row = {
+    di_id: 'DI-1', di_no: 'CUST-DI-1', customer_id: 'C1', customer_name: 'Customer One',
+    po_id: 'PO-1', customer_po_no: 'BUYER-1', product_summary: 'Tapioca Pellet', planned_qty_mt: 20,
+    container_plan: '1 × 20GP', shipping_month: '2026-09', shipping_period: 'FIRST_HALF',
+    planned_loading_date: '2026-09-10', actual_loading_date: null, schedule_result: null,
+    booking_no: 'BK-1', shipment_status: 'BOOKED', payment_status: 'UNPAID', public_ref: 'CUST-DI-1'
+  };
+  const handler = createShippingDiHandler({
+    repo: {
+      listDeliveryInstructionWorkspace: async (filters) => {
+        receivedFilters = filters;
+        return [row];
+      }
+    },
+    resolveUser: async () => ({ user_id: 'U_SUPPORT', role: 'SALES_SUPPORT' })
+  });
+
+  const response = await handler(request('/api/delivery-instructions/workspace?search=BK-1&shipmentStatus=BOOKED&scheduleResult=ON_PLAN&paymentStatus=UNPAID'));
+  assert.equal(response.status, 200);
+  assert.deepEqual((await response.json()).data.deliveryInstructions, [row]);
+  assert.deepEqual(receivedFilters, {
+    search: 'BK-1', diStatus: undefined, shipmentStatus: 'BOOKED', shippingMonth: undefined,
+    scheduleResult: 'ON_PLAN', paymentStatus: 'UNPAID'
+  });
+});

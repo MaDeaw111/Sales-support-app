@@ -1785,6 +1785,55 @@ export function createShippingDiRepository(db) {
       return results || [];
     },
 
+    async listDeliveryInstructionWorkspace(filters = {}) {
+      let query = `
+        SELECT
+          di.di_id, di.di_no, di.customer_id, customer.customer_name, di.po_id,
+          revision.customer_po_no, di.shipping_month, di.shipping_period, di.container_plan,
+          di.status AS di_status,
+          COALESCE((SELECT SUM(line.planned_qty_mt) FROM delivery_instruction_lines line WHERE line.di_id = di.di_id), 0) AS planned_qty_mt,
+          COALESCE((SELECT GROUP_CONCAT(product.product_name, ', ') FROM delivery_instruction_lines line JOIN products product ON product.product_id = line.product_id WHERE line.di_id = di.di_id), '') AS product_summary,
+          COALESCE((SELECT GROUP_CONCAT(line.packing_snapshot, ', ') FROM delivery_instruction_lines line WHERE line.di_id = di.di_id), '') AS packing_summary,
+          shipment.shipment_id, shipment.booking_no, shipment.planned_loading_date, shipment.actual_loading_date,
+          shipment.schedule_result, shipment.status AS shipment_status, shipment.payment_status
+        FROM delivery_instructions di
+        JOIN customers customer ON customer.customer_id = di.customer_id
+        LEFT JOIN po_revisions revision ON revision.revision_id = di.po_revision_id
+        LEFT JOIN phase6_shipments shipment ON shipment.di_id = di.di_id
+        WHERE 1 = 1
+      `;
+      const params = [];
+      if (filters.diStatus) { query += ' AND di.status = ?'; params.push(filters.diStatus); }
+      if (filters.shipmentStatus) { query += ' AND shipment.status = ?'; params.push(filters.shipmentStatus); }
+      if (filters.shippingMonth) { query += ' AND di.shipping_month = ?'; params.push(filters.shippingMonth); }
+      if (filters.scheduleResult) { query += ' AND shipment.schedule_result = ?'; params.push(filters.scheduleResult); }
+      if (filters.paymentStatus) { query += ' AND shipment.payment_status = ?'; params.push(filters.paymentStatus); }
+      if (filters.search) {
+        const like = `%${filters.search}%`;
+        query += ` AND (
+          di.di_no LIKE ? COLLATE NOCASE OR di.po_id LIKE ? COLLATE NOCASE OR revision.customer_po_no LIKE ? COLLATE NOCASE OR
+          customer.customer_name LIKE ? COLLATE NOCASE OR shipment.booking_no LIKE ? COLLATE NOCASE OR
+          EXISTS (SELECT 1 FROM shipment_invoices invoice WHERE invoice.shipment_id = shipment.shipment_id AND invoice.invoice_no LIKE ? COLLATE NOCASE) OR
+          EXISTS (SELECT 1 FROM shipment_containers container WHERE container.shipment_id = shipment.shipment_id AND container.container_no LIKE ? COLLATE NOCASE)
+        )`;
+        params.push(like, like, like, like, like, like, like);
+      }
+      query += ' ORDER BY di.created_at DESC, di.di_id DESC';
+      const { results } = await db.prepare(query).bind(...params).all();
+      return (results || []).map((row) => ({ ...row, planned_qty_mt: Number(row.planned_qty_mt) }));
+    },
+
+    async getPhase6ShipmentByDeliveryInstructionReference(reference) {
+      const deliveryInstruction = await db.prepare(`
+        SELECT di_id FROM delivery_instructions
+        WHERE di_id = ? OR di_no = ?
+        ORDER BY CASE WHEN di_id = ? THEN 0 ELSE 1 END, created_at DESC
+        LIMIT 1
+      `).bind(reference, reference, reference).first();
+      if (!deliveryInstruction) return null;
+      return findPhase6ShipmentReadModel(db, deliveryInstruction.di_id, 'di_id');
+    },
+
     async suggestPartnersForCustomer(customerId) {
       const latest = await db.prepare(`
         SELECT surveyor_partner_id, forwarder_partner_id
