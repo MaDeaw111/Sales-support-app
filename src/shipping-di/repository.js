@@ -133,7 +133,7 @@ async function listShipmentContainers(db, shipmentId) {
 
 async function findShipmentInvoice(db, invoiceId) {
   const invoice = await db.prepare(`
-    SELECT invoice_id, shipment_id, invoice_no, invoice_date, currency, version, note, drive_url,
+    SELECT invoice_id, shipment_id, invoice_no, invoice_date, currency, version, invoice_version, invoice_write_token, final_container_version,
            created_by, created_at, updated_by, updated_at,
            COALESCE((SELECT SUM(line_amount) FROM shipment_invoice_lines WHERE invoice_id = shipment_invoices.invoice_id), 0) AS total_amount
     FROM shipment_invoices
@@ -169,15 +169,23 @@ async function findShipmentInvoiceLineReferences(db, shipment, lines) {
       JOIN delivery_instruction_lines dil ON dil.di_line_id = scl.delivery_instruction_line_id
       WHERE sc.shipment_id = ? AND sc.status <> 'CANCELLED'
       GROUP BY dil.po_revision_line_id
+    ), final_by_line AS (
+      SELECT invoice_line.po_revision_line_id, SUM(invoice_line.qty_mt) AS final_qty_mt
+      FROM shipment_invoice_lines invoice_line
+      JOIN shipment_invoices invoice ON invoice.invoice_id = invoice_line.invoice_id
+      WHERE invoice.shipment_id = ? AND invoice.version = 'FINAL'
+      GROUP BY invoice_line.po_revision_line_id
     )
     SELECT dil.po_revision_line_id, prl.unit_price, revision.currency, prl.max_qty_mt, prl.tolerance_pct,
-           COALESCE(actual.actual_qty_mt, 0) AS actual_qty_mt
+           COALESCE(actual.actual_qty_mt, 0) AS actual_qty_mt,
+           COALESCE(finals.final_qty_mt, 0) AS final_qty_mt
     FROM delivery_instruction_lines dil
     JOIN po_revision_lines prl ON prl.line_id = dil.po_revision_line_id
     JOIN po_revisions revision ON revision.revision_id = prl.po_revision_id
     LEFT JOIN actual_by_line actual ON actual.po_revision_line_id = dil.po_revision_line_id
+    LEFT JOIN final_by_line finals ON finals.po_revision_line_id = dil.po_revision_line_id
     WHERE dil.di_id = ? AND dil.po_revision_line_id IN (${placeholders})
-  `).bind(shipment.shipment_id, shipment.di_id, ...lineIds).all();
+  `).bind(shipment.shipment_id, shipment.shipment_id, shipment.di_id, ...lineIds).all();
   const references = new Map((results || []).map((line) => [line.po_revision_line_id, line]));
   for (const lineId of lineIds) {
     if (!references.has(lineId)) throw codedError('INVOICE_LINE_PO_LINE_INVALID');
@@ -198,7 +206,8 @@ async function resolveShipmentInvoiceLines(db, shipment, lines, { final, prelimi
     }
     if (final) {
       if (line.qtyMt > maxQtyMt + 0.000001) throw codedError('INVOICE_FINAL_QTY_EXCEEDS_PO_MAX');
-      if (Math.abs(line.qtyMt - actualQtyMt) > 0.000001) throw codedError('INVOICE_FINAL_QTY_MISMATCHES_ACTUAL');
+      const remainingActualQtyMt = actualQtyMt - Number(reference.final_qty_mt);
+      if (line.qtyMt > remainingActualQtyMt + 0.000001) throw codedError('INVOICE_FINAL_QTY_EXCEEDS_REMAINING_ACTUAL');
     }
     if (currency && currency !== reference.currency) throw codedError('INVOICE_CURRENCY_MISMATCH');
     currency = reference.currency;
@@ -214,11 +223,19 @@ async function resolveShipmentInvoiceLines(db, shipment, lines, { final, prelimi
   return { currency, lines: resolved };
 }
 
-function shipmentInvoiceLineStatements(db, invoiceId, lines, actorId) {
+function shipmentInvoiceLineStatements(db, invoiceId, lines, actorId, invoiceState = null) {
   return lines.map((line) => db.prepare(`
     INSERT INTO shipment_invoice_lines (
       invoice_line_id, invoice_id, po_revision_line_id, qty_mt, unit_price_snapshot, currency, line_amount, created_by, updated_by
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ) ${invoiceState ? `
+      SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?
+      WHERE EXISTS (
+        SELECT 1
+        FROM shipment_invoices
+        WHERE invoice_id = ? AND version = ? AND invoice_version = ? AND invoice_write_token = ?
+          ${invoiceState.finalContainerVersion === null ? 'AND final_container_version IS NULL' : 'AND final_container_version = ?'}
+      )
+    ` : 'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)'}
   `).bind(
     `INVL-${crypto.randomUUID()}`,
     invoiceId,
@@ -228,8 +245,39 @@ function shipmentInvoiceLineStatements(db, invoiceId, lines, actorId) {
     line.currency,
     line.lineAmount,
     actorId,
-    actorId
+    actorId,
+    ...(invoiceState ? [
+      invoiceId,
+      invoiceState.version,
+      invoiceState.invoiceVersion,
+      invoiceState.writeToken,
+      ...(invoiceState.finalContainerVersion === null ? [] : [invoiceState.finalContainerVersion])
+    ] : [])
   ));
+}
+
+function invoiceAuditForStateStatement(db, invoiceId, invoiceState, eventType, actorId, metadata = {}) {
+  return db.prepare(`
+    INSERT INTO shipment_audit_events (event_id, entity_type, entity_id, event_type, actor_id, metadata_json)
+    SELECT ?, 'INVOICE', ?, ?, ?, ?
+    WHERE EXISTS (
+      SELECT 1
+      FROM shipment_invoices
+      WHERE invoice_id = ? AND version = ? AND invoice_version = ? AND invoice_write_token = ?
+        ${invoiceState.finalContainerVersion === null ? 'AND final_container_version IS NULL' : 'AND final_container_version = ?'}
+    )
+  `).bind(
+    `EVT-${crypto.randomUUID()}`,
+    invoiceId,
+    eventType,
+    actorId,
+    JSON.stringify(metadata),
+    invoiceId,
+    invoiceState.version,
+    invoiceState.invoiceVersion,
+    invoiceState.writeToken,
+    ...(invoiceState.finalContainerVersion === null ? [] : [invoiceState.finalContainerVersion])
+  );
 }
 
 function shipmentCreationStatement(db, diId, actorId, requirePreviousMutation = false) {
@@ -918,6 +966,11 @@ export function createShippingDiRepository(db) {
               status = CASE WHEN actual_loading_date IS NOT NULL THEN 'LOADED' ELSE 'BOOKED' END,
               updated_by = ?, updated_at = CURRENT_TIMESTAMP
           WHERE shipment_id = ? AND status IN ('BOOKED', 'LOADED') AND container_version = ?
+            AND NOT EXISTS (
+              SELECT 1
+              FROM shipment_invoices
+              WHERE shipment_id = phase6_shipments.shipment_id AND version = 'FINAL'
+            )
         `).bind(nextContainerVersion, containerWriteToken, actorId, shipmentId, shipment.container_version),
         db.prepare(`
           DELETE FROM shipment_containers
@@ -983,7 +1036,16 @@ export function createShippingDiRepository(db) {
       ));
 
       const results = await db.batch(statements);
-      if (!mutationApplied(results[0])) throw codedError('SHIPMENT_CONTAINERS_STALE');
+      if (!mutationApplied(results[0])) {
+        const finalInvoice = await db.prepare(`
+          SELECT 1
+          FROM shipment_invoices
+          WHERE shipment_id = ? AND version = 'FINAL'
+          LIMIT 1
+        `).bind(shipmentId).first();
+        if (finalInvoice) throw codedError('SHIPMENT_CONTAINERS_FINALIZED');
+        throw codedError('SHIPMENT_CONTAINERS_STALE');
+      }
       const updatedShipment = await findPhase6Shipment(db, shipmentId);
       return {
         actual_qty_mt: Number(updatedShipment.actual_qty_mt),
@@ -1022,11 +1084,26 @@ export function createShippingDiRepository(db) {
       }
 
       const invoiceId = `INV-${crypto.randomUUID()}`;
+      const invoiceWriteToken = crypto.randomUUID();
+      const finalContainerVersion = invoice.version === 'FINAL' ? Number(shipment.container_version) : null;
+      const invoiceState = {
+        version: invoice.version,
+        invoiceVersion: 0,
+        writeToken: invoiceWriteToken,
+        finalContainerVersion
+      };
       const statements = [
         db.prepare(`
           INSERT INTO shipment_invoices (
-            invoice_id, shipment_id, invoice_no, invoice_date, currency, version, note, drive_url, created_by, updated_by
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            invoice_id, shipment_id, invoice_no, invoice_date, currency, version, invoice_write_token, final_container_version, created_by, updated_by
+          ) ${invoice.version === 'FINAL' ? `
+            SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+            WHERE EXISTS (
+              SELECT 1
+              FROM phase6_shipments
+              WHERE shipment_id = ? AND status = 'LOADED' AND container_version = ?
+            )
+          ` : 'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'}
         `).bind(
           invoiceId,
           shipmentId,
@@ -1034,23 +1111,23 @@ export function createShippingDiRepository(db) {
           invoice.invoiceDate,
           resolved.currency,
           invoice.version,
-          invoice.note,
-          invoice.driveUrl,
+          invoiceWriteToken,
+          finalContainerVersion,
           actorId,
-          actorId
+          actorId,
+          ...(invoice.version === 'FINAL' ? [shipmentId, finalContainerVersion] : [])
         ),
-        ...shipmentInvoiceLineStatements(db, invoiceId, resolved.lines, actorId),
-        auditStatement(db, 'INVOICE', invoiceId, 'INVOICE_RECORDED', actorId, {
-          shipmentId,
-          invoiceNo: invoice.invoiceNo,
-          version: invoice.version
-        })
+        ...shipmentInvoiceLineStatements(db, invoiceId, resolved.lines, actorId, invoice.version === 'FINAL' ? invoiceState : null),
+        invoice.version === 'FINAL'
+          ? invoiceAuditForStateStatement(db, invoiceId, invoiceState, 'INVOICE_RECORDED', actorId, { shipmentId, invoiceNo: invoice.invoiceNo, version: invoice.version })
+          : auditStatement(db, 'INVOICE', invoiceId, 'INVOICE_RECORDED', actorId, { shipmentId, invoiceNo: invoice.invoiceNo, version: invoice.version })
       ];
       if (invoice.version === 'FINAL') {
-        statements.push(auditStatement(db, 'INVOICE', invoiceId, 'INVOICE_FINALIZED', actorId, { shipmentId }));
+        statements.push(invoiceAuditForStateStatement(db, invoiceId, invoiceState, 'INVOICE_FINALIZED', actorId, { shipmentId }));
       }
       try {
-        await db.batch(statements);
+        const results = await db.batch(statements);
+        if (!mutationApplied(results[0])) throw codedError(invoice.version === 'FINAL' ? 'INVOICE_FINAL_STALE' : 'INVOICE_NOT_CREATED');
       } catch (error) {
         if (String(error?.message || '').includes('UNIQUE constraint failed: shipment_invoices.shipment_id, shipment_invoices.invoice_no')) {
           throw codedError('INVOICE_NUMBER_DUPLICATE');
@@ -1069,14 +1146,23 @@ export function createShippingDiRepository(db) {
       const shipment = await findPhase6Shipment(db, existing.shipment_id);
       if (!shipment || shipment.shipment_id !== existing.shipment_id) throw codedError('SHIPMENT_NOT_FOUND');
       const resolved = await resolveShipmentInvoiceLines(db, shipment, invoice.lines, { preliminary: true });
+      const nextInvoiceVersion = Number(existing.invoice_version) + 1;
+      const nextInvoiceWriteToken = crypto.randomUUID();
+      const invoiceState = { version: 'PRELIMINARY', invoiceVersion: nextInvoiceVersion, writeToken: nextInvoiceWriteToken, finalContainerVersion: null };
       const results = await db.batch([
         db.prepare(`
           UPDATE shipment_invoices
-          SET invoice_no = ?, invoice_date = ?, currency = ?, note = ?, drive_url = ?, updated_by = ?, updated_at = CURRENT_TIMESTAMP
-          WHERE invoice_id = ? AND version = 'PRELIMINARY'
-        `).bind(invoice.invoiceNo, invoice.invoiceDate, resolved.currency, invoice.note, invoice.driveUrl, actorId, invoiceId),
-        db.prepare('DELETE FROM shipment_invoice_lines WHERE invoice_id = ?').bind(invoiceId),
-        ...shipmentInvoiceLineStatements(db, invoiceId, resolved.lines, actorId)
+          SET invoice_no = ?, invoice_date = ?, currency = ?, invoice_version = ?, invoice_write_token = ?, updated_by = ?, updated_at = CURRENT_TIMESTAMP
+          WHERE invoice_id = ? AND version = 'PRELIMINARY' AND invoice_version = ? AND invoice_write_token = ?
+        `).bind(invoice.invoiceNo, invoice.invoiceDate, resolved.currency, nextInvoiceVersion, nextInvoiceWriteToken, actorId, invoiceId, existing.invoice_version, existing.invoice_write_token),
+        db.prepare(`
+          DELETE FROM shipment_invoice_lines
+          WHERE invoice_id = ? AND EXISTS (
+            SELECT 1 FROM shipment_invoices
+            WHERE invoice_id = ? AND version = 'PRELIMINARY' AND invoice_version = ? AND invoice_write_token = ? AND final_container_version IS NULL
+          )
+        `).bind(invoiceId, invoiceId, nextInvoiceVersion, nextInvoiceWriteToken),
+        ...shipmentInvoiceLineStatements(db, invoiceId, resolved.lines, actorId, invoiceState)
       ]);
       if (!mutationApplied(results[0])) throw codedError('INVOICE_NOT_PRELIMINARY');
       return findShipmentInvoice(db, invoiceId);
@@ -1092,15 +1178,30 @@ export function createShippingDiRepository(db) {
       if (!shipment || shipment.shipment_id !== existing.shipment_id) throw codedError('SHIPMENT_NOT_FOUND');
       if (shipment.status !== 'LOADED') throw codedError('INVOICE_FINAL_REQUIRES_ACTUAL_QTY');
       const resolved = await resolveShipmentInvoiceLines(db, shipment, finalLines, { final: true });
+      const finalContainerVersion = Number(shipment.container_version);
+      const nextInvoiceVersion = Number(existing.invoice_version) + 1;
+      const nextInvoiceWriteToken = crypto.randomUUID();
+      const invoiceState = { version: 'FINAL', invoiceVersion: nextInvoiceVersion, writeToken: nextInvoiceWriteToken, finalContainerVersion };
       const results = await db.batch([
         db.prepare(`
           UPDATE shipment_invoices
-          SET version = 'FINAL', currency = ?, updated_by = ?, updated_at = CURRENT_TIMESTAMP
-          WHERE invoice_id = ? AND version = 'PRELIMINARY'
-        `).bind(resolved.currency, actorId, invoiceId),
-        db.prepare('DELETE FROM shipment_invoice_lines WHERE invoice_id = ?').bind(invoiceId),
-        ...shipmentInvoiceLineStatements(db, invoiceId, resolved.lines, actorId),
-        auditAfterMutationStatement(db, 'INVOICE', invoiceId, 'INVOICE_FINALIZED', actorId, {
+          SET version = 'FINAL', currency = ?, invoice_version = ?, invoice_write_token = ?, final_container_version = ?, updated_by = ?, updated_at = CURRENT_TIMESTAMP
+          WHERE invoice_id = ? AND version = 'PRELIMINARY' AND invoice_version = ? AND invoice_write_token = ?
+            AND EXISTS (
+              SELECT 1
+              FROM phase6_shipments
+              WHERE shipment_id = ? AND status = 'LOADED' AND container_version = ?
+            )
+        `).bind(resolved.currency, nextInvoiceVersion, nextInvoiceWriteToken, finalContainerVersion, actorId, invoiceId, existing.invoice_version, existing.invoice_write_token, shipment.shipment_id, finalContainerVersion),
+        db.prepare(`
+          DELETE FROM shipment_invoice_lines
+          WHERE invoice_id = ? AND EXISTS (
+            SELECT 1 FROM shipment_invoices
+            WHERE invoice_id = ? AND version = 'FINAL' AND invoice_version = ? AND invoice_write_token = ? AND final_container_version = ?
+          )
+        `).bind(invoiceId, invoiceId, nextInvoiceVersion, nextInvoiceWriteToken, finalContainerVersion),
+        ...shipmentInvoiceLineStatements(db, invoiceId, resolved.lines, actorId, invoiceState),
+        invoiceAuditForStateStatement(db, invoiceId, invoiceState, 'INVOICE_FINALIZED', actorId, {
           shipmentId: shipment.shipment_id,
           invoiceNo: existing.invoice_no
         })

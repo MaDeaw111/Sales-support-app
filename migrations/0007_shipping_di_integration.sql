@@ -121,16 +121,18 @@ CREATE TABLE shipment_invoices (
   invoice_id TEXT PRIMARY KEY,
   shipment_id TEXT NOT NULL REFERENCES phase6_shipments(shipment_id) ON DELETE CASCADE,
   invoice_no TEXT NOT NULL CHECK(trim(invoice_no) <> ''),
-  invoice_date TEXT,
+  invoice_date TEXT NOT NULL,
   currency TEXT NOT NULL CHECK(currency IN ('USD','THB','EUR')),
   version TEXT NOT NULL CHECK(version IN ('PRELIMINARY','FINAL')),
-  note TEXT,
-  drive_url TEXT,
+  invoice_version INTEGER NOT NULL DEFAULT 0 CHECK(invoice_version >= 0),
+  invoice_write_token TEXT NOT NULL,
+  final_container_version INTEGER CHECK(final_container_version >= 0),
   created_by TEXT NOT NULL REFERENCES users(user_id),
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_by TEXT REFERENCES users(user_id),
   updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  UNIQUE(shipment_id, invoice_no)
+  UNIQUE(shipment_id, invoice_no),
+  CHECK((version = 'PRELIMINARY' AND final_container_version IS NULL) OR (version = 'FINAL' AND final_container_version IS NOT NULL))
 );
 
 CREATE TABLE shipment_invoice_lines (

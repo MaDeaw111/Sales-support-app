@@ -150,16 +150,19 @@ test('Phase 6 audit permits the approved loading-date events', async () => {
   );
 });
 
-test('Phase 6 invoice schema has FINAL/PRELIMINARY versions, a Drive URL, and exact Invoice audit events', async () => {
+test('Phase 6 invoice schema has required dates, optimistic versions, and exact Invoice audit events', async () => {
   const db = await setupThrough0006();
   db.exec(await readMigration('0007_shipping_di_integration.sql'));
   db.prepare("INSERT INTO users (user_id, email, password_hash, password_salt, role, status, full_name) VALUES ('U1', 'export@example.com', 'hash', 'salt', 'EXPORT', 'ACTIVE', 'Export User')").run();
 
-  const invoiceColumns = db.prepare('PRAGMA table_info(shipment_invoices)').all().map((column) => column.name);
-  for (const column of ['invoice_date', 'currency', 'version', 'note', 'drive_url']) {
-    assert.ok(invoiceColumns.includes(column), `${column} should exist on shipment_invoices`);
+  const invoiceColumns = db.prepare('PRAGMA table_info(shipment_invoices)').all();
+  for (const column of ['invoice_date', 'currency', 'version', 'invoice_version', 'invoice_write_token', 'final_container_version']) {
+    assert.ok(invoiceColumns.some((candidate) => candidate.name === column), `${column} should exist on shipment_invoices`);
   }
-  assert.equal(invoiceColumns.includes('status'), false, 'obsolete invoice status must not coexist with version');
+  assert.equal(invoiceColumns.find((column) => column.name === 'invoice_date').notnull, 1, 'invoice dates are mandatory');
+  assert.equal(invoiceColumns.some((column) => column.name === 'status'), false, 'obsolete invoice status must not coexist with version');
+  assert.equal(invoiceColumns.some((column) => column.name === 'note'), false, 'invoice notes are not an approved invoice field');
+  assert.equal(invoiceColumns.some((column) => column.name === 'drive_url'), false, 'invoice Drive URLs belong only to Shipment documents');
   const invoiceTableSql = db.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'shipment_invoices'").get().sql;
   assert.match(invoiceTableSql, /UNIQUE\s*\(shipment_id,\s*invoice_no\)/i, 'invoice numbers are unique only within a Shipment');
   assert.doesNotMatch(invoiceTableSql, /UNIQUE\s*\(invoice_no\)/i, 'the same manual invoice number can occur on another Shipment');

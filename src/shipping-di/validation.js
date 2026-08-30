@@ -27,7 +27,7 @@ const SHIPMENT_BOOKING_PROPERTIES = [
 const SHIPMENT_SCHEDULE_PROPERTIES = ['plannedLoadingDate', 'actualLoadingDate', 'scheduleNote'];
 const SHIPMENT_CONTAINER_PROPERTIES = ['containerNo', 'sealNo', 'lines'];
 const SHIPMENT_CONTAINER_LINE_PROPERTIES = ['poRevisionLineId', 'numberOfBags', 'netWeightMt'];
-const SHIPMENT_INVOICE_PROPERTIES = ['invoiceNo', 'version', 'invoiceDate', 'note', 'driveUrl', 'lines'];
+const SHIPMENT_INVOICE_PROPERTIES = ['invoiceNo', 'version', 'invoiceDate', 'lines'];
 
 function codedError(code) {
   const error = new Error(code);
@@ -284,7 +284,7 @@ export function validateShipmentContainers(containers) {
 }
 
 function validateInvoiceDate(value) {
-  if (value === undefined || value === null) return null;
+  if (value === undefined || value === null) throw codedError('INVOICE_DATE_REQUIRED');
   try {
     return optionalBookingDate(value);
   } catch {
@@ -318,13 +318,10 @@ export function validateShipmentInvoice(dto) {
   const invoiceNo = typeof dto.invoiceNo === 'string' ? dto.invoiceNo.trim() : '';
   if (!invoiceNo) throw codedError('INVOICE_NUMBER_REQUIRED');
   if (!['PRELIMINARY', 'FINAL'].includes(dto.version)) throw codedError('INVOICE_VERSION_INVALID');
-  if (dto.note !== undefined && dto.note !== null && typeof dto.note !== 'string') throw codedError('INVOICE_NOTE_INVALID');
   return {
     invoiceNo,
     version: dto.version,
     invoiceDate: validateInvoiceDate(dto.invoiceDate),
-    note: dto.note?.trim() || null,
-    driveUrl: validateGoogleDriveUrl(dto.driveUrl, 'INVOICE_DRIVE_URL_INVALID'),
     lines: validateInvoiceLines(dto.lines)
   };
 }

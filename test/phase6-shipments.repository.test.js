@@ -5,7 +5,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { createShippingDiRepository } from '../src/shipping-di/repository.js';
 import { calculateScheduleResult } from '../src/shipping-di/validation.js';
 
-async function setupTestDb({ pauseFirstBatch } = {}) {
+async function setupTestDb({ pauseFirstBatch, pauseQueuedFirstBatch } = {}) {
   const db = new DatabaseSync(':memory:');
   for (const migration of [
     '0001_auth.sql',
@@ -70,7 +70,7 @@ async function setupTestDb({ pauseFirstBatch } = {}) {
       };
     },
     async batch(statements) {
-      if (firstBatch && pauseFirstBatch) {
+      if (firstBatch && pauseFirstBatch && !pauseQueuedFirstBatch) {
         const pause = await pauseFirstBatch();
         if (pause) {
           firstBatch = false;
@@ -82,6 +82,13 @@ async function setupTestDb({ pauseFirstBatch } = {}) {
       releasePreviousBatch = new Promise((resolve) => {
         releaseBatch = resolve;
       });
+      if (firstBatch && pauseQueuedFirstBatch) {
+        const pause = await pauseQueuedFirstBatch();
+        if (pause) {
+          firstBatch = false;
+          await pause;
+        }
+      }
       await previousBatch;
       db.exec('BEGIN');
       try {
@@ -494,8 +501,6 @@ test('tolerance Invoice reuses its manual number and FINAL line quantities equal
     invoiceNo: 'WCAT001/2026',
     version: 'PRELIMINARY',
     invoiceDate: '2026-09-15',
-    note: 'Draft commercial invoice',
-    driveUrl: 'https://drive.google.com/drive/folders/invoice-1',
     lines: [{ poRevisionLineId: 'LINE-1', qtyMt: 105 }]
   }, 'U_EXPORT');
   const final = await repo.finalizeShipmentInvoice(preliminary.invoice_id, [{
@@ -507,8 +512,6 @@ test('tolerance Invoice reuses its manual number and FINAL line quantities equal
     version: final.version,
     invoice_date: final.invoice_date,
     currency: final.currency,
-    note: final.note,
-    drive_url: final.drive_url,
     total_amount: final.total_amount,
     lines: final.lines
   }, {
@@ -516,8 +519,6 @@ test('tolerance Invoice reuses its manual number and FINAL line quantities equal
     version: 'FINAL',
     invoice_date: '2026-09-15',
     currency: 'USD',
-    note: 'Draft commercial invoice',
-    drive_url: 'https://drive.google.com/drive/folders/invoice-1',
     total_amount: 3325,
     lines: [{
       po_revision_line_id: 'LINE-1',
@@ -530,9 +531,15 @@ test('tolerance Invoice reuses its manual number and FINAL line quantities equal
   assert.equal(db.prepare("SELECT COUNT(*) AS n FROM shipment_invoices WHERE shipment_id = ? AND invoice_no = 'WCAT001/2026'").get(shipment.shipment_id).n, 1);
   assert.equal(db.prepare("SELECT COUNT(*) AS n FROM shipment_audit_events WHERE event_type = 'INVOICE_RECORDED'").get().n, 1);
   assert.equal(db.prepare("SELECT COUNT(*) AS n FROM shipment_audit_events WHERE event_type = 'INVOICE_FINALIZED'").get().n, 1);
+  await assert.rejects(
+    () => repo.replaceShipmentContainers(shipment.shipment_id, [{
+      containerNo: 'EGSU2548896', lines: [{ poRevisionLineId: 'LINE-1', numberOfBags: 10, netWeightMt: 8.5 }]
+    }], 'U_EXPORT'),
+    /SHIPMENT_CONTAINERS_FINALIZED/
+  );
 });
 
-test('Invoices permit independent manual numbers and reject FINAL quantities that differ from actual or exceed PO Max Qty', async () => {
+test('Invoices permit independent manual numbers and aggregate FINAL quantities without duplicating actual container quantity', async () => {
   const { db, wrappedDb } = await setupTestDb();
   seedShipmentContainerLines(db);
   const repo = createShippingDiRepository(wrappedDb);
@@ -548,38 +555,138 @@ test('Invoices permit independent manual numbers and reject FINAL quantities tha
   const first = await repo.createShipmentInvoice(shipment.shipment_id, {
     invoiceNo: 'WCAT001A/2026',
     version: 'FINAL',
+    invoiceDate: '2026-09-15',
     lines: [
       { poRevisionLineId: 'LINE-1', qtyMt: 9.5 },
-      { poRevisionLineId: 'LINE-2', qtyMt: 8.5 }
+      { poRevisionLineId: 'LINE-2', qtyMt: 4 }
     ]
   }, 'U_EXPORT');
   const second = await repo.createShipmentInvoice(shipment.shipment_id, {
-    invoiceNo: 'WCAT001B/2026', version: 'FINAL', lines: [{ poRevisionLineId: 'LINE-2', qtyMt: 8.5 }]
+    invoiceNo: 'WCAT001B/2026', version: 'FINAL', invoiceDate: '2026-09-15', lines: [{ poRevisionLineId: 'LINE-2', qtyMt: 4.5 }]
   }, 'U_EXPORT');
+  await assert.rejects(
+    () => repo.createShipmentInvoice(shipment.shipment_id, {
+      invoiceNo: 'WCAT001D/2026', version: 'FINAL', invoiceDate: '2026-09-15', lines: [{ poRevisionLineId: 'LINE-2', qtyMt: 0.1 }]
+    }, 'U_EXPORT'),
+    /INVOICE_FINAL_QTY_EXCEEDS_REMAINING_ACTUAL/
+  );
   assert.equal((await repo.getShipmentInvoices(shipment.shipment_id)).length, 2);
-  assert.notEqual(first.invoice_id, second.invoice_id);
   assert.equal(first.lines.length, 2);
+  assert.equal(second.lines[0].qty_mt, 4.5);
 
   db.prepare('UPDATE po_revision_lines SET contract_qty_mt = 8, min_qty_mt = 8, max_qty_mt = 8, tolerance_pct = 5 WHERE line_id = ?').run('LINE-1');
   const preliminary = await repo.createShipmentInvoice(shipment.shipment_id, {
-    invoiceNo: 'WCAT001C/2026', version: 'PRELIMINARY', lines: [{ poRevisionLineId: 'LINE-1', qtyMt: 8 }]
+    invoiceNo: 'WCAT001C/2026', version: 'PRELIMINARY', invoiceDate: '2026-09-16', lines: [{ poRevisionLineId: 'LINE-1', qtyMt: 8 }]
   }, 'U_EXPORT');
   const updated = await repo.updateShipmentInvoice(preliminary.invoice_id, {
     invoiceNo: 'WCAT001C/2026',
     version: 'PRELIMINARY',
     invoiceDate: '2026-09-16',
-    note: 'Updated preliminary',
-    driveUrl: 'https://drive.google.com/drive/folders/invoice-3',
     lines: [{ poRevisionLineId: 'LINE-1', qtyMt: 8 }]
   }, 'U_EXPORT');
-  assert.equal(updated.note, 'Updated preliminary');
-  assert.equal(updated.drive_url, 'https://drive.google.com/drive/folders/invoice-3');
+  assert.equal(updated.invoice_date, '2026-09-16');
   await assert.rejects(
     () => repo.finalizeShipmentInvoice(preliminary.invoice_id, [{ poRevisionLineId: 'LINE-1', qtyMt: 9.5 }], 'U_EXPORT'),
     /INVOICE_FINAL_QTY_EXCEEDS_PO_MAX/
   );
   await assert.rejects(
     () => repo.finalizeShipmentInvoice(preliminary.invoice_id, [{ poRevisionLineId: 'LINE-1', qtyMt: 8 }], 'U_EXPORT'),
-    /INVOICE_FINAL_QTY_MISMATCHES_ACTUAL/
+    /INVOICE_FINAL_QTY_EXCEEDS_REMAINING_ACTUAL/
   );
+});
+
+test('Invoice Date is mandatory and unapproved invoice note and Drive URL inputs are rejected', async () => {
+  const { db, wrappedDb } = await setupTestDb();
+  seedShipmentContainerLines(db);
+  db.prepare('UPDATE po_revision_lines SET tolerance_pct = 5, max_qty_mt = 105 WHERE line_id = ?').run('LINE-1');
+  const repo = createShippingDiRepository(wrappedDb);
+  const shipment = await repo.createShipmentForDeliveryInstruction('DI-CONFIRMED', 'U_EXPORT');
+  await repo.recordShipmentBooking(shipment.shipment_id, { bookingNo: 'BK-INVOICE-DATE' }, 'U_EXPORT');
+
+  await assert.rejects(
+    () => repo.createShipmentInvoice(shipment.shipment_id, {
+      invoiceNo: 'WCAT-DATE-1', version: 'PRELIMINARY', lines: [{ poRevisionLineId: 'LINE-1', qtyMt: 105 }]
+    }, 'U_EXPORT'),
+    /INVOICE_DATE_REQUIRED/
+  );
+  await assert.rejects(
+    () => repo.createShipmentInvoice(shipment.shipment_id, {
+      invoiceNo: 'WCAT-DATE-2', version: 'PRELIMINARY', invoiceDate: '2026-09-15', note: 'not approved', lines: [{ poRevisionLineId: 'LINE-1', qtyMt: 105 }]
+    }, 'U_EXPORT'),
+    /INVOICE_PROPERTY_INVALID/
+  );
+  await assert.rejects(
+    () => repo.createShipmentInvoice(shipment.shipment_id, {
+      invoiceNo: 'WCAT-DATE-3', version: 'PRELIMINARY', invoiceDate: '2026-09-15', driveUrl: 'https://drive.google.com/drive/folders/x', lines: [{ poRevisionLineId: 'LINE-1', qtyMt: 105 }]
+    }, 'U_EXPORT'),
+    /INVOICE_PROPERTY_INVALID/
+  );
+});
+
+test('a stale preliminary update cannot replace FINAL lines after concurrent finalization', async () => {
+  let armPause = false;
+  let releaseFirstBatch;
+  const firstBatchReleased = new Promise((resolve) => { releaseFirstBatch = resolve; });
+  let captureFirstBatch;
+  const firstBatchCaptured = new Promise((resolve) => { captureFirstBatch = resolve; });
+  const { db, wrappedDb } = await setupTestDb({
+    pauseQueuedFirstBatch: () => armPause ? (captureFirstBatch(), firstBatchReleased) : null
+  });
+  seedShipmentContainerLines(db);
+  db.prepare('UPDATE po_revision_lines SET tolerance_pct = 5, max_qty_mt = 105 WHERE line_id = ?').run('LINE-1');
+  const repo = createShippingDiRepository(wrappedDb);
+  const shipment = await bookedShipmentWithActualLoadingDate(repo);
+  await repo.replaceShipmentContainers(shipment.shipment_id, [{
+    containerNo: 'EGSU2548896', lines: [{ poRevisionLineId: 'LINE-1', numberOfBags: 10, netWeightMt: 9.5 }]
+  }], 'U_EXPORT');
+  const preliminary = await repo.createShipmentInvoice(shipment.shipment_id, {
+    invoiceNo: 'WCAT-RACE-1', version: 'PRELIMINARY', invoiceDate: '2026-09-15', lines: [{ poRevisionLineId: 'LINE-1', qtyMt: 105 }]
+  }, 'U_EXPORT');
+
+  armPause = true;
+  const final = repo.finalizeShipmentInvoice(preliminary.invoice_id, [{ poRevisionLineId: 'LINE-1', qtyMt: 9.5 }], 'U_EXPORT');
+  await firstBatchCaptured;
+  const update = repo.updateShipmentInvoice(preliminary.invoice_id, {
+    invoiceNo: 'WCAT-RACE-1', version: 'PRELIMINARY', invoiceDate: '2026-09-16', lines: [{ poRevisionLineId: 'LINE-1', qtyMt: 105 }]
+  }, 'U_EXPORT');
+  releaseFirstBatch();
+  const finalized = await final;
+  await assert.rejects(() => update, /INVOICE_NOT_PRELIMINARY/);
+
+  assert.equal(finalized.version, 'FINAL');
+  assert.equal((await repo.getShipmentInvoices(shipment.shipment_id))[0].lines[0].qty_mt, 9.5);
+  assert.equal(db.prepare("SELECT COUNT(*) AS n FROM shipment_audit_events WHERE entity_id = ? AND event_type = 'INVOICE_FINALIZED'").get(preliminary.invoice_id).n, 1);
+});
+
+test('container replacement loses to concurrent finalization and cannot stale FINAL actual quantity', async () => {
+  let armPause = false;
+  let releaseFirstBatch;
+  const firstBatchReleased = new Promise((resolve) => { releaseFirstBatch = resolve; });
+  let captureFirstBatch;
+  const firstBatchCaptured = new Promise((resolve) => { captureFirstBatch = resolve; });
+  const { db, wrappedDb } = await setupTestDb({
+    pauseQueuedFirstBatch: () => armPause ? (captureFirstBatch(), firstBatchReleased) : null
+  });
+  seedShipmentContainerLines(db);
+  db.prepare('UPDATE po_revision_lines SET tolerance_pct = 5, max_qty_mt = 105 WHERE line_id = ?').run('LINE-1');
+  const repo = createShippingDiRepository(wrappedDb);
+  const shipment = await bookedShipmentWithActualLoadingDate(repo);
+  await repo.replaceShipmentContainers(shipment.shipment_id, [{
+    containerNo: 'EGSU2548896', lines: [{ poRevisionLineId: 'LINE-1', numberOfBags: 10, netWeightMt: 9.5 }]
+  }], 'U_EXPORT');
+  const preliminary = await repo.createShipmentInvoice(shipment.shipment_id, {
+    invoiceNo: 'WCAT-RACE-2', version: 'PRELIMINARY', invoiceDate: '2026-09-15', lines: [{ poRevisionLineId: 'LINE-1', qtyMt: 105 }]
+  }, 'U_EXPORT');
+
+  armPause = true;
+  const replacement = repo.replaceShipmentContainers(shipment.shipment_id, [{
+    containerNo: 'EGSU2548896', lines: [{ poRevisionLineId: 'LINE-1', numberOfBags: 10, netWeightMt: 8.5 }]
+  }], 'U_EXPORT');
+  await firstBatchCaptured;
+  const final = repo.finalizeShipmentInvoice(preliminary.invoice_id, [{ poRevisionLineId: 'LINE-1', qtyMt: 9.5 }], 'U_EXPORT');
+  await new Promise((resolve) => setImmediate(resolve));
+  releaseFirstBatch();
+  await replacement;
+  await assert.rejects(() => final, /INVOICE_NOT_PRELIMINARY/);
+  assert.equal(await repo.getShipmentActualQty(shipment.shipment_id), 8.5);
 });
