@@ -693,13 +693,15 @@ export function createShippingDiRepository(db) {
             UPDATE phase6_shipments
             SET planned_loading_date = ?, updated_by = ?, updated_at = CURRENT_TIMESTAMP
             WHERE shipment_id = ? AND status = 'BOOKED'
-          `).bind(schedule.plannedLoadingDate, actorId, shipmentId),
+              AND planned_loading_date IS ?
+              AND planned_loading_date IS NOT ?
+          `).bind(schedule.plannedLoadingDate, actorId, shipmentId, shipment.planned_loading_date, schedule.plannedLoadingDate),
           auditAfterMutationStatement(db, 'SHIPMENT', shipmentId, 'PLANNED_LOADING_DATE_UPDATED', actorId, {
             old: shipment.planned_loading_date,
             new: schedule.plannedLoadingDate
           })
         ]);
-        if (!mutationApplied(results[0])) throw codedError('SHIPMENT_NOT_BOOKED');
+        if (!mutationApplied(results[0])) throw codedError('SHIPMENT_SCHEDULE_STALE');
       } else {
         const scheduleResult = calculateScheduleResult(
           deliveryInstruction.shipping_month,
@@ -710,7 +712,7 @@ export function createShippingDiRepository(db) {
         const results = await db.batch([
           db.prepare(`
             UPDATE phase6_shipments
-            SET status = 'LOADED', actual_loading_date = ?, schedule_result = ?, schedule_note = ?,
+            SET actual_loading_date = ?, schedule_result = ?, schedule_note = ?,
                 updated_by = ?, updated_at = CURRENT_TIMESTAMP
             WHERE shipment_id = ? AND status = 'BOOKED'
           `).bind(schedule.actualLoadingDate, scheduleResult, scheduleNote, actorId, shipmentId),

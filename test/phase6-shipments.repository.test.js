@@ -251,7 +251,7 @@ test('schedule updates retain only the latest planned date and audit its old and
   });
 });
 
-test('actual loading records an audit, sets LOADED, and ignores ETD for the schedule result', async () => {
+test('actual loading records its date, result, and audit but stays BOOKED until containers exist', async () => {
   const { db, wrappedDb } = await setupTestDb();
   const repo = createShippingDiRepository(wrappedDb);
   const shipment = await repo.createShipmentForDeliveryInstruction('DI-CONFIRMED', 'U_EXPORT');
@@ -271,16 +271,48 @@ test('actual loading records an audit, sets LOADED, and ignores ETD for the sche
     scheduleResult: updated.schedule_result,
     scheduleNote: updated.schedule_note
   }, {
-    status: 'LOADED',
+    status: 'BOOKED',
     actualLoadingDate: '2026-09-15',
     scheduleResult: 'ON_PLAN',
     scheduleNote: 'Loaded within the agreed period.'
   });
+  assert.equal(db.prepare('SELECT COUNT(*) AS n FROM shipment_containers WHERE shipment_id = ?').get(shipment.shipment_id).n, 0);
   const audit = db.prepare("SELECT event_type, metadata_json FROM shipment_audit_events WHERE event_type = 'ACTUAL_LOADING_DATE_RECORDED'").get();
   assert.equal(audit.event_type, 'ACTUAL_LOADING_DATE_RECORDED');
   assert.deepEqual(JSON.parse(audit.metadata_json), {
     actualLoadingDate: '2026-09-15',
     scheduleResult: 'ON_PLAN',
     scheduleNote: 'Loaded within the agreed period.'
+  });
+});
+
+test('simultaneous planned-date updates reject the stale writer without a false audit', async () => {
+  const { db, wrappedDb } = await setupTestDb();
+  const repo = createShippingDiRepository(wrappedDb);
+  const shipment = await repo.createShipmentForDeliveryInstruction('DI-CONFIRMED', 'U_EXPORT');
+  await repo.recordShipmentBooking(shipment.shipment_id, {
+    bookingNo: 'BK-01',
+    plannedLoadingDate: '2026-09-08'
+  }, 'U_EXPORT');
+
+  const results = await Promise.allSettled([
+    repo.updateShipmentSchedule(shipment.shipment_id, { plannedLoadingDate: '2026-09-14' }, 'U_EXPORT'),
+    repo.updateShipmentSchedule(shipment.shipment_id, { plannedLoadingDate: '2026-09-20' }, 'U_EXPORT')
+  ]);
+
+  assert.equal(results.filter((result) => result.status === 'fulfilled').length, 1);
+  assert.equal(results.filter((result) => result.status === 'rejected').length, 1);
+  assert.match(results.find((result) => result.status === 'rejected').reason.message, /SHIPMENT_SCHEDULE_STALE/);
+  const finalShipment = await repo.getPhase6Shipment(shipment.shipment_id);
+  assert.ok(['2026-09-14', '2026-09-20'].includes(finalShipment.planned_loading_date));
+  const plannedDateAudits = db.prepare(`
+    SELECT metadata_json
+    FROM shipment_audit_events
+    WHERE entity_id = ? AND event_type = 'PLANNED_LOADING_DATE_UPDATED'
+  `).all(shipment.shipment_id);
+  assert.equal(plannedDateAudits.length, 1);
+  assert.deepEqual(JSON.parse(plannedDateAudits[0].metadata_json), {
+    old: '2026-09-08',
+    new: finalShipment.planned_loading_date
   });
 });
