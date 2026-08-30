@@ -1795,8 +1795,7 @@ export function createShippingDiRepository(db) {
       const invoice = validateShipmentInvoice(dto);
       const shipment = await findPhase6Shipment(db, shipmentId);
       if (!shipment || shipment.shipment_id !== shipmentId) throw codedError('SHIPMENT_NOT_FOUND');
-      if (!['BOOKED', 'LOADED'].includes(shipment.status) &&
-        !(invoice.version === 'FINAL' && shipment.status === 'DOCS_SENT')) {
+      if (!['BOOKED', 'LOADED', 'DOCS_SENT'].includes(shipment.status)) {
         throw codedError('SHIPMENT_NOT_BOOKED');
       }
       if (invoice.version === 'FINAL' && !['LOADED', 'DOCS_SENT'].includes(shipment.status)) throw codedError('INVOICE_FINAL_REQUIRES_ACTUAL_QTY');

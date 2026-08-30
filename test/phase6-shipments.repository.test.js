@@ -1289,6 +1289,30 @@ test('DOCS_SENT Shipment allows a PRELIMINARY invoice to finalize against remain
   assert.equal((await repo.getPhase6Shipment(shipment.shipment_id)).status, 'DOCS_SENT');
 });
 
+test('DOCS_SENT tolerance Shipment can create PRELIMINARY before finalizing the same invoice', async () => {
+  const { db, wrappedDb } = await setupTestDb();
+  const repo = createShippingDiRepository(wrappedDb);
+  db.prepare("UPDATE po_revision_lines SET tolerance_pct = 5 WHERE line_id = 'LINE-1'").run();
+  const shipment = await loadedShipmentForDocuments(repo, db);
+  await repo.updateShipmentDocuments(shipment.shipment_id, {
+    allShipDocsDriveUrl: 'https://drive.google.com/drive/folders/docs-before-preliminary',
+    digitalDocsSentDate: '2026-09-16', originalDocsRequired: false
+  }, 'U_EXPORT');
+
+  const preliminary = await repo.createShipmentInvoice(shipment.shipment_id, {
+    invoiceNo: 'WCAT-DOCS-PRELIMINARY', version: 'PRELIMINARY', invoiceDate: '2026-09-16',
+    lines: [{ poRevisionLineId: 'LINE-1', qtyMt: 100 }]
+  }, 'U_EXPORT');
+  const final = await repo.finalizeShipmentInvoice(preliminary.invoice_id, [
+    { poRevisionLineId: 'LINE-1', qtyMt: 9.5 }
+  ], 'U_EXPORT');
+
+  assert.equal(preliminary.version, 'PRELIMINARY');
+  assert.equal(final.version, 'FINAL');
+  assert.equal(final.invoice_no, 'WCAT-DOCS-PRELIMINARY');
+  assert.equal((await repo.getPhase6Shipment(shipment.shipment_id)).status, 'DOCS_SENT');
+});
+
 test('FINAL invoice creation rejects pre-existing cash and credit above its aggregate obligation', async () => {
   const { db, wrappedDb } = await setupTestDb();
   const repo = createShippingDiRepository(wrappedDb);

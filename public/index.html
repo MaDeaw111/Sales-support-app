@@ -457,11 +457,12 @@
                 const filters = state.phase6Filters || {};
                 const query = new URLSearchParams();
                 const restrictedRole = ['EXTERNAL_SALES', 'PRODUCTION_WAREHOUSE'].includes(state.currentUser?.role);
+                const warehouseRole = state.currentUser?.role === 'PRODUCTION_WAREHOUSE';
                 const canScheduleFilter = state.currentUser?.role !== 'PRODUCTION_WAREHOUSE';
                 if (!restrictedRole && state.phase6Search?.trim()) query.set('search', state.phase6Search.trim());
-                if (filters.diStatus && filters.diStatus !== 'ALL') query.set('diStatus', filters.diStatus);
-                if (filters.shipmentStatus && filters.shipmentStatus !== 'ALL') query.set('shipmentStatus', filters.shipmentStatus);
-                if (filters.shippingMonth && filters.shippingMonth !== 'ALL') query.set('shippingMonth', filters.shippingMonth);
+                if (!warehouseRole && filters.diStatus && filters.diStatus !== 'ALL') query.set('diStatus', filters.diStatus);
+                if (!warehouseRole && filters.shipmentStatus && filters.shipmentStatus !== 'ALL') query.set('shipmentStatus', filters.shipmentStatus);
+                if (!restrictedRole && filters.shippingMonth && filters.shippingMonth !== 'ALL') query.set('shippingMonth', filters.shippingMonth);
                 if (canScheduleFilter && filters.scheduleResult && filters.scheduleResult !== 'ALL') query.set('scheduleResult', filters.scheduleResult);
                 if (!restrictedRole && filters.paymentStatus && filters.paymentStatus !== 'ALL') query.set('paymentStatus', filters.paymentStatus);
                 const res = await fetch(`/api/delivery-instructions/workspace${query.size ? `?${query}` : ''}`);
@@ -555,7 +556,7 @@
             }
         }
 
-        async function loadPhase6PartnerSuggestionsFromApi() {
+        async function loadPhase6ServicePartnersFromApi() {
             try {
                 const res = await fetch('/api/service-partners?status=ACTIVE');
                 if (!res.ok) return [];
@@ -567,6 +568,22 @@
             } catch (err) {
                 console.error('Failed to load Phase 6 service partner suggestions:', err);
                 return [];
+            }
+        }
+
+        async function loadPhase6PartnerSuggestionsFromApi(customerId) {
+            const normalizedCustomerId = String(customerId || '').trim();
+            if (!normalizedCustomerId) return { surveyor_partner_id: null, forwarder_partner_id: null };
+            try {
+                const res = await fetch(`/api/delivery-instructions/partner-suggestions/${encodeURIComponent(normalizedCustomerId)}`);
+                if (!res.ok) return { surveyor_partner_id: null, forwarder_partner_id: null };
+                const body = await res.json();
+                return body?.status === 'SUCCESS' && body.data?.partnerSuggestions
+                    ? body.data.partnerSuggestions
+                    : { surveyor_partner_id: null, forwarder_partner_id: null };
+            } catch (err) {
+                console.error('Failed to load returning-Customer partner suggestions:', err);
+                return { surveyor_partner_id: null, forwarder_partner_id: null };
             }
         }
 
@@ -784,6 +801,8 @@
             phase6PoBalances: [],
             phase6CustomerCredits: [],
             phase6ServicePartners: [],
+            phase6PartnerSuggestionRequestVersion: 0,
+            phase6AutoPartnerSuggestions: null,
             phase6ShippingLoaded: false,
             phase6ShippingError: '',
             phase6Search: '',
@@ -4812,7 +4831,7 @@
                 if (!di || di.di_status === 'DRAFT') return;
                 const shipment = await loadDeliveryInstructionDetailFromApi(di.detail_ref || di.di_id);
                 if (shipment?.shipment_id) await loadPhase6ShipmentSupplementalFromApi(shipment.shipment_id, di?.po_id, di?.customer_id);
-                await loadPhase6PartnerSuggestionsFromApi();
+                await loadPhase6ServicePartnersFromApi();
             } finally {
                 renderView();
             }
@@ -4831,6 +4850,39 @@
         function phase6PartnerOptions(type, selectedId) {
             const matching = (state.phase6ServicePartners || []).filter(partner => partner.partner_type === type);
             return `<option value="">Not selected</option>${matching.map(partner => `<option value="${escapePhase6Text(partner.partner_id)}" ${partner.partner_id === selectedId ? 'selected' : ''}>${escapePhase6Text(partner.partner_name)}</option>`).join('')}`;
+        }
+
+        async function applyPhase6PartnerSuggestions(customerInputId, surveyorSelectId, forwarderSelectId) {
+            const customerInput = document.getElementById(customerInputId);
+            const customerId = String(customerInput?.value || '').trim();
+            const requestVersion = Number(state.phase6PartnerSuggestionRequestVersion || 0) + 1;
+            state.phase6PartnerSuggestionRequestVersion = requestVersion;
+            const previousDefaults = state.phase6AutoPartnerSuggestions || {};
+            const surveyorSelect = document.getElementById(surveyorSelectId);
+            const forwarderSelect = document.getElementById(forwarderSelectId);
+            if (surveyorSelect && previousDefaults.surveyorPartnerId && surveyorSelect.value === previousDefaults.surveyorPartnerId) {
+                surveyorSelect.value = '';
+            }
+            if (forwarderSelect && previousDefaults.forwarderPartnerId && forwarderSelect.value === previousDefaults.forwarderPartnerId) {
+                forwarderSelect.value = '';
+            }
+            state.phase6AutoPartnerSuggestions = { customerId, surveyorPartnerId: null, forwarderPartnerId: null };
+            const suggestions = await loadPhase6PartnerSuggestionsFromApi(customerId);
+            if (
+                state.phase6PartnerSuggestionRequestVersion !== requestVersion ||
+                String(document.getElementById(customerInputId)?.value || '').trim() !== customerId
+            ) return suggestions;
+            const appliedDefaults = { customerId, surveyorPartnerId: null, forwarderPartnerId: null };
+            if (surveyorSelect && !surveyorSelect.value && suggestions.surveyor_partner_id) {
+                surveyorSelect.value = suggestions.surveyor_partner_id;
+                appliedDefaults.surveyorPartnerId = suggestions.surveyor_partner_id;
+            }
+            if (forwarderSelect && !forwarderSelect.value && suggestions.forwarder_partner_id) {
+                forwarderSelect.value = suggestions.forwarder_partner_id;
+                appliedDefaults.forwarderPartnerId = suggestions.forwarder_partner_id;
+            }
+            state.phase6AutoPartnerSuggestions = appliedDefaults;
+            return suggestions;
         }
 
         async function submitPhase6Booking(shipmentId) {
@@ -4941,9 +4993,10 @@
             } catch (err) { alert(err.message); }
         }
 
-        function openCreatePhase6DeliveryInstruction() {
+        async function openCreatePhase6DeliveryInstruction() {
+            await loadPhase6ServicePartnersFromApi();
             const today = new Date().toISOString().slice(0, 7);
-            openModal(`<div class="space-y-3"><div class="flex justify-between items-start"><div><h3 class="font-black text-slate-900">Create Delivery Instruction</h3><p class="text-[11px] text-slate-500">Use the approved PO revision line and the API balance check before saving.</p></div><button onclick="closeModal()" class="text-slate-400 text-xl">&times;</button></div><div class="grid grid-cols-1 md:grid-cols-2 gap-2 text-xs"><input id="phase6NewCustomer" placeholder="Customer ID *" class="border rounded p-2"><input id="phase6NewPo" placeholder="PO ID *" class="border rounded p-2"><input id="phase6NewRevision" placeholder="PO Revision ID *" class="border rounded p-2"><input id="phase6NewDiNo" placeholder="DI No. (optional)" class="border rounded p-2"><input id="phase6NewMonth" type="month" value="${today}" class="border rounded p-2"><select id="phase6NewPeriod" class="border rounded p-2"><option value="FIRST_HALF">FIRST_HALF</option><option value="SECOND_HALF">SECOND_HALF</option></select><input id="phase6NewContainerPlan" placeholder="Container plan *" class="border rounded p-2"><select id="phase6NewSurveyor" class="border rounded p-2">${phase6PartnerOptions('SURVEYOR')}</select><select id="phase6NewForwarder" class="border rounded p-2">${phase6PartnerOptions('FORWARDER')}</select><input id="phase6NewDriveUrl" placeholder="Google Drive URL (optional)" class="border rounded p-2"><textarea id="phase6NewLines" rows="4" class="md:col-span-2 border rounded p-2 font-mono text-[11px]" placeholder='[{"poId":"PO-1","poRevisionId":"REV-1","poRevisionLineId":"LINE-1","plannedQtyMt":20,"packingSnapshot":"25 kg bag"}]'></textarea><textarea id="phase6NewNote" rows="2" class="md:col-span-2 border rounded p-2" placeholder="Note (optional)"></textarea></div><div class="flex justify-end gap-2"><button onclick="closeModal()" class="px-3 py-2 border rounded text-xs font-bold">Cancel</button><button onclick="submitNewPhase6DeliveryInstruction()" class="px-3 py-2 bg-blue-600 text-white rounded text-xs font-bold">Save DI</button></div></div>`);
+            openModal(`<div class="space-y-3"><div class="flex justify-between items-start"><div><h3 class="font-black text-slate-900">Create Delivery Instruction</h3><p class="text-[11px] text-slate-500">Use the approved PO revision line and the API balance check before saving.</p></div><button onclick="closeModal()" class="text-slate-400 text-xl">&times;</button></div><div class="grid grid-cols-1 md:grid-cols-2 gap-2 text-xs"><input id="phase6NewCustomer" onchange="applyPhase6PartnerSuggestions('phase6NewCustomer', 'phase6NewSurveyor', 'phase6NewForwarder')" placeholder="Customer ID *" class="border rounded p-2"><input id="phase6NewPo" placeholder="PO ID *" class="border rounded p-2"><input id="phase6NewRevision" placeholder="PO Revision ID *" class="border rounded p-2"><input id="phase6NewDiNo" placeholder="DI No. (optional)" class="border rounded p-2"><input id="phase6NewMonth" type="month" value="${today}" class="border rounded p-2"><select id="phase6NewPeriod" class="border rounded p-2"><option value="FIRST_HALF">FIRST_HALF</option><option value="SECOND_HALF">SECOND_HALF</option></select><input id="phase6NewContainerPlan" placeholder="Container plan *" class="border rounded p-2"><select id="phase6NewSurveyor" class="border rounded p-2">${phase6PartnerOptions('SURVEYOR')}</select><select id="phase6NewForwarder" class="border rounded p-2">${phase6PartnerOptions('FORWARDER')}</select><p class="md:col-span-2 text-[11px] text-slate-500">Returning-Customer Surveyor and Forwarder suggestions are optional editable defaults.</p><input id="phase6NewDriveUrl" placeholder="Google Drive URL (optional)" class="border rounded p-2"><textarea id="phase6NewLines" rows="4" class="md:col-span-2 border rounded p-2 font-mono text-[11px]" placeholder='[{"poId":"PO-1","poRevisionId":"REV-1","poRevisionLineId":"LINE-1","plannedQtyMt":20,"packingSnapshot":"25 kg bag"}]'></textarea><textarea id="phase6NewNote" rows="2" class="md:col-span-2 border rounded p-2" placeholder="Note (optional)"></textarea></div><div class="flex justify-end gap-2"><button onclick="closeModal()" class="px-3 py-2 border rounded text-xs font-bold">Cancel</button><button onclick="submitNewPhase6DeliveryInstruction()" class="px-3 py-2 bg-blue-600 text-white rounded text-xs font-bold">Save DI</button></div></div>`);
         }
 
         async function submitNewPhase6DeliveryInstruction() {
@@ -5046,7 +5099,7 @@
         function renderShippingDiWorkspace(container) {
             if (!state.phase6ShippingLoaded && !state.phase6ShippingLoading) {
                 state.phase6ShippingLoading = true;
-                Promise.all([loadDeliveryInstructionsFromApi(), loadPhase6PartnerSuggestionsFromApi()]).finally(() => {
+                Promise.all([loadDeliveryInstructionsFromApi(), loadPhase6ServicePartnersFromApi()]).finally(() => {
                     state.phase6ShippingLoading = false;
                     renderView();
                 });
@@ -5089,13 +5142,28 @@
         function renderPhase6DeliveryInstructionList() {
             const records = state.deliveryInstructions || [];
             const months = [...new Set((state.deliveryInstructions || []).map(di => di.shipping_month).filter(Boolean))];
+            const role = state.currentUser?.role;
+            const externalSales = role === 'EXTERNAL_SALES';
+            const warehouse = role === 'PRODUCTION_WAREHOUSE';
+            const restricted = externalSales || warehouse;
             const searchable = canSearchPhase6Workspace();
             const showSchedule = canFilterPhase6Schedule();
             const showPayment = canFilterPhase6Payment();
-            const showCustomerAndPo = !isRestrictedPhase6Role();
-            const showProduct = state.currentUser?.role !== 'EXTERNAL_SALES';
-            const showBooking = state.currentUser?.role !== 'PRODUCTION_WAREHOUSE';
-            const columnCount = 5 + (showCustomerAndPo ? 2 : 0) + (showProduct ? 1 : 0) + (showSchedule ? 1 : 0) + (showBooking ? 1 : 0) + (showPayment ? 1 : 0);
+            const showStatusFilters = !warehouse;
+            const showShippingMonthFilter = !restricted;
+            const showCustomerAndPo = !restricted;
+            const showProduct = !externalSales;
+            const showPacking = warehouse;
+            const showPlannedQty = !externalSales;
+            const showContainerPlan = !externalSales;
+            const showShippingPlan = !restricted;
+            const showBooking = !warehouse;
+            const showShipmentStatus = !warehouse;
+            const showFilterPanel = searchable || showStatusFilters || showShippingMonthFilter || showSchedule || showPayment;
+            const columnCount = 1 + (showCustomerAndPo ? 2 : 0) + (showProduct ? 1 : 0) +
+                (showPacking ? 1 : 0) + (showPlannedQty ? 1 : 0) + (showContainerPlan ? 1 : 0) +
+                (showShippingPlan ? 1 : 0) + 1 + (showSchedule ? 1 : 0) + (showBooking ? 1 : 0) +
+                (showShipmentStatus ? 1 : 0) + (showPayment ? 1 : 0);
             const error = state.phase6ShippingError ? `<div class="rounded-lg border border-red-200 bg-red-50 p-3 text-xs text-red-700">${escapePhase6Text(state.phase6ShippingError)}</div>` : '';
             return `
                 <div class="space-y-5">
@@ -5104,17 +5172,16 @@
                         <div class="flex gap-2"><button onclick="setShippingWorkspace('LEGACY')" class="px-3 py-2 rounded-lg border border-slate-300 text-xs font-bold">Legacy shipping</button>${canEditPhase6Shipping() ? '<button onclick="openCreatePhase6DeliveryInstruction()" class="px-3 py-2 rounded-lg bg-blue-600 text-white text-xs font-bold">Create DI</button>' : ''}<button onclick="refreshPhase6ShippingWorkspace()" class="px-3 py-2 rounded-lg border border-slate-300 text-xs font-bold"><i data-lucide="refresh-cw" class="w-3 h-3 inline"></i> Refresh</button></div>
                     </div>
                     ${error}
-                    <div class="bg-white rounded-xl border border-slate-200 p-3 grid grid-cols-1 md:grid-cols-6 gap-2">
+                    ${showFilterPanel ? `<div class="bg-white rounded-xl border border-slate-200 p-3 grid grid-cols-1 md:grid-cols-6 gap-2">
                         ${searchable ? `<input value="${escapePhase6Text(state.phase6Search)}" oninput="setPhase6ShippingSearch(this.value)" placeholder="Search DI, PO, customer, booking, invoice, container" class="md:col-span-2 border rounded-lg px-3 py-2 text-xs">` : ''}
-                        <select onchange="setPhase6ShippingFilter('diStatus', this.value)" class="border rounded-lg px-2 py-2 text-xs"><option value="ALL">All DI status</option>${['DRAFT','CONFIRMED','IN_PROGRESS','COMPLETED','CANCELLED'].map(status => `<option value="${status}" ${state.phase6Filters.diStatus === status ? 'selected' : ''}>${status}</option>`).join('')}</select>
-                        <select onchange="setPhase6ShippingFilter('shipmentStatus', this.value)" class="border rounded-lg px-2 py-2 text-xs"><option value="ALL">All shipment status</option>${['PLANNING','BOOKED','LOADED','DOCS_SENT','COMPLETED','CANCELLED'].map(status => `<option value="${status}" ${state.phase6Filters.shipmentStatus === status ? 'selected' : ''}>${status}</option>`).join('')}</select>
-                        <select onchange="setPhase6ShippingFilter('shippingMonth', this.value)" class="border rounded-lg px-2 py-2 text-xs"><option value="ALL">All shipping months</option>${months.map(month => `<option value="${escapePhase6Text(month)}" ${state.phase6Filters.shippingMonth === month ? 'selected' : ''}>${escapePhase6Text(month)}</option>`).join('')}</select>
+                        ${showStatusFilters ? `<select onchange="setPhase6ShippingFilter('diStatus', this.value)" class="border rounded-lg px-2 py-2 text-xs"><option value="ALL">All DI status</option>${['DRAFT','CONFIRMED','IN_PROGRESS','COMPLETED','CANCELLED'].map(status => `<option value="${status}" ${state.phase6Filters.diStatus === status ? 'selected' : ''}>${status}</option>`).join('')}</select><select onchange="setPhase6ShippingFilter('shipmentStatus', this.value)" class="border rounded-lg px-2 py-2 text-xs"><option value="ALL">All shipment status</option>${['PLANNING','BOOKED','LOADED','DOCS_SENT','COMPLETED','CANCELLED'].map(status => `<option value="${status}" ${state.phase6Filters.shipmentStatus === status ? 'selected' : ''}>${status}</option>`).join('')}</select>` : ''}
+                        ${showShippingMonthFilter ? `<select onchange="setPhase6ShippingFilter('shippingMonth', this.value)" class="border rounded-lg px-2 py-2 text-xs"><option value="ALL">All shipping months</option>${months.map(month => `<option value="${escapePhase6Text(month)}" ${state.phase6Filters.shippingMonth === month ? 'selected' : ''}>${escapePhase6Text(month)}</option>`).join('')}</select>` : ''}
                         ${showSchedule ? `<select onchange="setPhase6ShippingFilter('scheduleResult', this.value)" class="border rounded-lg px-2 py-2 text-xs"><option value="ALL">All schedule results</option>${['ON_PLAN','OUT_OF_PLAN'].map(status => `<option value="${status}" ${state.phase6Filters.scheduleResult === status ? 'selected' : ''}>${status}</option>`).join('')}</select>` : ''}
                         ${showPayment ? `<select onchange="setPhase6ShippingFilter('paymentStatus', this.value)" class="border rounded-lg px-2 py-2 text-xs"><option value="ALL">All payment status</option>${['UNPAID','PARTIAL','PAID'].map(status => `<option value="${status}" ${state.phase6Filters.paymentStatus === status ? 'selected' : ''}>${status}</option>`).join('')}</select>` : ''}
-                    </div>
+                    </div>` : ''}
                     <div class="bg-white rounded-xl border border-slate-200 overflow-hidden shadow-sm">
-                        <div class="overflow-x-auto"><table class="ui-table min-w-[1500px] w-full text-xs"><thead class="bg-slate-50 text-slate-500"><tr><th class="p-3 text-left">DI No.</th>${showCustomerAndPo ? '<th class="p-3 text-left">Customer</th><th class="p-3 text-left">PO</th>' : ''}${showProduct ? '<th class="p-3 text-left">Product summary</th>' : ''}<th class="p-3 text-right">Planned Qty</th><th class="p-3 text-left">Container Plan</th><th class="p-3 text-left">Shipping Plan</th><th class="p-3 text-left">Planned / Actual Loading</th>${showSchedule ? '<th class="p-3 text-center">Schedule Result</th>' : ''}${showBooking ? '<th class="p-3 text-left">Booking No.</th>' : ''}<th class="p-3 text-center">Shipment Status</th>${showPayment ? '<th class="p-3 text-center">Payment Status</th>' : ''}</tr></thead>
-                        <tbody class="divide-y divide-slate-100">${records.length ? records.map(di => { const reference = di.detail_ref || di.di_id; return `<tr class="hover:bg-blue-50/40"><td class="p-3">${reference ? `<button type="button" data-phase6-detail-ref="${escapePhase6Text(reference)}" class="font-black text-blue-700 hover:underline">${escapePhase6Text(di.di_no || '-')}</button>` : escapePhase6Text(di.di_no || '-')}</td>${showCustomerAndPo ? `<td class="p-3 font-semibold">${escapePhase6Text(di.customer_name || '-')}</td><td class="p-3">${escapePhase6Text(di.customer_po_no || di.po_id || '-')}</td>` : ''}${showProduct ? `<td class="p-3">${escapePhase6Text(di.product_summary || '-')}</td>` : ''}<td class="p-3 text-right font-bold">${Number(di.planned_qty_mt || 0).toFixed(3)} MT</td><td class="p-3">${escapePhase6Text(di.container_plan || '-')}</td><td class="p-3">${escapePhase6Text([di.shipping_month, di.shipping_period].filter(Boolean).join(' / ') || '-')}</td><td class="p-3">${escapePhase6Text(di.planned_loading_date || '-')}<br><span class="text-slate-400">${escapePhase6Text(di.actual_loading_date || '-')}</span></td>${showSchedule ? `<td class="p-3 text-center">${phase6StatusBadge(di.schedule_result)}</td>` : ''}${showBooking ? `<td class="p-3 font-mono">${escapePhase6Text(di.booking_no || '-')}</td>` : ''}<td class="p-3 text-center">${phase6StatusBadge(di.shipment_status)}</td>${showPayment ? `<td class="p-3 text-center">${phase6StatusBadge(di.payment_status)}</td>` : ''}</tr>`; }).join('') : `<tr><td colspan="${columnCount}" class="p-8 text-center text-slate-500">${state.phase6ShippingLoading ? 'Loading delivery instructions…' : 'No delivery instructions match the current search and filters.'}</td></tr>`}</tbody></table></div>
+                        <div class="overflow-x-auto"><table class="ui-table min-w-[900px] w-full text-xs"><thead class="bg-slate-50 text-slate-500"><tr><th class="p-3 text-left">${warehouse ? 'Loading' : 'DI No.'}</th>${showCustomerAndPo ? '<th class="p-3 text-left">Customer</th><th class="p-3 text-left">PO</th>' : ''}${showProduct ? '<th class="p-3 text-left">Product summary</th>' : ''}${showPacking ? '<th class="p-3 text-left">Packing</th>' : ''}${showPlannedQty ? '<th class="p-3 text-right">Planned Qty</th>' : ''}${showContainerPlan ? '<th class="p-3 text-left">Container Plan</th>' : ''}${showShippingPlan ? '<th class="p-3 text-left">Shipping Plan</th>' : ''}<th class="p-3 text-left">Planned / Actual Loading</th>${showSchedule ? '<th class="p-3 text-center">Schedule Result</th>' : ''}${showBooking ? '<th class="p-3 text-left">Booking No.</th>' : ''}${showShipmentStatus ? '<th class="p-3 text-center">Shipment Status</th>' : ''}${showPayment ? '<th class="p-3 text-center">Payment Status</th>' : ''}</tr></thead>
+                        <tbody class="divide-y divide-slate-100">${records.length ? records.map(di => { const reference = di.detail_ref || di.di_id; const referenceLabel = warehouse ? 'Open loading plan' : (di.di_no || '-'); return `<tr class="hover:bg-blue-50/40"><td class="p-3">${reference ? `<button type="button" data-phase6-detail-ref="${escapePhase6Text(reference)}" class="font-black text-blue-700 hover:underline">${escapePhase6Text(referenceLabel)}</button>` : escapePhase6Text(referenceLabel)}</td>${showCustomerAndPo ? `<td class="p-3 font-semibold">${escapePhase6Text(di.customer_name || '-')}</td><td class="p-3">${escapePhase6Text(di.customer_po_no || di.po_id || '-')}</td>` : ''}${showProduct ? `<td class="p-3">${escapePhase6Text(di.product_summary || '-')}</td>` : ''}${showPacking ? `<td class="p-3">${escapePhase6Text(di.packing_summary || '-')}</td>` : ''}${showPlannedQty ? `<td class="p-3 text-right font-bold">${Number(di.planned_qty_mt || 0).toFixed(3)} MT</td>` : ''}${showContainerPlan ? `<td class="p-3">${escapePhase6Text(di.container_plan || '-')}</td>` : ''}${showShippingPlan ? `<td class="p-3">${escapePhase6Text([di.shipping_month, di.shipping_period].filter(Boolean).join(' / ') || '-')}</td>` : ''}<td class="p-3">${escapePhase6Text(di.planned_loading_date || '-')}<br><span class="text-slate-400">${escapePhase6Text(di.actual_loading_date || '-')}</span></td>${showSchedule ? `<td class="p-3 text-center">${phase6StatusBadge(di.schedule_result)}</td>` : ''}${showBooking ? `<td class="p-3 font-mono">${escapePhase6Text(di.booking_no || '-')}</td>` : ''}${showShipmentStatus ? `<td class="p-3 text-center">${phase6StatusBadge(di.shipment_status)}</td>` : ''}${showPayment ? `<td class="p-3 text-center">${phase6StatusBadge(di.payment_status)}</td>` : ''}</tr>`; }).join('') : `<tr><td colspan="${columnCount}" class="p-8 text-center text-slate-500">${state.phase6ShippingLoading ? 'Loading delivery instructions…' : 'No delivery instructions match the current search and filters.'}</td></tr>`}</tbody></table></div>
                     </div>
                 </div>`;
         }

@@ -68,14 +68,14 @@ export function projectShippingDiForRole(record, caller) {
 export function projectShippingDiWorkspaceForRole(record, caller) {
   if (caller.role === 'EXTERNAL_SALES') {
     return pickPresent(record, [
-      'di_no', 'di_status', 'shipping_month', 'shipping_period', 'container_plan',
+      'di_no', 'di_status',
       'booking_no', 'planned_loading_date', 'actual_loading_date', 'schedule_result', 'shipment_status'
     ]);
   }
   if (caller.role === 'PRODUCTION_WAREHOUSE') {
     return pickPresent(record, [
-      'di_no', 'product_summary', 'packing_summary', 'planned_qty_mt', 'container_plan',
-      'planned_loading_date', 'actual_loading_date', 'shipment_status'
+      'product_summary', 'packing_summary', 'planned_qty_mt', 'container_plan',
+      'planned_loading_date', 'actual_loading_date'
     ]);
   }
   return record;
@@ -168,14 +168,15 @@ export function createShippingDiHandler({ repo, resolveUser, db }) {
       if (!PHASE6_READ_ROLES.includes(caller.role)) return json({ status: 'ERROR', message: 'Permission denied.' }, 403);
       if (caller.role === 'EXTERNAL_SALES' && !db?.prepare) return json({ status: 'ERROR', message: 'Permission denied.' }, 403);
       const restricted = isRestrictedPhase6Caller(caller);
+      const warehouse = caller.role === 'PRODUCTION_WAREHOUSE';
       const deliveryInstructions = await activeRepo.listDeliveryInstructionWorkspace({
         // Restricted projections do not expose the commercial fields searched here.
         // Ignore those predicates before querying so result counts cannot reveal them.
         search: restricted ? undefined : (url.searchParams.get('search') || undefined),
-        diStatus: url.searchParams.get('diStatus') || undefined,
-        shipmentStatus: url.searchParams.get('shipmentStatus') || undefined,
-        shippingMonth: url.searchParams.get('shippingMonth') || undefined,
-        scheduleResult: caller.role === 'PRODUCTION_WAREHOUSE' ? undefined : (url.searchParams.get('scheduleResult') || undefined),
+        diStatus: warehouse ? undefined : (url.searchParams.get('diStatus') || undefined),
+        shipmentStatus: warehouse ? undefined : (url.searchParams.get('shipmentStatus') || undefined),
+        shippingMonth: restricted ? undefined : (url.searchParams.get('shippingMonth') || undefined),
+        scheduleResult: warehouse ? undefined : (url.searchParams.get('scheduleResult') || undefined),
         paymentStatus: restricted ? undefined : (url.searchParams.get('paymentStatus') || undefined)
       });
       const visibleInstructions = [];
@@ -194,6 +195,15 @@ export function createShippingDiHandler({ repo, resolveUser, db }) {
       if (!OPERATIONAL_READER_ROLES.includes(caller.role)) return json({ status: 'ERROR', message: 'Permission denied.' }, 403);
       const poLineBalances = await activeRepo.getPoLineBalances(decodeURIComponent(poBalanceMatch[1]));
       return json({ status: 'SUCCESS', data: { poLineBalances } });
+    }
+
+    const partnerSuggestionsMatch = path.match(/^\/api\/delivery-instructions\/partner-suggestions\/([^/]+)$/);
+    if (partnerSuggestionsMatch && method === 'GET') {
+      if (!OPERATIONAL_READER_ROLES.includes(caller.role)) return json({ status: 'ERROR', message: 'Permission denied.' }, 403);
+      const partnerSuggestions = await activeRepo.suggestPartnersForCustomer(
+        decodeURIComponent(partnerSuggestionsMatch[1])
+      );
+      return json({ status: 'SUCCESS', data: { partnerSuggestions } });
     }
 
     if (path === '/api/delivery-instructions' && method === 'POST') {

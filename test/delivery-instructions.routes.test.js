@@ -59,6 +59,33 @@ test('delivery-instruction balance route exposes exact PO line availability to o
   assert.deepEqual((await response.json()).data.poLineBalances, poLineBalances);
 });
 
+test('returning-Customer partner suggestions are exposed through the Phase 6 read API', async () => {
+  let suggestedFor;
+  let caller = { user_id: 'U_EXPORT', role: 'EXPORT' };
+  const partnerSuggestions = {
+    surveyor_partner_id: 'SP-SURVEYOR',
+    forwarder_partner_id: 'SP-FORWARDER'
+  };
+  const handler = createShippingDiHandler({
+    repo: {
+      suggestPartnersForCustomer: async (customerId) => {
+        suggestedFor = customerId;
+        return partnerSuggestions;
+      }
+    },
+    resolveUser: async () => caller
+  });
+
+  const response = await handler(request('/api/delivery-instructions/partner-suggestions/C1'));
+
+  assert.equal(response.status, 200);
+  assert.equal(suggestedFor, 'C1');
+  assert.deepEqual((await response.json()).data.partnerSuggestions, partnerSuggestions);
+
+  caller = { user_id: 'U_SALES', role: 'EXTERNAL_SALES' };
+  assert.equal((await handler(request('/api/delivery-instructions/partner-suggestions/C1'))).status, 403);
+});
+
 test('delivery-instruction lifecycle routes keep DRAFT edits and confirm available to every EXPORT user', async () => {
   const calls = [];
   const repo = {

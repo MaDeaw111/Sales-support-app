@@ -9,6 +9,10 @@ function request(path) {
   return new Request(`https://example.com${path}`);
 }
 
+function assertFieldsAbsent(record, fields) {
+  for (const field of fields) assert.equal(field in record, false, `${field} must be absent`);
+}
+
 async function setupRbacFixture() {
   const db = new DatabaseSync(':memory:');
   for (const migration of [
@@ -137,6 +141,38 @@ test('workspace list is server-projected for external sales and warehouse loadin
   assert.equal('schedule_result' in row, false);
 });
 
+test('restricted workspace projections explicitly omit forbidden fields while EXPORT retains the full row', async () => {
+  const { repo, wrappedDb } = await setupRbacFixture();
+  let caller = { user_id: 'U_SALES', role: 'EXTERNAL_SALES' };
+  const handler = createShippingDiHandler({ repo, db: wrappedDb, resolveUser: async () => caller });
+
+  let response = await handler(request('/api/delivery-instructions/workspace'));
+  const externalRow = (await response.json()).data.deliveryInstructions[0];
+  assertFieldsAbsent(externalRow, [
+    'di_id', 'customer_id', 'customer_name', 'po_id', 'customer_po_no',
+    'product_summary', 'packing_summary', 'planned_qty_mt',
+    'shipping_month', 'shipping_period', 'container_plan',
+    'shipment_id', 'payment_status'
+  ]);
+
+  caller = { user_id: 'U_WAREHOUSE', role: 'PRODUCTION_WAREHOUSE' };
+  response = await handler(request('/api/delivery-instructions/workspace'));
+  const warehouseRow = (await response.json()).data.deliveryInstructions[0];
+  assertFieldsAbsent(warehouseRow, [
+    'di_id', 'di_no', 'customer_id', 'customer_name', 'po_id', 'customer_po_no',
+    'shipping_month', 'shipping_period', 'di_status', 'shipment_id', 'booking_no',
+    'schedule_result', 'shipment_status', 'payment_status'
+  ]);
+
+  caller = { user_id: 'U_EXPORT', role: 'EXPORT' };
+  response = await handler(request('/api/delivery-instructions/workspace'));
+  const fullRow = (await response.json()).data.deliveryInstructions[0];
+  assert.equal(fullRow.customer_id, 'C1');
+  assert.equal(fullRow.po_id, 'PO1');
+  assert.equal(fullRow.shipment_id, 'S1');
+  assert.equal(fullRow.payment_status, 'PAID');
+});
+
 test('restricted workspace queries ignore hidden commercial filters and issue opaque detail references', async () => {
   const { repo, wrappedDb } = await setupRbacFixture();
   const handler = createShippingDiHandler({
@@ -146,7 +182,7 @@ test('restricted workspace queries ignore hidden commercial filters and issue op
   });
 
   const baseline = await handler(request('/api/delivery-instructions/workspace'));
-  const filtered = await handler(request('/api/delivery-instructions/workspace?paymentStatus=PAID&search=EGSU2548896'));
+  const filtered = await handler(request('/api/delivery-instructions/workspace?paymentStatus=PAID&search=EGSU2548896&shippingMonth=2099-12'));
   const baselineRows = (await baseline.json()).data.deliveryInstructions;
   const filteredRows = (await filtered.json()).data.deliveryInstructions;
 
@@ -163,7 +199,7 @@ test('warehouse workspace filter parameters cannot infer hidden schedule or paym
     resolveUser: async () => ({ user_id: 'U_WAREHOUSE', role: 'PRODUCTION_WAREHOUSE' })
   });
   const baseline = await handler(request('/api/delivery-instructions/workspace'));
-  const filtered = await handler(request('/api/delivery-instructions/workspace?search=BK-1&scheduleResult=ON_PLAN&paymentStatus=PAID'));
+  const filtered = await handler(request('/api/delivery-instructions/workspace?search=BK-1&diStatus=CANCELLED&shipmentStatus=CANCELLED&shippingMonth=2099-12&scheduleResult=ON_PLAN&paymentStatus=PAID'));
   const baselineRows = (await baseline.json()).data.deliveryInstructions;
   const filteredRows = (await filtered.json()).data.deliveryInstructions;
 

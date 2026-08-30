@@ -91,6 +91,78 @@ test('saveDeliveryInstructionToApi posts a DI DTO and returns the server record'
   }
 });
 
+test('returning-Customer partner suggestions become editable defaults without overriding a choice', async () => {
+  const loadSuggestions = extractFunction('loadPhase6PartnerSuggestionsFromApi(customerId)');
+  globalThis.fetch = async (url) => {
+    assert.equal(url, '/api/delivery-instructions/partner-suggestions/C1');
+    return success({ partnerSuggestions: { surveyor_partner_id: 'SP-SURVEYOR', forwarder_partner_id: 'SP-FORWARDER' } });
+  };
+  const elements = {
+    customer: { value: 'C1' },
+    surveyor: { value: '' },
+    forwarder: { value: 'SP-USER-CHOICE' }
+  };
+  globalThis.document = { getElementById: (id) => elements[id] };
+  globalThis.state = {};
+  globalThis.loadPhase6PartnerSuggestionsFromApi = new Function(`return (${loadSuggestions.trim()});`)();
+
+  try {
+    const suggestions = await globalThis.loadPhase6PartnerSuggestionsFromApi('C1');
+    assert.deepEqual(suggestions, { surveyor_partner_id: 'SP-SURVEYOR', forwarder_partner_id: 'SP-FORWARDER' });
+
+    const applySuggestions = extractFunction('applyPhase6PartnerSuggestions(customerInputId, surveyorSelectId, forwarderSelectId)');
+    await new Function(`return (${applySuggestions.trim()});`)()('customer', 'surveyor', 'forwarder');
+    assert.equal(elements.surveyor.value, 'SP-SURVEYOR');
+    assert.equal(elements.forwarder.value, 'SP-USER-CHOICE');
+  } finally {
+    delete globalThis.fetch;
+    delete globalThis.document;
+    delete globalThis.state;
+    delete globalThis.loadPhase6PartnerSuggestionsFromApi;
+  }
+});
+
+test('stale partner suggestions cannot overwrite a newer Customer and only prior defaults refresh', async () => {
+  const applySuggestions = extractFunction('applyPhase6PartnerSuggestions(customerInputId, surveyorSelectId, forwarderSelectId)');
+  const elements = {
+    customer: { value: 'C1' }, surveyor: { value: '' }, forwarder: { value: '' }
+  };
+  const pending = new Map();
+  globalThis.document = { getElementById: (id) => elements[id] };
+  globalThis.state = {};
+  globalThis.loadPhase6PartnerSuggestionsFromApi = (customerId) => new Promise((resolve) => pending.set(customerId, resolve));
+
+  try {
+    const apply = new Function(`return (${applySuggestions.trim()});`)();
+    const first = apply('customer', 'surveyor', 'forwarder');
+    elements.customer.value = 'C2';
+    const second = apply('customer', 'surveyor', 'forwarder');
+    pending.get('C2')({ surveyor_partner_id: 'SP-S2', forwarder_partner_id: 'SP-F2' });
+    await second;
+    pending.get('C1')({ surveyor_partner_id: 'SP-S1', forwarder_partner_id: 'SP-F1' });
+    await first;
+    assert.equal(elements.surveyor.value, 'SP-S2');
+    assert.equal(elements.forwarder.value, 'SP-F2');
+
+    elements.forwarder.value = 'SP-USER-CHOICE';
+    elements.customer.value = 'C3';
+    const third = apply('customer', 'surveyor', 'forwarder');
+    pending.get('C3')({ surveyor_partner_id: 'SP-S3', forwarder_partner_id: 'SP-F3' });
+    await third;
+    assert.equal(elements.surveyor.value, 'SP-S3');
+    assert.equal(elements.forwarder.value, 'SP-USER-CHOICE');
+  } finally {
+    delete globalThis.document;
+    delete globalThis.state;
+    delete globalThis.loadPhase6PartnerSuggestionsFromApi;
+  }
+});
+
+test('new DI Customer selection requests partner suggestions for editable defaults', () => {
+  const createForm = extractFunction('openCreatePhase6DeliveryInstruction()');
+  assert.match(createForm, /applyPhase6PartnerSuggestions\('phase6NewCustomer', 'phase6NewSurveyor', 'phase6NewForwarder'\)/);
+});
+
 test('updatePhase6ShipmentSectionToApi uses the focused section endpoint', async () => {
   const code = extractFunction('updatePhase6ShipmentSectionToApi(shipmentId, section, payload)');
   globalThis.fetch = async (url, options) => {
@@ -152,6 +224,62 @@ test('shipping view keeps legacy and Phase 6 workspaces selectable', () => {
   assert.match(renderShipping, /state\.shippingWorkspace/);
   assert.match(renderShipping, /renderShippingDiWorkspace\(container\)/);
   assert.match(renderShipping, /renderLegacyShippingWorkspace\(container\)/);
+});
+
+test('restricted list rendering and requests use only each approved workspace read model', async () => {
+  const renderList = extractFunction('renderPhase6DeliveryInstructionList()');
+  const loadList = extractFunction('loadDeliveryInstructionsFromApi()');
+  const escape = new Function(`return (${extractFunction('escapePhase6Text(value)').trim()});`)();
+  const requests = [];
+  globalThis.fetch = async (url) => { requests.push(url); return success({ deliveryInstructions: [] }); };
+  globalThis.renderView = () => {};
+  globalThis.canEditPhase6Shipping = () => false;
+  globalThis.escapePhase6Text = escape;
+  globalThis.phase6StatusBadge = (value) => `<span>${escape(value || '-')}</span>`;
+
+  try {
+    globalThis.state = {
+      currentUser: { role: 'EXTERNAL_SALES' }, deliveryInstructions: [{
+        detail_ref: 'REF-1', di_no: 'DI-1', di_status: 'IN_PROGRESS', booking_no: 'BK-1',
+        planned_loading_date: '2026-09-08', actual_loading_date: null,
+        schedule_result: 'ON_PLAN', shipment_status: 'BOOKED'
+      }], phase6Filters: { diStatus: 'IN_PROGRESS', shipmentStatus: 'BOOKED', shippingMonth: '2099-12', scheduleResult: 'ON_PLAN', paymentStatus: 'PAID' },
+      phase6Search: 'hidden', phase6ShippingError: ''
+    };
+    globalThis.isRestrictedPhase6Role = () => true;
+    globalThis.canSearchPhase6Workspace = () => false;
+    globalThis.canFilterPhase6Schedule = () => true;
+    globalThis.canFilterPhase6Payment = () => false;
+    let markup = new Function(`return (${renderList.trim()});`)()();
+    assert.doesNotMatch(markup, />Planned Qty</);
+    assert.doesNotMatch(markup, />Container Plan</);
+    assert.doesNotMatch(markup, />Shipping Plan</);
+    assert.doesNotMatch(markup, /All shipping months/);
+    await new Function(`return (${loadList.trim()});`)()();
+    assert.equal(requests.at(-1), '/api/delivery-instructions/workspace?diStatus=IN_PROGRESS&shipmentStatus=BOOKED&scheduleResult=ON_PLAN');
+
+    globalThis.state.currentUser.role = 'PRODUCTION_WAREHOUSE';
+    globalThis.state.deliveryInstructions = [{
+      detail_ref: 'REF-2', product_summary: 'Tapioca', packing_summary: 'Jumbo Bag', planned_qty_mt: 20,
+      container_plan: '1 × 40HC', planned_loading_date: '2026-09-08', actual_loading_date: null
+    }];
+    globalThis.canFilterPhase6Schedule = () => false;
+    markup = new Function(`return (${renderList.trim()});`)()();
+    assert.doesNotMatch(markup, />DI No\.</);
+    assert.doesNotMatch(markup, />Shipping Plan</);
+    assert.doesNotMatch(markup, />Shipment Status</);
+    assert.match(markup, />Packing</);
+    await new Function(`return (${loadList.trim()});`)()();
+    assert.equal(requests.at(-1), '/api/delivery-instructions/workspace');
+  } finally {
+    for (const name of ['fetch', 'renderView', 'canEditPhase6Shipping', 'escapePhase6Text', 'phase6StatusBadge', 'state', 'isRestrictedPhase6Role', 'canSearchPhase6Workspace', 'canFilterPhase6Schedule', 'canFilterPhase6Payment']) delete globalThis[name];
+  }
+});
+
+test('Phase 6 workspace bootstrap loads the service-partner catalog', () => {
+  const workspace = extractFunction('renderShippingDiWorkspace(container)');
+  assert.match(workspace, /loadPhase6ServicePartnersFromApi\(\)/);
+  assert.doesNotMatch(workspace, /loadPhase6PartnerSuggestionsFromApi\(\)/);
 });
 
 test('DRAFT DI selection does not fetch a shipment before confirmation', () => {
