@@ -450,6 +450,110 @@
             }
         }
 
+        // Phase 6 DI / Shipment adapters intentionally keep their state separate from
+        // the legacy Phase 5 shipment-cost and document-link workspace.
+        async function loadDeliveryInstructionsFromApi() {
+            try {
+                const res = await fetch('/api/delivery-instructions');
+                if (!res.ok) {
+                    state.phase6ShippingError = 'Unable to load delivery instructions. Please try again.';
+                    return null;
+                }
+                const body = await res.json();
+                if (!body || body.status !== 'SUCCESS' || !body.data || !Array.isArray(body.data.deliveryInstructions)) {
+                    state.phase6ShippingError = 'The delivery instruction response was incomplete. Please try again.';
+                    return null;
+                }
+                state.deliveryInstructions = body.data.deliveryInstructions;
+                state.phase6ShippingLoaded = true;
+                state.phase6ShippingError = '';
+                renderView();
+                return state.deliveryInstructions;
+            } catch (err) {
+                console.error('Failed to load Phase 6 delivery instructions:', err);
+                state.phase6ShippingError = 'Unable to load delivery instructions. Please try again.';
+                return null;
+            }
+        }
+
+        async function loadDeliveryInstructionDetailFromApi(diId) {
+            try {
+                const res = await fetch(`/api/delivery-instructions/${encodeURIComponent(diId)}/shipment`);
+                if (!res.ok) {
+                    state.phase6ShippingError = 'Unable to load shipment detail. Please try again.';
+                    return null;
+                }
+                const body = await res.json();
+                if (!body || body.status !== 'SUCCESS' || !body.data || !body.data.shipment) {
+                    state.phase6ShippingError = 'The shipment detail response was incomplete. Please try again.';
+                    return null;
+                }
+                state.phase6ShipmentDetail = body.data.shipment;
+                state.phase6ShippingError = '';
+                renderView();
+                return state.phase6ShipmentDetail;
+            } catch (err) {
+                console.error('Failed to load Phase 6 shipment detail:', err);
+                state.phase6ShippingError = 'Unable to load shipment detail. Please try again.';
+                return null;
+            }
+        }
+
+        async function saveDeliveryInstructionToApi(payload, diId = null) {
+            const isUpdate = Boolean(diId);
+            const res = await fetch(isUpdate ? `/api/delivery-instructions/${encodeURIComponent(diId)}` : '/api/delivery-instructions', {
+                method: isUpdate ? 'PATCH' : 'POST',
+                headers: { 'content-type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
+            const body = await res.json();
+            if (!res.ok || body.status !== 'SUCCESS') throw new Error(body.message || 'Delivery instruction save failed.');
+            return body.data.deliveryInstruction;
+        }
+
+        async function updatePhase6ShipmentSectionToApi(shipmentId, section, payload) {
+            const res = await fetch(`/api/shipments-v2/${encodeURIComponent(shipmentId)}/${encodeURIComponent(section)}`, {
+                method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify(payload)
+            });
+            const body = await res.json();
+            if (!res.ok || body.status !== 'SUCCESS') throw new Error(body.message || 'Phase 6 update failed.');
+            return body.data;
+        }
+
+        async function loadPhase6ShipmentSupplementalFromApi(shipmentId, poId) {
+            try {
+                const [invoicesResponse, historyResponse, balanceResponse] = await Promise.all([
+                    fetch(`/api/shipments-v2/${encodeURIComponent(shipmentId)}/invoices`),
+                    fetch(`/api/shipments-v2/${encodeURIComponent(shipmentId)}/history`),
+                    poId ? fetch(`/api/delivery-instructions/po-balance/${encodeURIComponent(poId)}`) : Promise.resolve(null)
+                ]);
+                const invoicesBody = invoicesResponse?.ok ? await invoicesResponse.json() : null;
+                const historyBody = historyResponse?.ok ? await historyResponse.json() : null;
+                const balanceBody = balanceResponse?.ok ? await balanceResponse.json() : null;
+                state.phase6ShipmentInvoices = invoicesBody?.status === 'SUCCESS' && Array.isArray(invoicesBody.data?.invoices) ? invoicesBody.data.invoices : [];
+                state.phase6ShipmentHistory = historyBody?.status === 'SUCCESS' && Array.isArray(historyBody.data?.history) ? historyBody.data.history : [];
+                state.phase6PoBalances = balanceBody?.status === 'SUCCESS' && Array.isArray(balanceBody.data?.poLineBalances) ? balanceBody.data.poLineBalances : [];
+                renderView();
+            } catch (err) {
+                console.error('Failed to load Phase 6 shipment supporting data:', err);
+            }
+        }
+
+        async function loadPhase6PartnerSuggestionsFromApi() {
+            try {
+                const res = await fetch('/api/service-partners?status=ACTIVE');
+                if (!res.ok) return [];
+                const body = await res.json();
+                state.phase6ServicePartners = body?.status === 'SUCCESS' && Array.isArray(body.data?.servicePartners)
+                    ? body.data.servicePartners
+                    : [];
+                return state.phase6ServicePartners;
+            } catch (err) {
+                console.error('Failed to load Phase 6 service partner suggestions:', err);
+                return [];
+            }
+        }
+
         async function loadCustomersFromApi() {
             try {
                 const res = await fetch('/api/customers');
@@ -656,6 +760,17 @@
             selectedPoId: null,
             selectedShipmentId: null,
             selectedDiId: null,
+            selectedPhase6DeliveryInstructionId: null,
+            deliveryInstructions: [],
+            phase6ShipmentDetail: null,
+            phase6ShipmentInvoices: [],
+            phase6ShipmentHistory: [],
+            phase6PoBalances: [],
+            phase6ServicePartners: [],
+            phase6ShippingLoaded: false,
+            phase6ShippingError: '',
+            phase6Search: '',
+            phase6Filters: { diStatus: 'ALL', shipmentStatus: 'ALL', shippingMonth: 'ALL', scheduleResult: 'ALL' },
             selectedLogisticsProviderId: null,
             providerDetailTab: 'PROFILE',
             providerTypeFilter: 'ALL',
@@ -4587,7 +4702,269 @@
             renderView();
         }
 
+        function escapePhase6Text(value) {
+            return String(value ?? '').replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char]);
+        }
+
+        function canEditPhase6Shipping() {
+            return ['ADMIN', 'MANAGER', 'EXPORT'].includes(state.currentUser?.role);
+        }
+
+        function phase6ShipmentForDi(di) {
+            const selected = state.phase6ShipmentDetail;
+            return selected?.di_id === di?.di_id ? selected : null;
+        }
+
+        function phase6ProductSummary(di) {
+            const shipment = phase6ShipmentForDi(di);
+            const products = shipment?.products || di?.products || di?.lines || [];
+            return products.length ? products.map(product => product.product_name || product.product_code || product.product_id || '-').join(', ') : 'Open detail for products';
+        }
+
+        function phase6SearchAndFilter(records) {
+            const search = String(state.phase6Search || '').trim().toLowerCase();
+            const filters = state.phase6Filters || {};
+            return records.filter(di => {
+                const shipment = phase6ShipmentForDi(di) || {};
+                const searchValues = [
+                    di.di_no, di.po_id, di.customer_id, shipment.booking_no,
+                    ...(shipment.invoices || (shipment.di_id === state.selectedPhase6DeliveryInstructionId ? state.phase6ShipmentInvoices : []) || []).map(invoice => invoice.invoice_no),
+                    ...(shipment.containers || []).map(container => container.container_no)
+                ].join(' ').toLowerCase();
+                if (search && !searchValues.includes(search)) return false;
+                if (filters.diStatus && filters.diStatus !== 'ALL' && di.status !== filters.diStatus) return false;
+                if (filters.shipmentStatus && filters.shipmentStatus !== 'ALL' && shipment.status !== filters.shipmentStatus) return false;
+                if (filters.shippingMonth && filters.shippingMonth !== 'ALL' && di.shipping_month !== filters.shippingMonth) return false;
+                if (filters.scheduleResult && filters.scheduleResult !== 'ALL' && shipment.schedule_result !== filters.scheduleResult) return false;
+                return true;
+            });
+        }
+
+        function phase6StatusBadge(value) {
+            return `<span class="px-2 py-1 rounded-md text-[10px] font-bold ${getStatusBadgeClass(value)}">${escapePhase6Text(value || '-')}</span>`;
+        }
+
+        function setPhase6ShippingFilter(name, value) {
+            state.phase6Filters = { ...state.phase6Filters, [name]: value };
+            renderView();
+        }
+
+        function setPhase6ShippingSearch(value) {
+            state.phase6Search = value;
+            renderView();
+        }
+
+        async function refreshPhase6ShippingWorkspace() {
+            state.phase6ShippingLoaded = false;
+            state.phase6ShippingError = '';
+            renderView();
+        }
+
+        async function selectPhase6DeliveryInstruction(diId) {
+            state.selectedPhase6DeliveryInstructionId = diId;
+            state.phase6ShipmentDetail = null;
+            state.phase6ShipmentInvoices = [];
+            state.phase6ShipmentHistory = [];
+            state.phase6PoBalances = [];
+            renderView();
+            try {
+                const di = (state.deliveryInstructions || []).find(item => item.di_id === diId);
+                const shipment = await loadDeliveryInstructionDetailFromApi(diId);
+                if (shipment?.shipment_id) await loadPhase6ShipmentSupplementalFromApi(shipment.shipment_id, di?.po_id);
+                await loadPhase6PartnerSuggestionsFromApi();
+            } finally {
+                renderView();
+            }
+        }
+
+        function clearPhase6DeliveryInstructionSelection() {
+            state.selectedPhase6DeliveryInstructionId = null;
+            state.phase6ShipmentDetail = null;
+            state.phase6ShipmentInvoices = [];
+            state.phase6ShipmentHistory = [];
+            state.phase6PoBalances = [];
+            renderView();
+        }
+
+        function phase6PartnerOptions(type, selectedId) {
+            const matching = (state.phase6ServicePartners || []).filter(partner => partner.partner_type === type);
+            return `<option value="">Not selected</option>${matching.map(partner => `<option value="${escapePhase6Text(partner.partner_id)}" ${partner.partner_id === selectedId ? 'selected' : ''}>${escapePhase6Text(partner.partner_name)}</option>`).join('')}`;
+        }
+
+        async function submitPhase6Booking(shipmentId) {
+            const payload = {
+                bookingNo: document.getElementById('phase6BookingNo')?.value.trim(),
+                forwarderPartnerId: document.getElementById('phase6Forwarder')?.value || null,
+                shippingLinePartnerId: document.getElementById('phase6ShippingLine')?.value || null,
+                truckingPartnerId: document.getElementById('phase6Trucking')?.value || null,
+                vessel: document.getElementById('phase6Vessel')?.value.trim() || null,
+                etd: document.getElementById('phase6Etd')?.value || null,
+                eta: document.getElementById('phase6Eta')?.value || null,
+                plannedLoadingDate: document.getElementById('phase6PlannedLoading')?.value || null
+            };
+            try {
+                await updatePhase6ShipmentSectionToApi(shipmentId, 'booking', payload);
+                await selectPhase6DeliveryInstruction(state.selectedPhase6DeliveryInstructionId);
+            } catch (err) { alert(err.message); }
+        }
+
+        async function submitPhase6Schedule(shipmentId, kind) {
+            const input = document.getElementById(kind === 'actual' ? 'phase6ActualLoading' : 'phase6PlannedLoadingUpdate');
+            const payload = kind === 'actual'
+                ? { actualLoadingDate: input?.value || '', scheduleNote: document.getElementById('phase6ScheduleNote')?.value.trim() || null }
+                : { plannedLoadingDate: input?.value || '' };
+            try {
+                await updatePhase6ShipmentSectionToApi(shipmentId, 'schedule', payload);
+                await selectPhase6DeliveryInstruction(state.selectedPhase6DeliveryInstructionId);
+            } catch (err) { alert(err.message); }
+        }
+
+        async function submitPhase6Containers(shipmentId) {
+            try {
+                const containers = JSON.parse(document.getElementById('phase6ContainersJson')?.value || '[]');
+                await updatePhase6ShipmentSectionToApi(shipmentId, 'containers', { containers });
+                await selectPhase6DeliveryInstruction(state.selectedPhase6DeliveryInstructionId);
+            } catch (err) { alert(`Container data was not saved: ${err.message}`); }
+        }
+
+        async function submitPhase6Documents(shipmentId) {
+            const originalDocsRequired = Boolean(document.getElementById('phase6OriginalDocs')?.checked);
+            const payload = {
+                allShipDocsDriveUrl: document.getElementById('phase6DocsUrl')?.value.trim(),
+                digitalDocsSentDate: document.getElementById('phase6DigitalDocsDate')?.value,
+                originalDocsRequired,
+                dhlSentDate: originalDocsRequired ? document.getElementById('phase6DhlDate')?.value || null : null,
+                dhlTrackingNo: originalDocsRequired ? document.getElementById('phase6DhlTracking')?.value.trim() || null : null,
+                docsNote: document.getElementById('phase6DocsNote')?.value.trim() || null
+            };
+            try {
+                await updatePhase6ShipmentSectionToApi(shipmentId, 'documents', payload);
+                await selectPhase6DeliveryInstruction(state.selectedPhase6DeliveryInstructionId);
+            } catch (err) { alert(err.message); }
+        }
+
+        async function submitPhase6Payment(shipmentId) {
+            const payload = {
+                cashReceivedAmount: Number(document.getElementById('phase6CashReceived')?.value || 0),
+                paymentNote: document.getElementById('phase6PaymentNote')?.value.trim() || null
+            };
+            try {
+                await updatePhase6ShipmentSectionToApi(shipmentId, 'payment', payload);
+                await selectPhase6DeliveryInstruction(state.selectedPhase6DeliveryInstructionId);
+            } catch (err) { alert(err.message); }
+        }
+
+        async function submitPhase6Invoice(shipmentId) {
+            try {
+                const lines = JSON.parse(document.getElementById('phase6InvoiceLines')?.value || '[]');
+                const res = await fetch(`/api/shipments-v2/${encodeURIComponent(shipmentId)}/invoices`, {
+                    method: 'POST', headers: { 'content-type': 'application/json' },
+                    body: JSON.stringify({
+                        invoiceNo: document.getElementById('phase6InvoiceNo')?.value.trim(),
+                        invoiceDate: document.getElementById('phase6InvoiceDate')?.value,
+                        version: document.getElementById('phase6InvoiceVersion')?.value,
+                        lines
+                    })
+                });
+                const body = await res.json();
+                if (!res.ok || body.status !== 'SUCCESS') throw new Error(body.message || 'Invoice save failed.');
+                await selectPhase6DeliveryInstruction(state.selectedPhase6DeliveryInstructionId);
+            } catch (err) { alert(err.message); }
+        }
+
+        function openCreatePhase6DeliveryInstruction() {
+            const today = new Date().toISOString().slice(0, 7);
+            openModal(`<div class="space-y-3"><div class="flex justify-between items-start"><div><h3 class="font-black text-slate-900">Create Delivery Instruction</h3><p class="text-[11px] text-slate-500">Use the approved PO revision line and the API balance check before saving.</p></div><button onclick="closeModal()" class="text-slate-400 text-xl">&times;</button></div><div class="grid grid-cols-1 md:grid-cols-2 gap-2 text-xs"><input id="phase6NewCustomer" placeholder="Customer ID *" class="border rounded p-2"><input id="phase6NewPo" placeholder="PO ID *" class="border rounded p-2"><input id="phase6NewRevision" placeholder="PO Revision ID *" class="border rounded p-2"><input id="phase6NewDiNo" placeholder="DI No. (optional)" class="border rounded p-2"><input id="phase6NewMonth" type="month" value="${today}" class="border rounded p-2"><select id="phase6NewPeriod" class="border rounded p-2"><option value="FIRST_HALF">FIRST_HALF</option><option value="SECOND_HALF">SECOND_HALF</option></select><input id="phase6NewContainerPlan" placeholder="Container plan *" class="border rounded p-2"><select id="phase6NewSurveyor" class="border rounded p-2">${phase6PartnerOptions('SURVEYOR')}</select><select id="phase6NewForwarder" class="border rounded p-2">${phase6PartnerOptions('FORWARDER')}</select><input id="phase6NewDriveUrl" placeholder="Google Drive URL (optional)" class="border rounded p-2"><textarea id="phase6NewLines" rows="4" class="md:col-span-2 border rounded p-2 font-mono text-[11px]" placeholder='[{"poId":"PO-1","poRevisionId":"REV-1","poRevisionLineId":"LINE-1","plannedQtyMt":20,"packingSnapshot":"25 kg bag"}]'></textarea><textarea id="phase6NewNote" rows="2" class="md:col-span-2 border rounded p-2" placeholder="Note (optional)"></textarea></div><div class="flex justify-end gap-2"><button onclick="closeModal()" class="px-3 py-2 border rounded text-xs font-bold">Cancel</button><button onclick="submitNewPhase6DeliveryInstruction()" class="px-3 py-2 bg-blue-600 text-white rounded text-xs font-bold">Save DI</button></div></div>`);
+        }
+
+        async function submitNewPhase6DeliveryInstruction() {
+            try {
+                const payload = {
+                    customerId: document.getElementById('phase6NewCustomer')?.value.trim(),
+                    poId: document.getElementById('phase6NewPo')?.value.trim(),
+                    poRevisionId: document.getElementById('phase6NewRevision')?.value.trim(),
+                    diNo: document.getElementById('phase6NewDiNo')?.value.trim() || null,
+                    shippingMonth: document.getElementById('phase6NewMonth')?.value,
+                    shippingPeriod: document.getElementById('phase6NewPeriod')?.value,
+                    containerPlan: document.getElementById('phase6NewContainerPlan')?.value.trim(),
+                    lines: JSON.parse(document.getElementById('phase6NewLines')?.value || '[]'),
+                    googleDriveUrl: document.getElementById('phase6NewDriveUrl')?.value.trim() || null,
+                    surveyorPartnerId: document.getElementById('phase6NewSurveyor')?.value || null,
+                    forwarderPartnerId: document.getElementById('phase6NewForwarder')?.value || null,
+                    note: document.getElementById('phase6NewNote')?.value.trim() || null
+                };
+                await saveDeliveryInstructionToApi(payload);
+                closeModal();
+                await refreshPhase6ShippingWorkspace();
+            } catch (err) { alert(`Delivery instruction was not saved: ${err.message}`); }
+        }
+
+        function renderShippingDiWorkspace(container) {
+            if (!state.phase6ShippingLoaded && !state.phase6ShippingLoading) {
+                state.phase6ShippingLoading = true;
+                Promise.all([loadDeliveryInstructionsFromApi(), loadPhase6PartnerSuggestionsFromApi()]).finally(() => {
+                    state.phase6ShippingLoading = false;
+                    renderView();
+                });
+            }
+            const selected = (state.deliveryInstructions || []).find(di => di.di_id === state.selectedPhase6DeliveryInstructionId);
+            if (selected) {
+                container.innerHTML = renderPhase6DeliveryInstructionDetail(selected);
+            } else {
+                container.innerHTML = renderPhase6DeliveryInstructionList();
+            }
+            lucide.createIcons();
+        }
+
+        function renderPhase6DeliveryInstructionList() {
+            const records = phase6SearchAndFilter(state.deliveryInstructions || []);
+            const months = [...new Set((state.deliveryInstructions || []).map(di => di.shipping_month).filter(Boolean))];
+            const error = state.phase6ShippingError ? `<div class="rounded-lg border border-red-200 bg-red-50 p-3 text-xs text-red-700">${escapePhase6Text(state.phase6ShippingError)}</div>` : '';
+            return `
+                <div class="space-y-5">
+                    <div class="flex flex-col lg:flex-row lg:items-center justify-between gap-3">
+                        <div><div class="text-[10px] font-black uppercase tracking-wider text-blue-600">Phase 6 / D1</div><h2 class="text-xl font-black text-slate-900">DI / Shipment List</h2><p class="text-xs text-slate-500 mt-1">Enter shipment data progressively. Access and fields are confirmed by the API.</p></div>
+                        <div class="flex gap-2">${canEditPhase6Shipping() ? '<button onclick="openCreatePhase6DeliveryInstruction()" class="px-3 py-2 rounded-lg bg-blue-600 text-white text-xs font-bold">Create DI</button>' : ''}<button onclick="refreshPhase6ShippingWorkspace()" class="px-3 py-2 rounded-lg border border-slate-300 text-xs font-bold"><i data-lucide="refresh-cw" class="w-3 h-3 inline"></i> Refresh</button></div>
+                    </div>
+                    ${error}
+                    <div class="bg-white rounded-xl border border-slate-200 p-3 grid grid-cols-1 md:grid-cols-6 gap-2">
+                        <input value="${escapePhase6Text(state.phase6Search)}" oninput="setPhase6ShippingSearch(this.value)" placeholder="Search DI, PO, customer, booking, invoice, container" class="md:col-span-2 border rounded-lg px-3 py-2 text-xs">
+                        <select onchange="setPhase6ShippingFilter('diStatus', this.value)" class="border rounded-lg px-2 py-2 text-xs"><option value="ALL">All DI status</option>${['DRAFT','CONFIRMED','IN_PROGRESS','COMPLETED','CANCELLED'].map(status => `<option value="${status}" ${state.phase6Filters.diStatus === status ? 'selected' : ''}>${status}</option>`).join('')}</select>
+                        <select onchange="setPhase6ShippingFilter('shipmentStatus', this.value)" class="border rounded-lg px-2 py-2 text-xs"><option value="ALL">All shipment status</option>${['PLANNING','BOOKED','LOADED','DOCS_SENT','COMPLETED','CANCELLED'].map(status => `<option value="${status}" ${state.phase6Filters.shipmentStatus === status ? 'selected' : ''}>${status}</option>`).join('')}</select>
+                        <select onchange="setPhase6ShippingFilter('shippingMonth', this.value)" class="border rounded-lg px-2 py-2 text-xs"><option value="ALL">All shipping months</option>${months.map(month => `<option value="${escapePhase6Text(month)}" ${state.phase6Filters.shippingMonth === month ? 'selected' : ''}>${escapePhase6Text(month)}</option>`).join('')}</select>
+                        <select onchange="setPhase6ShippingFilter('scheduleResult', this.value)" class="border rounded-lg px-2 py-2 text-xs"><option value="ALL">All schedule results</option>${['ON_PLAN','OUT_OF_PLAN'].map(status => `<option value="${status}" ${state.phase6Filters.scheduleResult === status ? 'selected' : ''}>${status}</option>`).join('')}</select>
+                    </div>
+                    <div class="bg-white rounded-xl border border-slate-200 overflow-hidden shadow-sm">
+                        <div class="overflow-x-auto"><table class="ui-table min-w-[1500px] w-full text-xs"><thead class="bg-slate-50 text-slate-500"><tr><th class="p-3 text-left">DI No.</th><th class="p-3 text-left">Customer</th><th class="p-3 text-left">PO</th><th class="p-3 text-left">Product summary</th><th class="p-3 text-right">Planned Qty</th><th class="p-3 text-left">Container Plan</th><th class="p-3 text-left">Shipping Plan</th><th class="p-3 text-left">Planned / Actual Loading</th><th class="p-3 text-center">Schedule Result</th><th class="p-3 text-left">Booking No.</th><th class="p-3 text-center">Shipment Status</th><th class="p-3 text-center">Payment Status</th></tr></thead>
+                        <tbody class="divide-y divide-slate-100">${records.length ? records.map(di => { const shipment = phase6ShipmentForDi(di) || {}; const quantity = (shipment.products || di.lines || []).reduce((sum, product) => sum + Number(product.planned_qty_mt || product.planned_qty_mt || 0), 0); return `<tr class="hover:bg-blue-50/40"><td class="p-3"><button onclick="selectPhase6DeliveryInstruction('${escapePhase6Text(di.di_id)}')" class="font-black text-blue-700 hover:underline">${escapePhase6Text(di.di_no || di.di_id || '-')}</button></td><td class="p-3 font-semibold">${escapePhase6Text(di.customer_name || di.customer_id || '-')}</td><td class="p-3">${escapePhase6Text(di.internal_po_no || di.customer_po_no || di.po_id || '-')}</td><td class="p-3">${escapePhase6Text(phase6ProductSummary(di))}</td><td class="p-3 text-right font-bold">${quantity ? `${quantity.toFixed(3)} MT` : '-'}</td><td class="p-3">${escapePhase6Text(di.container_plan || '-')}</td><td class="p-3">${escapePhase6Text([di.shipping_month, di.shipping_period].filter(Boolean).join(' / ') || '-')}</td><td class="p-3">${escapePhase6Text(shipment.planned_loading_date || '-')}<br><span class="text-slate-400">${escapePhase6Text(shipment.actual_loading_date || '-')}</span></td><td class="p-3 text-center">${phase6StatusBadge(shipment.schedule_result)}</td><td class="p-3 font-mono">${escapePhase6Text(di.booking_no || shipment.booking_no || '-')}</td><td class="p-3 text-center">${phase6StatusBadge(shipment.status)}</td><td class="p-3 text-center">${phase6StatusBadge(shipment.payment_status)}</td></tr>`; }).join('') : `<tr><td colspan="12" class="p-8 text-center text-slate-500">${state.phase6ShippingLoading ? 'Loading delivery instructions…' : 'No delivery instructions match the current search and filters.'}</td></tr>`}</tbody></table></div>
+                    </div>
+                </div>`;
+        }
+
+        function renderPhase6DeliveryInstructionDetail(di) {
+            const shipment = state.phase6ShipmentDetail;
+            const write = canEditPhase6Shipping();
+            const balances = state.phase6PoBalances || [];
+            const invoices = state.phase6ShipmentInvoices || [];
+            const history = state.phase6ShipmentHistory || [];
+            if (!shipment) return `<div class="space-y-4"><button onclick="clearPhase6DeliveryInstructionSelection()" class="text-xs font-bold text-blue-700">← DI / Shipment List</button><div class="rounded-xl border border-slate-200 bg-white p-8 text-sm text-slate-500">Loading shipment detail…</div></div>`;
+            const field = (label, value) => `<div><div class="text-[10px] uppercase font-bold text-slate-400">${label}</div><div class="text-xs font-semibold text-slate-800 mt-1">${escapePhase6Text(value || '-')}</div></div>`;
+            const section = (title, body) => `<section class="bg-white rounded-xl border border-slate-200 p-4 space-y-3"><h3 class="text-sm font-black text-slate-900">${title}</h3>${body}</section>`;
+            return `<div class="space-y-5"><div class="flex items-start justify-between gap-3"><div><button onclick="clearPhase6DeliveryInstructionSelection()" class="text-xs font-bold text-blue-700">← DI / Shipment List</button><h2 class="text-xl font-black text-slate-900 mt-2">${escapePhase6Text(di.di_no || di.di_id)}</h2><p class="text-xs text-slate-500">Shipment ${escapePhase6Text(shipment.shipment_id)} · ${escapePhase6Text(shipment.status)}</p></div><button onclick="selectPhase6DeliveryInstruction('${escapePhase6Text(di.di_id)}')" class="px-3 py-2 border rounded-lg text-xs font-bold">Refresh detail</button></div>
+                ${section('DI', `<div class="grid grid-cols-2 md:grid-cols-4 gap-4">${field('Customer', di.customer_id)}${field('PO', di.po_id)}${field('Shipping plan', [di.shipping_month, di.shipping_period].filter(Boolean).join(' / '))}${field('Container plan', di.container_plan)}${field('DI status', di.status)}${field('Surveyor', di.surveyor_partner_id)}${field('Forwarder suggestion', di.forwarder_partner_id)}${field('Drive link', di.di_drive_url)}</div><div class="text-xs text-slate-600">${escapePhase6Text(di.note || '')}</div>${balances.length ? `<div class="rounded-lg bg-slate-50 p-3 text-[11px]"><strong>PO balance from API:</strong> ${balances.map(balance => `${escapePhase6Text(balance.product_code || balance.po_revision_line_id)} ${Number(balance.available_qty_mt || 0).toFixed(3)} MT available`).join(' · ')}</div>` : ''}`)}
+                ${section('Booking', `<div class="grid grid-cols-2 md:grid-cols-4 gap-3 text-xs">${field('Booking No.', shipment.booking_no)}${field('Vessel', shipment.vessel)}${field('ETD', shipment.etd)}${field('ETA', shipment.eta)}</div>${write ? `<div class="grid grid-cols-1 md:grid-cols-4 gap-2 text-xs"><input id="phase6BookingNo" value="${escapePhase6Text(shipment.booking_no)}" placeholder="Booking No. *" class="border rounded p-2"><select id="phase6Forwarder" class="border rounded p-2">${phase6PartnerOptions('FORWARDER', shipment.forwarder_partner_id)}</select><select id="phase6ShippingLine" class="border rounded p-2">${phase6PartnerOptions('SHIPPING_LINE', shipment.shipping_line_partner_id)}</select><select id="phase6Trucking" class="border rounded p-2">${phase6PartnerOptions('TRUCKING', shipment.trucking_partner_id)}</select><input id="phase6Vessel" value="${escapePhase6Text(shipment.vessel)}" placeholder="Vessel" class="border rounded p-2"><input id="phase6Etd" type="date" value="${escapePhase6Text(shipment.etd)}" class="border rounded p-2"><input id="phase6Eta" type="date" value="${escapePhase6Text(shipment.eta)}" class="border rounded p-2"><input id="phase6PlannedLoading" type="date" value="${escapePhase6Text(shipment.planned_loading_date)}" class="border rounded p-2"><button onclick="submitPhase6Booking('${escapePhase6Text(shipment.shipment_id)}')" class="md:col-span-4 bg-blue-600 text-white rounded p-2 font-bold">Save Booking</button></div>` : ''}`)}
+                ${section('Schedule', `<div class="grid grid-cols-2 md:grid-cols-3 gap-3 text-xs">${field('Planned loading', shipment.planned_loading_date)}${field('Actual loading', shipment.actual_loading_date)}${field('Schedule result', shipment.schedule_result)}</div>${write ? `<div class="grid grid-cols-1 md:grid-cols-3 gap-2 text-xs"><input id="phase6PlannedLoadingUpdate" type="date" value="${escapePhase6Text(shipment.planned_loading_date)}" class="border rounded p-2"><button onclick="submitPhase6Schedule('${escapePhase6Text(shipment.shipment_id)}', 'planned')" class="border border-blue-600 text-blue-700 rounded p-2 font-bold">Update Planned Date</button><span></span><input id="phase6ActualLoading" type="date" value="${escapePhase6Text(shipment.actual_loading_date)}" class="border rounded p-2"><input id="phase6ScheduleNote" value="${escapePhase6Text(shipment.schedule_note)}" placeholder="Schedule note" class="border rounded p-2"><button onclick="submitPhase6Schedule('${escapePhase6Text(shipment.shipment_id)}', 'actual')" class="bg-blue-600 text-white rounded p-2 font-bold">Record Actual Date</button></div>` : ''}`)}
+                ${section('Containers', `<div class="text-xs text-slate-600">${(shipment.containers || []).length ? shipment.containers.map(container => `<div>${escapePhase6Text(container.container_no)} · Seal ${escapePhase6Text(container.seal_no || '-')} · ${escapePhase6Text((container.lines || []).map(line => `${line.product_name || line.product_code}: ${line.qty_mt} MT`).join(', '))}</div>`).join('') : 'No actual containers recorded.'}</div>${write ? `<textarea id="phase6ContainersJson" rows="4" class="w-full border rounded p-2 font-mono text-[11px]" placeholder='[{"containerNo":"CONT-1","sealNo":"SEAL-1","lines":[{"poRevisionLineId":"LINE-1","numberOfBags":20,"netWeightMt":20}]}]'></textarea><button onclick="submitPhase6Containers('${escapePhase6Text(shipment.shipment_id)}')" class="px-3 py-2 bg-blue-600 text-white rounded text-xs font-bold">Save Containers</button>` : ''}`)}
+                ${section('Invoice', `<div class="text-xs space-y-1">${invoices.length ? invoices.map(invoice => `<div><strong>${escapePhase6Text(invoice.invoice_no)}</strong> · ${escapePhase6Text(invoice.version)} · ${Number(invoice.total_amount || 0).toFixed(2)} ${escapePhase6Text(invoice.currency || '')}</div>`).join('') : 'No invoices recorded.'}</div>${write ? `<div class="grid grid-cols-1 md:grid-cols-4 gap-2 text-xs"><input id="phase6InvoiceNo" placeholder="Invoice No." class="border rounded p-2"><input id="phase6InvoiceDate" type="date" class="border rounded p-2"><select id="phase6InvoiceVersion" class="border rounded p-2"><option>PRELIMINARY</option><option>FINAL</option></select><button onclick="submitPhase6Invoice('${escapePhase6Text(shipment.shipment_id)}')" class="bg-blue-600 text-white rounded p-2 font-bold">Save Invoice</button><textarea id="phase6InvoiceLines" rows="3" class="md:col-span-4 border rounded p-2 font-mono text-[11px]" placeholder='[{"poRevisionLineId":"LINE-1","qtyMt":20}]'></textarea></div>` : ''}`)}
+                ${section('Documents', `<div class="grid grid-cols-2 md:grid-cols-4 gap-3 text-xs">${field('All Ship Docs', shipment.all_ship_docs_drive_url)}${field('Digital sent', shipment.digital_docs_sent_date)}${field('DHL sent', shipment.dhl_sent_date)}${field('DHL tracking', shipment.dhl_tracking_no)}</div>${write ? `<div class="grid grid-cols-1 md:grid-cols-3 gap-2 text-xs"><input id="phase6DocsUrl" value="${escapePhase6Text(shipment.all_ship_docs_drive_url)}" placeholder="Google Drive folder URL" class="border rounded p-2"><input id="phase6DigitalDocsDate" type="date" value="${escapePhase6Text(shipment.digital_docs_sent_date)}" class="border rounded p-2"><label class="border rounded p-2"><input id="phase6OriginalDocs" type="checkbox" ${shipment.original_docs_required ? 'checked' : ''}> Original docs required</label><input id="phase6DhlDate" type="date" value="${escapePhase6Text(shipment.dhl_sent_date)}" class="border rounded p-2"><input id="phase6DhlTracking" value="${escapePhase6Text(shipment.dhl_tracking_no)}" placeholder="DHL tracking no." class="border rounded p-2"><input id="phase6DocsNote" value="${escapePhase6Text(shipment.docs_note)}" placeholder="Document note" class="border rounded p-2"><button onclick="submitPhase6Documents('${escapePhase6Text(shipment.shipment_id)}')" class="md:col-span-3 bg-blue-600 text-white rounded p-2 font-bold">Save Documents</button></div>` : ''}`)}
+                ${section('Payment', `<div class="grid grid-cols-2 md:grid-cols-4 gap-3 text-xs">${field('Payment status', shipment.payment_status)}${field('Final invoice total', shipment.final_invoice_total)}${field('Cash received', shipment.cash_received_amount)}${field('Credit allocated', shipment.allocated_credit_amount)}</div>${write ? `<div class="grid grid-cols-1 md:grid-cols-3 gap-2 text-xs"><input id="phase6CashReceived" type="number" min="0" step="0.01" value="${escapePhase6Text(shipment.cash_received_amount || 0)}" class="border rounded p-2"><input id="phase6PaymentNote" value="${escapePhase6Text(shipment.payment_note)}" placeholder="Payment note" class="border rounded p-2"><button onclick="submitPhase6Payment('${escapePhase6Text(shipment.shipment_id)}')" class="bg-blue-600 text-white rounded p-2 font-bold">Save Payment</button></div>` : ''}`)}
+                ${section('History', history.length ? `<div class="space-y-2 text-xs">${history.map(event => `<div class="border-l-2 border-slate-200 pl-3"><strong>${escapePhase6Text(event.event_type)}</strong> <span class="text-slate-500">${escapePhase6Text(event.created_at || '')} · ${escapePhase6Text(event.actor_id || '')}</span></div>`).join('')}</div>` : '<p class="text-xs text-slate-500">No history is available for this view.</p>')}
+            </div>`;
+        }
+
         function renderShipping(container) {
+            renderShippingDiWorkspace(container);
+            return;
             if (state.currentUser.role === 'PRODUCTION_WAREHOUSE') { renderProductionOrders(container); return; }
             const selectedDI = state.selectedDiId ? getScopedDIRecords().find(d => d.id === state.selectedDiId) : null;
             if (selectedDI) {
