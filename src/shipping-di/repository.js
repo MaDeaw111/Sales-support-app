@@ -2,6 +2,7 @@ import crypto from 'node:crypto';
 import {
   codedError,
   validateDeliveryInstruction,
+  validateDeliveryInstructionContainerPlan,
   validateDeliveryInstructionAvailabilityLines,
   validateDeliveryInstructionUpdate,
   validateCancellationNote,
@@ -672,7 +673,7 @@ function deliveryInstructionUpdateDto(existing, dto) {
       packingSnapshot: line.packing_snapshot
     }))
   };
-  return validateDeliveryInstruction({ ...existingDto, ...patch }, { requireContainerPlan: false });
+  return validateDeliveryInstruction({ ...existingDto, ...patch });
 }
 
 async function validateDeliveryInstructionReferences(db, deliveryInstruction) {
@@ -1049,6 +1050,7 @@ export function createShippingDiRepository(db) {
       const deliveryInstruction = await findDeliveryInstruction(db, diId);
       if (!deliveryInstruction) throw codedError('DI_NOT_FOUND');
       if (deliveryInstruction.status !== 'DRAFT') throw codedError('DI_NOT_DRAFT');
+      validateDeliveryInstructionContainerPlan(deliveryInstruction.container_plan);
 
       const results = await db.batch([
         db.prepare(`

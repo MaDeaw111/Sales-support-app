@@ -13,8 +13,7 @@ async function setupTestDb({ collisionDiNo = null, failLineId = null, pauseFirst
     '0004_commercial_shipment_control.sql',
     '0005_po_management.sql',
     '0006_customer_ownership_type.sql',
-    '0007_shipping_di_integration.sql',
-    '0008_delivery_instruction_container_plan.sql'
+    '0007_shipping_di_integration.sql'
   ]) {
     db.exec(await readFile(new URL(`../migrations/${migration}`, import.meta.url), 'utf8'));
   }
@@ -118,6 +117,33 @@ test('DI creation persists the approved container plan before any actual contain
 
   assert.equal(created.container_plan, "2 × 40'HC");
   assert.equal(db.prepare('SELECT container_plan FROM delivery_instructions WHERE di_id = ?').get(created.di_id).container_plan, "2 × 40'HC");
+});
+
+test('DI container plans cannot be empty at creation, DRAFT update, or confirmation', async () => {
+  const { db, wrappedDb } = await setupTestDb();
+  const repo = createShippingDiRepository(wrappedDb);
+
+  await assert.rejects(
+    () => repo.createDeliveryInstruction(diPayload({ containerPlan: '   ' }), 'U_EXPORT'),
+    /DI_CONTAINER_PLAN_REQUIRED/
+  );
+
+  const created = await repo.createDeliveryInstruction(diPayload(), 'U_EXPORT');
+  await assert.rejects(
+    () => repo.updateDraftDeliveryInstruction(created.di_id, { containerPlan: '   ' }, 'U_EXPORT'),
+    /DI_CONTAINER_PLAN_REQUIRED/
+  );
+  const patched = await repo.updateDraftDeliveryInstruction(created.di_id, { note: 'Plan remains required' }, 'U_EXPORT');
+  assert.equal(patched.container_plan, "2 × 40'HC");
+
+  db.exec('PRAGMA ignore_check_constraints = ON');
+  db.prepare("UPDATE delivery_instructions SET container_plan = '' WHERE di_id = ?").run(created.di_id);
+  db.exec('PRAGMA ignore_check_constraints = OFF');
+  await assert.rejects(
+    () => repo.confirmDeliveryInstruction(created.di_id, 'U_EXPORT'),
+    /DI_CONTAINER_PLAN_REQUIRED/
+  );
+  assert.equal(db.prepare('SELECT status FROM delivery_instructions WHERE di_id = ?').get(created.di_id).status, 'DRAFT');
 });
 
 test('internal DI number increments only within its PO and every line is an exact Phase 5F line', async () => {
@@ -243,8 +269,8 @@ test('partner suggestions use insertion chronology when historical DIs share a t
     db.prepare(`
       INSERT INTO delivery_instructions (
         di_id, customer_id, po_id, po_revision_id, di_no, shipping_month, shipping_period,
-        status, surveyor_partner_id, forwarder_partner_id, created_by, created_at
-      ) VALUES (?, 'C1', 'PO-2026-015', 'REV-1', ?, '2026-09', 'FIRST_HALF', 'DRAFT', ?, ?, 'U_EXPORT', '2026-09-01 00:00:00')
+        container_plan, status, surveyor_partner_id, forwarder_partner_id, created_by, created_at
+      ) VALUES (?, 'C1', 'PO-2026-015', 'REV-1', ?, '2026-09', 'FIRST_HALF', '1 × 20GP', 'DRAFT', ?, ?, 'U_EXPORT', '2026-09-01 00:00:00')
     `).run(diId, diNo, surveyorId, forwarderId);
   }
 
@@ -261,8 +287,8 @@ test('PO line balance subtracts planned only until that DI has actual container 
 
   db.prepare(`
     INSERT INTO delivery_instructions (
-      di_id, customer_id, po_id, po_revision_id, di_no, shipping_month, shipping_period, status, created_by
-    ) VALUES ('DI-1', 'C1', 'PO-2026-015', 'REV-1', 'BALANCE-1', '2026-09', 'FIRST_HALF', 'DRAFT', 'U_EXPORT')
+      di_id, customer_id, po_id, po_revision_id, di_no, shipping_month, shipping_period, container_plan, status, created_by
+    ) VALUES ('DI-1', 'C1', 'PO-2026-015', 'REV-1', 'BALANCE-1', '2026-09', 'FIRST_HALF', '1 × 20GP', 'DRAFT', 'U_EXPORT')
   `).run();
   db.prepare(`
     INSERT INTO delivery_instruction_lines (
@@ -323,8 +349,8 @@ test('cancelled DI planned quantity is released from the PO line balance', async
 
   db.prepare(`
     INSERT INTO delivery_instructions (
-      di_id, customer_id, po_id, po_revision_id, di_no, shipping_month, shipping_period, status, created_by
-    ) VALUES ('DI-CANCELLED', 'C1', 'PO-2026-015', 'REV-1', 'CANCELLED-1', '2026-09', 'FIRST_HALF', 'CANCELLED', 'U_EXPORT')
+      di_id, customer_id, po_id, po_revision_id, di_no, shipping_month, shipping_period, container_plan, status, created_by
+    ) VALUES ('DI-CANCELLED', 'C1', 'PO-2026-015', 'REV-1', 'CANCELLED-1', '2026-09', 'FIRST_HALF', '1 × 20GP', 'CANCELLED', 'U_EXPORT')
   `).run();
   db.prepare(`
     INSERT INTO delivery_instruction_lines (
@@ -344,8 +370,8 @@ test('availability assertion permits a DRAFT line to retain its own allocation o
 
   db.prepare(`
     INSERT INTO delivery_instructions (
-      di_id, customer_id, po_id, po_revision_id, di_no, shipping_month, shipping_period, status, created_by
-    ) VALUES ('DI-DRAFT', 'C1', 'PO-2026-015', 'REV-1', 'DRAFT-1', '2026-09', 'FIRST_HALF', 'DRAFT', 'U_EXPORT')
+      di_id, customer_id, po_id, po_revision_id, di_no, shipping_month, shipping_period, container_plan, status, created_by
+    ) VALUES ('DI-DRAFT', 'C1', 'PO-2026-015', 'REV-1', 'DRAFT-1', '2026-09', 'FIRST_HALF', '1 × 20GP', 'DRAFT', 'U_EXPORT')
   `).run();
   db.prepare(`
     INSERT INTO delivery_instruction_lines (

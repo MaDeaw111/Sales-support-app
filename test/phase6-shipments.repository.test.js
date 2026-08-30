@@ -14,8 +14,7 @@ async function setupTestDb({ pauseFirstBatch, pauseQueuedFirstBatch } = {}) {
     '0004_commercial_shipment_control.sql',
     '0005_po_management.sql',
     '0006_customer_ownership_type.sql',
-    '0007_shipping_di_integration.sql',
-    '0008_delivery_instruction_container_plan.sql'
+    '0007_shipping_di_integration.sql'
   ]) {
     db.exec(await readFile(new URL(`../migrations/${migration}`, import.meta.url), 'utf8'));
   }
@@ -36,8 +35,8 @@ async function setupTestDb({ pauseFirstBatch, pauseQueuedFirstBatch } = {}) {
       ) VALUES (?, 'REV1', ?, 'P1', 'STANDARD', 'SPEC-REV-1', 100, 0, 100, 100, 350, 'Jumbo Bag', '40HC', 'Floor loaded')
     `).run(lineId, lineNo);
   }
-  db.prepare("INSERT INTO delivery_instructions (di_id, customer_id, po_id, po_revision_id, di_no, shipping_month, shipping_period, status, created_by) VALUES ('DI-DRAFT', 'C1', 'PO1', 'REV1', 'DRAFT-1', '2026-09', 'FIRST_HALF', 'DRAFT', 'U_EXPORT')").run();
-  db.prepare("INSERT INTO delivery_instructions (di_id, customer_id, po_id, po_revision_id, di_no, shipping_month, shipping_period, status, created_by) VALUES ('DI-CONFIRMED', 'C1', 'PO1', 'REV1', 'CONFIRMED-1', '2026-09', 'FIRST_HALF', 'CONFIRMED', 'U_EXPORT')").run();
+  db.prepare("INSERT INTO delivery_instructions (di_id, customer_id, po_id, po_revision_id, di_no, shipping_month, shipping_period, container_plan, status, created_by) VALUES ('DI-DRAFT', 'C1', 'PO1', 'REV1', 'DRAFT-1', '2026-09', 'FIRST_HALF', '1 × 40HC', 'DRAFT', 'U_EXPORT')").run();
+  db.prepare("INSERT INTO delivery_instructions (di_id, customer_id, po_id, po_revision_id, di_no, shipping_month, shipping_period, container_plan, status, created_by) VALUES ('DI-CONFIRMED', 'C1', 'PO1', 'REV1', 'CONFIRMED-1', '2026-09', 'FIRST_HALF', '1 × 40HC', 'CONFIRMED', 'U_EXPORT')").run();
   for (const [partnerId, partnerType] of [
     ['SP-FWD', 'FORWARDER'],
     ['SP-LINE', 'SHIPPING_LINE'],
@@ -152,7 +151,7 @@ async function loadedShipmentWithFinalInvoice(repo, db) {
 }
 
 function seedSecondFinalPaymentShipment(db) {
-  db.prepare("INSERT INTO delivery_instructions (di_id, customer_id, po_id, po_revision_id, di_no, shipping_month, shipping_period, status, created_by) VALUES ('DI-PAY-2', 'C1', 'PO1', 'REV1', 'PAY-2', '2026-09', 'FIRST_HALF', 'IN_PROGRESS', 'U_EXPORT')").run();
+  db.prepare("INSERT INTO delivery_instructions (di_id, customer_id, po_id, po_revision_id, di_no, shipping_month, shipping_period, container_plan, status, created_by) VALUES ('DI-PAY-2', 'C1', 'PO1', 'REV1', 'PAY-2', '2026-09', 'FIRST_HALF', '1 × 40HC', 'IN_PROGRESS', 'U_EXPORT')").run();
   db.prepare("INSERT INTO delivery_instruction_lines (di_line_id, di_id, po_id, po_revision_id, po_revision_line_id, product_id, planned_qty_mt, packing_snapshot, created_by) VALUES ('DIL-PAY-2', 'DI-PAY-2', 'PO1', 'REV1', 'LINE-2', 'P1', 1, 'Jumbo Bag', 'U_EXPORT')").run();
   db.prepare("INSERT INTO phase6_shipments (shipment_id, di_id, status, actual_loading_date, created_by, updated_by) VALUES ('S_FOR_C1_2', 'DI-PAY-2', 'LOADED', '2026-09-15', 'U_EXPORT', 'U_EXPORT')").run();
   db.prepare("INSERT INTO shipment_containers (container_id, shipment_id, container_no, created_by, updated_by) VALUES ('CONT-PAY-2', 'S_FOR_C1_2', 'PAY-CONT-2', 'U_EXPORT', 'U_EXPORT')").run();
@@ -920,7 +919,7 @@ test('credit cannot cross Customers or exceed remaining balance', async () => {
   db.prepare("INSERT INTO customers (customer_id, customer_code, customer_name) VALUES ('C2', 'CUST2', 'Customer Two')").run();
   db.prepare("INSERT INTO po_headers (po_id, customer_id, created_by) VALUES ('PO2', 'C2', 'U_EXPORT')").run();
   db.prepare("INSERT INTO po_revisions (revision_id, po_id, revision_no, status, ownership_type_snapshot, currency, incoterm, delivery_start, delivery_end, valid_until, created_by) VALUES ('REV2', 'PO2', 0, 'ACTIVE', 'HOUSE_ACCOUNT', 'USD', 'FOB', '2026-09-01', '2026-09-30', '2026-12-31', 'U_EXPORT')").run();
-  db.prepare("INSERT INTO delivery_instructions (di_id, customer_id, po_id, po_revision_id, di_no, shipping_month, shipping_period, status, created_by) VALUES ('DI-C2', 'C2', 'PO2', 'REV2', 'C2-1', '2026-09', 'FIRST_HALF', 'CONFIRMED', 'U_EXPORT')").run();
+  db.prepare("INSERT INTO delivery_instructions (di_id, customer_id, po_id, po_revision_id, di_no, shipping_month, shipping_period, container_plan, status, created_by) VALUES ('DI-C2', 'C2', 'PO2', 'REV2', 'C2-1', '2026-09', 'FIRST_HALF', '1 × 40HC', 'CONFIRMED', 'U_EXPORT')").run();
   db.prepare("INSERT INTO phase6_shipments (shipment_id, di_id, created_by, updated_by) VALUES ('S_FOR_C2', 'DI-C2', 'U_EXPORT', 'U_EXPORT')").run();
   const repo = createShippingDiRepository(wrappedDb);
   const shipment = await loadedShipmentWithFinalInvoice(repo, db);

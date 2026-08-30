@@ -44,16 +44,16 @@ test('Phase 6 migration is additive and retains Phase 5E shipment anchors', asyn
   assert.ok(db.prepare("SELECT name FROM sqlite_master WHERE name = 'phase6_shipments'").get());
 
   assert.throws(
-    () => db.prepare("INSERT INTO delivery_instructions (di_id, customer_id, po_id, po_revision_id, di_no, shipping_month, shipping_period, status, created_by) VALUES ('DI1','C1','PO1','REV1','D1','2026-09','INVALID','DRAFT','U1')").run(),
+    () => db.prepare("INSERT INTO delivery_instructions (di_id, customer_id, po_id, po_revision_id, di_no, shipping_month, shipping_period, container_plan, status, created_by) VALUES ('DI1','C1','PO1','REV1','D1','2026-09','INVALID','1 × 20GP','DRAFT','U1')").run(),
     /CHECK constraint failed: shipping_period/,
   );
 
   for (const [diId, status] of [['DI2', 'CONFIRMED'], ['DI3', 'IN_PROGRESS'], ['DI4', 'COMPLETED']]) {
-    db.prepare("INSERT INTO delivery_instructions (di_id, customer_id, po_id, po_revision_id, di_no, shipping_month, shipping_period, status, created_by) VALUES (?, 'C1', 'PO1', 'REV1', ?, '2026-09', 'FIRST_HALF', ?, 'U1')")
+    db.prepare("INSERT INTO delivery_instructions (di_id, customer_id, po_id, po_revision_id, di_no, shipping_month, shipping_period, container_plan, status, created_by) VALUES (?, 'C1', 'PO1', 'REV1', ?, '2026-09', 'FIRST_HALF', '1 × 20GP', ?, 'U1')")
       .run(diId, `${diId}-NO`, status);
   }
   assert.throws(
-    () => db.prepare("INSERT INTO delivery_instructions (di_id, customer_id, po_id, po_revision_id, di_no, shipping_month, shipping_period, status, created_by) VALUES ('DI5', 'C1', 'PO1', 'REV1', 'DI5-NO', '2026-09', 'FIRST_HALF', 'ISSUED', 'U1')").run(),
+    () => db.prepare("INSERT INTO delivery_instructions (di_id, customer_id, po_id, po_revision_id, di_no, shipping_month, shipping_period, container_plan, status, created_by) VALUES ('DI5', 'C1', 'PO1', 'REV1', 'DI5-NO', '2026-09', 'FIRST_HALF', '1 × 20GP', 'ISSUED', 'U1')").run(),
     /CHECK constraint failed: status/
   );
 });
@@ -109,15 +109,24 @@ test('Phase 6 schema creates every shipping DI table and required lookup indexes
   assert.ok(shipmentColumns.includes('final_invoice_write_token'), 'shipments retain a FINAL invoice reservation token');
 });
 
-test('Phase 6 follow-on migration persists the DI container plan without rewriting prior tables', async () => {
+test('Phase 6 schema persists the DI container plan in its un-applied initial migration', async () => {
   const db = await setupThrough0006();
   db.exec(await readMigration('0007_shipping_di_integration.sql'));
-  db.exec(await readMigration('0008_delivery_instruction_container_plan.sql'));
 
   const columns = db.prepare('PRAGMA table_info(delivery_instructions)').all();
   const planColumn = columns.find((column) => column.name === 'container_plan');
   assert.equal(planColumn.notnull, 1);
-  assert.equal(planColumn.dflt_value, "'[]'");
+  assert.equal(planColumn.dflt_value, null);
+
+  seedDeliveryInstructionReferences(db);
+  assert.throws(
+    () => db.prepare("INSERT INTO delivery_instructions (di_id, customer_id, po_id, po_revision_id, di_no, shipping_month, shipping_period, status, created_by) VALUES ('DI-PLAN-MISSING', 'C1', 'PO1', 'REV1', 'PLAN-MISSING', '2026-09', 'FIRST_HALF', 'DRAFT', 'U1')").run(),
+    /NOT NULL constraint failed: delivery_instructions.container_plan/
+  );
+  assert.throws(
+    () => db.prepare("INSERT INTO delivery_instructions (di_id, customer_id, po_id, po_revision_id, di_no, shipping_month, shipping_period, container_plan, status, created_by) VALUES ('DI-PLAN-BLANK', 'C1', 'PO1', 'REV1', 'PLAN-BLANK', '2026-09', 'FIRST_HALF', '   ', 'DRAFT', 'U1')").run(),
+    /CHECK constraint failed: trim\(container_plan\) <> ''/
+  );
 });
 
 test('Phase 6 service partners permit the approved SURVEYOR type and reject OTHER', async () => {

@@ -14,8 +14,7 @@ async function setupRbacFixture() {
   for (const migration of [
     '0001_auth.sql', '0002_customers.sql', '0003_product_specs.sql',
     '0004_commercial_shipment_control.sql', '0005_po_management.sql',
-    '0006_customer_ownership_type.sql', '0007_shipping_di_integration.sql',
-    '0008_delivery_instruction_container_plan.sql'
+    '0006_customer_ownership_type.sql', '0007_shipping_di_integration.sql'
   ]) {
     db.exec(await readFile(new URL(`../migrations/${migration}`, import.meta.url), 'utf8'));
   }

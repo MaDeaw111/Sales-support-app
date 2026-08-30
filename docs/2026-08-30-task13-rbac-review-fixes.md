@@ -29,12 +29,14 @@ audit data.
 
 ## Persisted DI container plan
 
-Migration `0008_delivery_instruction_container_plan.sql` adds the additive
-`delivery_instructions.container_plan` field. DI create and DRAFT update
-payloads require a non-empty `containerPlan` value and persist it with the DI.
-The Warehouse read model returns this planned value directly, before any actual
-containers exist. Actual container records remain a separate loading fact and
-never derive or replace the DI plan.
+The un-applied `0007_shipping_di_integration.sql` schema defines the additive
+`delivery_instructions.container_plan` field without a default: it is non-null
+and rejects blank values. DI create and merged DRAFT update payloads require a
+non-empty `containerPlan` value and confirmation validates the persisted value
+again before any Shipment can be materialized. The Warehouse read model returns
+this planned value directly, before any actual containers exist. Actual
+container records remain a separate loading fact and never derive or replace
+the DI plan.
 
 ## Verification
 

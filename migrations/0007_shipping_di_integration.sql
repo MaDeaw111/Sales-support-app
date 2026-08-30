@@ -28,6 +28,7 @@ CREATE TABLE delivery_instructions (
   di_drive_url TEXT,
   shipping_month TEXT NOT NULL,
   shipping_period TEXT NOT NULL CHECK(shipping_period IN ('FIRST_HALF','SECOND_HALF')),
+  container_plan TEXT NOT NULL CHECK(trim(container_plan) <> ''),
   status TEXT NOT NULL DEFAULT 'DRAFT' CHECK(status IN ('DRAFT','CONFIRMED','IN_PROGRESS','COMPLETED','CANCELLED')),
   lifecycle_version INTEGER NOT NULL DEFAULT 0 CHECK(lifecycle_version >= 0),
   note TEXT,

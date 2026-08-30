@@ -117,7 +117,12 @@ export function validateDeliveryInstructionAvailabilityLines(lines) {
   });
 }
 
-export function validateDeliveryInstruction(dto, { requireContainerPlan = true } = {}) {
+export function validateDeliveryInstructionContainerPlan(value) {
+  if (typeof value !== 'string' || !value.trim()) throw codedError('DI_CONTAINER_PLAN_REQUIRED');
+  return value.trim();
+}
+
+export function validateDeliveryInstruction(dto) {
   if (!dto || typeof dto !== 'object' || Array.isArray(dto)) throw codedError('DI_PAYLOAD_INVALID');
   if (Object.keys(dto).some((property) => !DELIVERY_INSTRUCTION_PROPERTIES.includes(property))) {
     throw codedError('DI_PROPERTY_INVALID');
@@ -136,12 +141,7 @@ export function validateDeliveryInstruction(dto, { requireContainerPlan = true }
   if (!['FIRST_HALF', 'SECOND_HALF'].includes(dto.shippingPeriod)) {
     throw codedError('DI_SHIPPING_PERIOD_INVALID');
   }
-  const containerPlan = dto.containerPlan === undefined || dto.containerPlan === null
-    ? null
-    : (typeof dto.containerPlan === 'string' && dto.containerPlan.trim() ? dto.containerPlan.trim() : null);
-  if (requireContainerPlan && !containerPlan) {
-    throw codedError('DI_CONTAINER_PLAN_REQUIRED');
-  }
+  const containerPlan = validateDeliveryInstructionContainerPlan(dto.containerPlan);
   const lines = validateDeliveryInstructionAvailabilityLines(dto.lines);
 
   if (typeof dto.note !== 'undefined' && dto.note !== null && typeof dto.note !== 'string') {
