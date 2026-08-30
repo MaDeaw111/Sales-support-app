@@ -394,6 +394,7 @@ async function resolveShipmentInvoiceLines(db, shipment, lines, { final, prelimi
 }
 
 function finalInvoiceReservationStatement(db, shipment, lines, reservation) {
+  const incomingFinalTotal = lines.reduce((total, line) => total + line.lineAmount, 0);
   const quantityGuards = lines.map(() => `
     AND (
       COALESCE((
@@ -417,8 +418,10 @@ function finalInvoiceReservationStatement(db, shipment, lines, reservation) {
   return db.prepare(`
     UPDATE phase6_shipments
     SET final_invoice_version = ?, final_invoice_write_token = ?, updated_at = CURRENT_TIMESTAMP
-    WHERE shipment_id = ? AND status = 'LOADED' AND container_version = ?
+    WHERE shipment_id = ? AND status IN ('LOADED', 'DOCS_SENT') AND container_version = ?
       AND final_invoice_version = ? AND final_invoice_write_token IS ?
+      AND ROUND(cash_received_amount + ${allocatedCreditExpression()}, 2)
+        <= ROUND(${finalInvoiceTotalExpression()} + ?, 2)
       ${quantityGuards}
   `).bind(
     reservation.version,
@@ -427,6 +430,7 @@ function finalInvoiceReservationStatement(db, shipment, lines, reservation) {
     shipment.container_version,
     shipment.final_invoice_version,
     shipment.final_invoice_write_token,
+    incomingFinalTotal,
     ...lines.flatMap((line) => [line.poRevisionLineId, line.qtyMt, line.poRevisionLineId])
   );
 }
@@ -768,6 +772,19 @@ async function findShipmentPaymentSummary(db, shipmentId) {
     FROM phase6_shipments shipment
     WHERE shipment.shipment_id = ?
   `).bind(shipmentId).first();
+}
+
+async function assertFinalInvoicePaymentObligation(db, shipmentId, lines) {
+  const paymentSummary = await findShipmentPaymentSummary(db, shipmentId);
+  if (!paymentSummary) throw codedError('SHIPMENT_NOT_FOUND');
+  const incomingFinalTotal = lines.reduce((total, line) => total + line.lineAmount, 0);
+  const proposed = await db.prepare(`
+    SELECT ROUND(${finalInvoiceTotalExpression('shipment.shipment_id')} + ?, 2) AS final_total
+    FROM phase6_shipments shipment
+    WHERE shipment_id = ?
+  `).bind(incomingFinalTotal, shipmentId).first();
+  const coveredCents = moneyCents(paymentSummary.cash_received_amount) + moneyCents(paymentSummary.allocated_credit);
+  if (coveredCents > moneyCents(proposed.final_total)) throw codedError('PAYMENT_SETTLEMENT_EXCEEDED');
 }
 
 function assertShipmentPaymentChangeAllowed(paymentSummary, cashReceivedAmount) {
@@ -1778,8 +1795,11 @@ export function createShippingDiRepository(db) {
       const invoice = validateShipmentInvoice(dto);
       const shipment = await findPhase6Shipment(db, shipmentId);
       if (!shipment || shipment.shipment_id !== shipmentId) throw codedError('SHIPMENT_NOT_FOUND');
-      if (!['BOOKED', 'LOADED'].includes(shipment.status)) throw codedError('SHIPMENT_NOT_BOOKED');
-      if (invoice.version === 'FINAL' && shipment.status !== 'LOADED') throw codedError('INVOICE_FINAL_REQUIRES_ACTUAL_QTY');
+      if (!['BOOKED', 'LOADED'].includes(shipment.status) &&
+        !(invoice.version === 'FINAL' && shipment.status === 'DOCS_SENT')) {
+        throw codedError('SHIPMENT_NOT_BOOKED');
+      }
+      if (invoice.version === 'FINAL' && !['LOADED', 'DOCS_SENT'].includes(shipment.status)) throw codedError('INVOICE_FINAL_REQUIRES_ACTUAL_QTY');
 
       const resolved = await resolveShipmentInvoiceLines(db, shipment, invoice.lines, {
         preliminary: invoice.version === 'PRELIMINARY',
@@ -1790,6 +1810,7 @@ export function createShippingDiRepository(db) {
         if ([...references.values()].some((reference) => Number(reference.tolerance_pct) > 0)) {
           throw codedError('INVOICE_FINALIZATION_REQUIRED');
         }
+        await assertFinalInvoicePaymentObligation(db, shipmentId, resolved.lines);
       }
 
       const invoiceId = `INV-${crypto.randomUUID()}`;
@@ -1816,7 +1837,7 @@ export function createShippingDiRepository(db) {
             WHERE EXISTS (
               SELECT 1
               FROM phase6_shipments
-              WHERE shipment_id = ? AND status = 'LOADED' AND container_version = ?
+              WHERE shipment_id = ? AND status IN ('LOADED', 'DOCS_SENT') AND container_version = ?
                 AND final_invoice_version = ? AND final_invoice_write_token = ?
             )
           ` : 'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'}
@@ -1846,6 +1867,7 @@ export function createShippingDiRepository(db) {
         const results = await db.batch(statements);
         const headerResultIndex = invoice.version === 'FINAL' ? 1 : 0;
         if ((invoice.version === 'FINAL' && !mutationApplied(results[0])) || !mutationApplied(results[headerResultIndex])) {
+          if (invoice.version === 'FINAL') await assertFinalInvoicePaymentObligation(db, shipmentId, resolved.lines);
           throw codedError(invoice.version === 'FINAL' ? 'INVOICE_FINAL_STALE' : 'INVOICE_NOT_CREATED');
         }
       } catch (error) {
@@ -1897,8 +1919,9 @@ export function createShippingDiRepository(db) {
       if (existing.version !== 'PRELIMINARY') throw codedError('INVOICE_NOT_PRELIMINARY');
       const shipment = await findPhase6Shipment(db, existing.shipment_id);
       if (!shipment || shipment.shipment_id !== existing.shipment_id) throw codedError('SHIPMENT_NOT_FOUND');
-      if (shipment.status !== 'LOADED') throw codedError('INVOICE_FINAL_REQUIRES_ACTUAL_QTY');
+      if (!['LOADED', 'DOCS_SENT'].includes(shipment.status)) throw codedError('INVOICE_FINAL_REQUIRES_ACTUAL_QTY');
       const resolved = await resolveShipmentInvoiceLines(db, shipment, finalLines, { final: true });
+      await assertFinalInvoicePaymentObligation(db, shipment.shipment_id, resolved.lines);
       const finalContainerVersion = Number(shipment.container_version);
       const nextInvoiceVersion = Number(existing.invoice_version) + 1;
       const nextInvoiceWriteToken = crypto.randomUUID();
@@ -1916,7 +1939,7 @@ export function createShippingDiRepository(db) {
             AND EXISTS (
               SELECT 1
               FROM phase6_shipments
-              WHERE shipment_id = ? AND status = 'LOADED' AND container_version = ?
+              WHERE shipment_id = ? AND status IN ('LOADED', 'DOCS_SENT') AND container_version = ?
                 AND final_invoice_version = ? AND final_invoice_write_token = ?
             )
         `).bind(resolved.currency, nextInvoiceVersion, nextInvoiceWriteToken, finalContainerVersion, actorId, invoiceId, existing.invoice_version, existing.invoice_write_token, shipment.shipment_id, finalContainerVersion, finalReservation.version, finalReservation.writeToken),
@@ -1934,7 +1957,10 @@ export function createShippingDiRepository(db) {
         }),
         paymentUpdateStatement(db, shipment.shipment_id, actorId, null, null, invoiceState)
       ]);
-      if (!mutationApplied(results[0]) || !mutationApplied(results[1])) throw codedError('INVOICE_NOT_PRELIMINARY');
+      if (!mutationApplied(results[0]) || !mutationApplied(results[1])) {
+        await assertFinalInvoicePaymentObligation(db, shipment.shipment_id, resolved.lines);
+        throw codedError('INVOICE_NOT_PRELIMINARY');
+      }
       await recomputeShipmentCompletion(db, shipment.shipment_id, actorId);
       return findShipmentInvoice(db, invoiceId);
     },

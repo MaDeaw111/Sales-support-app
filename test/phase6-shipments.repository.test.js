@@ -1244,6 +1244,91 @@ test('FINAL invoice materializes payment recorded before FINAL invoice creation'
   assert.equal((await repo.getPhase6Shipment(shipment.shipment_id)).payment_status, 'PAID');
 });
 
+test('DOCS_SENT Shipment allows a remaining FINAL invoice to be created', async () => {
+  const { db, wrappedDb } = await setupTestDb();
+  const repo = createShippingDiRepository(wrappedDb);
+  const shipment = await loadedShipmentForDocuments(repo, db);
+
+  await repo.createShipmentInvoice(shipment.shipment_id, {
+    invoiceNo: 'WCAT-DOCS-FIRST-1', version: 'FINAL', invoiceDate: '2026-09-15',
+    lines: [{ poRevisionLineId: 'LINE-1', qtyMt: 4 }]
+  }, 'U_EXPORT');
+  await repo.updateShipmentDocuments(shipment.shipment_id, {
+    allShipDocsDriveUrl: 'https://drive.google.com/drive/folders/docs-before-final',
+    digitalDocsSentDate: '2026-09-16', originalDocsRequired: false
+  }, 'U_EXPORT');
+
+  const final = await repo.createShipmentInvoice(shipment.shipment_id, {
+    invoiceNo: 'WCAT-DOCS-FIRST-2', version: 'FINAL', invoiceDate: '2026-09-16',
+    lines: [{ poRevisionLineId: 'LINE-1', qtyMt: 5.5 }]
+  }, 'U_EXPORT');
+
+  assert.equal(final.version, 'FINAL');
+  assert.equal((await repo.getPhase6Shipment(shipment.shipment_id)).status, 'DOCS_SENT');
+});
+
+test('DOCS_SENT Shipment allows a PRELIMINARY invoice to finalize against remaining actual quantity', async () => {
+  const { db, wrappedDb } = await setupTestDb();
+  const repo = createShippingDiRepository(wrappedDb);
+  db.prepare("UPDATE po_revision_lines SET tolerance_pct = 5 WHERE line_id = 'LINE-1'").run();
+  const shipment = await loadedShipmentForDocuments(repo, db);
+  const preliminary = await repo.createShipmentInvoice(shipment.shipment_id, {
+    invoiceNo: 'WCAT-DOCS-FINALIZE', version: 'PRELIMINARY', invoiceDate: '2026-09-15',
+    lines: [{ poRevisionLineId: 'LINE-1', qtyMt: 100 }]
+  }, 'U_EXPORT');
+  await repo.updateShipmentDocuments(shipment.shipment_id, {
+    allShipDocsDriveUrl: 'https://drive.google.com/drive/folders/docs-before-finalize',
+    digitalDocsSentDate: '2026-09-16', originalDocsRequired: false
+  }, 'U_EXPORT');
+
+  const final = await repo.finalizeShipmentInvoice(preliminary.invoice_id, [
+    { poRevisionLineId: 'LINE-1', qtyMt: 9.5 }
+  ], 'U_EXPORT');
+
+  assert.equal(final.version, 'FINAL');
+  assert.equal((await repo.getPhase6Shipment(shipment.shipment_id)).status, 'DOCS_SENT');
+});
+
+test('FINAL invoice creation rejects pre-existing cash and credit above its aggregate obligation', async () => {
+  const { db, wrappedDb } = await setupTestDb();
+  const repo = createShippingDiRepository(wrappedDb);
+  const shipment = await loadedShipmentForDocuments(repo, db);
+  await repo.updateShipmentPayment(shipment.shipment_id, { cashReceivedAmount: 3300 }, 'U_EXPORT');
+  db.prepare("INSERT INTO customer_credits (credit_id, customer_id, amount, reason, remaining_amount, request_key, created_by) VALUES ('CR-PREPAID-CREATE', 'C1', 100, 'Pre-final credit', 0, 'prepaid-create-credit', 'U_EXPORT')").run();
+  db.prepare("INSERT INTO customer_credit_usages (credit_usage_id, credit_id, shipment_id, amount, request_key, actor_id) VALUES ('CRU-PREPAID-CREATE', 'CR-PREPAID-CREATE', ?, 100, 'prepaid-create-usage', 'U_EXPORT')").run(shipment.shipment_id);
+
+  await assert.rejects(
+    () => repo.createShipmentInvoice(shipment.shipment_id, {
+      invoiceNo: 'WCAT-PREPAID-OVERAGE', version: 'FINAL', invoiceDate: '2026-09-15',
+      lines: [{ poRevisionLineId: 'LINE-1', qtyMt: 9.5 }]
+    }, 'U_EXPORT'),
+    /PAYMENT_SETTLEMENT_EXCEEDED/
+  );
+  assert.equal((await repo.getShipmentInvoices(shipment.shipment_id)).length, 0);
+});
+
+test('FINAL invoice finalization rejects pre-existing cash and credit above its aggregate obligation', async () => {
+  const { db, wrappedDb } = await setupTestDb();
+  const repo = createShippingDiRepository(wrappedDb);
+  db.prepare("UPDATE po_revision_lines SET tolerance_pct = 5 WHERE line_id = 'LINE-1'").run();
+  const shipment = await loadedShipmentForDocuments(repo, db);
+  const preliminary = await repo.createShipmentInvoice(shipment.shipment_id, {
+    invoiceNo: 'WCAT-PREPAID-OVERAGE-FINALIZE', version: 'PRELIMINARY', invoiceDate: '2026-09-15',
+    lines: [{ poRevisionLineId: 'LINE-1', qtyMt: 100 }]
+  }, 'U_EXPORT');
+  await repo.updateShipmentPayment(shipment.shipment_id, { cashReceivedAmount: 3300 }, 'U_EXPORT');
+  db.prepare("INSERT INTO customer_credits (credit_id, customer_id, amount, reason, remaining_amount, request_key, created_by) VALUES ('CR-PREPAID-FINALIZE', 'C1', 100, 'Pre-final credit', 0, 'prepaid-finalize-credit', 'U_EXPORT')").run();
+  db.prepare("INSERT INTO customer_credit_usages (credit_usage_id, credit_id, shipment_id, amount, request_key, actor_id) VALUES ('CRU-PREPAID-FINALIZE', 'CR-PREPAID-FINALIZE', ?, 100, 'prepaid-finalize-usage', 'U_EXPORT')").run(shipment.shipment_id);
+
+  await assert.rejects(
+    () => repo.finalizeShipmentInvoice(preliminary.invoice_id, [
+      { poRevisionLineId: 'LINE-1', qtyMt: 9.5 }
+    ], 'U_EXPORT'),
+    /PAYMENT_SETTLEMENT_EXCEEDED/
+  );
+  assert.equal((await repo.getShipmentInvoices(shipment.shipment_id))[0].version, 'PRELIMINARY');
+});
+
 test('paid partial FINAL invoicing cannot complete a Shipment before FINAL quantities equal all actual cargo', async () => {
   const { db, wrappedDb } = await setupTestDb();
   const repo = createShippingDiRepository(wrappedDb);
