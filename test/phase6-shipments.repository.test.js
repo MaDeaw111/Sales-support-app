@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { DatabaseSync } from 'node:sqlite';
 import { createShippingDiRepository } from '../src/shipping-di/repository.js';
-import { calculateScheduleResult } from '../src/shipping-di/validation.js';
+import { calculateScheduleResult, isDocumentRequirementSatisfied } from '../src/shipping-di/validation.js';
 
 async function setupTestDb({ pauseFirstBatch, pauseQueuedFirstBatch } = {}) {
   const db = new DatabaseSync(':memory:');
@@ -278,6 +278,23 @@ test('schedule result compares Actual Loading Date to the Customer shipping half
   assert.equal(calculateScheduleResult('2026-09', 'SECOND_HALF', '2026-09-16'), 'ON_PLAN');
   assert.equal(calculateScheduleResult('2026-02', 'SECOND_HALF', '2026-02-28'), 'ON_PLAN');
   assert.equal(calculateScheduleResult('2026-09', 'SECOND_HALF', '2026-10-01'), 'OUT_OF_PLAN');
+});
+
+test('document requirement satisfaction accepts persisted Phase 6 Shipment rows', () => {
+  assert.equal(isDocumentRequirementSatisfied({
+    all_ship_docs_drive_url: 'https://drive.google.com/drive/folders/digital-docs',
+    digital_docs_sent_date: '2026-09-01',
+    original_docs_required: 0,
+    dhl_sent_date: null,
+    dhl_tracking_no: null
+  }), true);
+  assert.equal(isDocumentRequirementSatisfied({
+    all_ship_docs_drive_url: 'https://drive.google.com/drive/folders/original-docs',
+    digital_docs_sent_date: '2026-09-01',
+    original_docs_required: 1,
+    dhl_sent_date: '2026-09-02',
+    dhl_tracking_no: 'DHL-123'
+  }), true);
 });
 
 test('schedule updates retain only the latest planned date and audit its old and new values', async () => {
@@ -814,6 +831,45 @@ test('DHL-required Shipment cannot become DOCS_SENT without date and tracking nu
       originalDocsRequired: true
     }, 'U_EXPORT'),
     /DHL_DETAILS_REQUIRED/
+  );
+});
+
+test('All Ship Docs accepts only Google Drive folder URLs', async () => {
+  const { db, wrappedDb } = await setupTestDb();
+  const repo = createShippingDiRepository(wrappedDb);
+  const shipment = await loadedShipmentForDocuments(repo, db);
+  const base = { digitalDocsSentDate: '2026-09-01', originalDocsRequired: false };
+
+  await assert.rejects(
+    () => repo.updateShipmentDocuments(shipment.shipment_id, {
+      ...base,
+      allShipDocsDriveUrl: 'https://drive.google.com/file/d/file-id/view'
+    }, 'U_EXPORT'),
+    /ALL_SHIP_DOCS_DRIVE_URL_INVALID/
+  );
+  await assert.rejects(
+    () => repo.updateShipmentDocuments(shipment.shipment_id, {
+      ...base,
+      allShipDocsDriveUrl: 'https://docs.google.com/document/d/document-id/edit'
+    }, 'U_EXPORT'),
+    /ALL_SHIP_DOCS_DRIVE_URL_INVALID/
+  );
+});
+
+test('digital-only document delivery rejects DHL fields', async () => {
+  const { db, wrappedDb } = await setupTestDb();
+  const repo = createShippingDiRepository(wrappedDb);
+  const shipment = await loadedShipmentForDocuments(repo, db);
+
+  await assert.rejects(
+    () => repo.updateShipmentDocuments(shipment.shipment_id, {
+      allShipDocsDriveUrl: 'https://drive.google.com/drive/folders/all-ship-docs',
+      digitalDocsSentDate: '2026-09-01',
+      originalDocsRequired: false,
+      dhlSentDate: '2026-09-02',
+      dhlTrackingNo: 'DHL-123'
+    }, 'U_EXPORT'),
+    /DHL_DETAILS_NOT_ALLOWED/
   );
 });
 
