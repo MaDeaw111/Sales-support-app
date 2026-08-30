@@ -259,7 +259,7 @@ test('PO line balance subtracts planned only until that DI has actual container 
   `).run();
   db.prepare("INSERT INTO phase6_shipments (shipment_id, di_id, status, created_by) VALUES ('SHIP-1', 'DI-1', 'LOADED', 'U_EXPORT')").run();
   db.prepare("INSERT INTO shipment_containers (container_id, shipment_id, container_no, container_type, status, created_by) VALUES ('CONT-1', 'SHIP-1', 'TGHU1234567', '20GP', 'LOADED', 'U_EXPORT')").run();
-  db.prepare("INSERT INTO shipment_container_lines (container_line_id, container_id, delivery_instruction_line_id, qty_mt, created_by) VALUES ('CL-1', 'CONT-1', 'DIL-1', 8, 'U_EXPORT')").run();
+  db.prepare("INSERT INTO shipment_container_lines (container_line_id, container_id, delivery_instruction_line_id, number_of_bags, qty_mt, created_by) VALUES ('CL-1', 'CONT-1', 'DIL-1', 8, 8, 'U_EXPORT')").run();
 
   const [balance] = await repo.getPoLineBalances('PO-2026-015');
 

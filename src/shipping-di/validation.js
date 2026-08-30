@@ -25,6 +25,8 @@ const SHIPMENT_BOOKING_PROPERTIES = [
   'plannedLoadingDate'
 ];
 const SHIPMENT_SCHEDULE_PROPERTIES = ['plannedLoadingDate', 'actualLoadingDate', 'scheduleNote'];
+const SHIPMENT_CONTAINER_PROPERTIES = ['containerNo', 'sealNo', 'lines'];
+const SHIPMENT_CONTAINER_LINE_PROPERTIES = ['poRevisionLineId', 'numberOfBags', 'netWeightMt'];
 
 function codedError(code) {
   const error = new Error(code);
@@ -234,6 +236,50 @@ export function validateShipmentSchedule(dto) {
     actualLoadingDate: hasActualLoadingDate ? requiredScheduleDate(dto.actualLoadingDate) : undefined,
     scheduleNote: dto.scheduleNote === undefined ? undefined : dto.scheduleNote?.trim() || null
   };
+}
+
+export function validateShipmentContainers(containers) {
+  if (!Array.isArray(containers) || containers.length === 0) {
+    throw codedError('SHIPMENT_CONTAINERS_REQUIRED');
+  }
+
+  const seenContainerNumbers = new Set();
+  return containers.map((container) => {
+    if (!container || typeof container !== 'object' || Array.isArray(container)) {
+      throw codedError('SHIPMENT_CONTAINER_INVALID');
+    }
+    if (Object.keys(container).some((property) => !SHIPMENT_CONTAINER_PROPERTIES.includes(property))) {
+      throw codedError('SHIPMENT_CONTAINER_PROPERTY_INVALID');
+    }
+    const containerNo = typeof container.containerNo === 'string' ? container.containerNo.trim() : '';
+    if (!containerNo) throw codedError('SHIPMENT_CONTAINER_NO_REQUIRED');
+    if (seenContainerNumbers.has(containerNo)) throw codedError('SHIPMENT_CONTAINER_NO_DUPLICATE');
+    seenContainerNumbers.add(containerNo);
+    const sealNo = container.sealNo === undefined || container.sealNo === null
+      ? null
+      : optionalBookingText(container.sealNo);
+    if (!Array.isArray(container.lines) || container.lines.length === 0) {
+      throw codedError('SHIPMENT_CONTAINER_LINES_REQUIRED');
+    }
+    const seenLineIds = new Set();
+    const lines = container.lines.map((line) => {
+      if (!line || typeof line !== 'object' || Array.isArray(line)) throw codedError('SHIPMENT_CONTAINER_LINE_INVALID');
+      if (Object.keys(line).some((property) => !SHIPMENT_CONTAINER_LINE_PROPERTIES.includes(property))) {
+        throw codedError('SHIPMENT_CONTAINER_LINE_PROPERTY_INVALID');
+      }
+      const poRevisionLineId = requiredId(line.poRevisionLineId, 'SHIPMENT_CONTAINER_LINE_PO_LINE_REQUIRED');
+      if (seenLineIds.has(poRevisionLineId)) throw codedError('SHIPMENT_CONTAINER_LINE_DUPLICATE');
+      seenLineIds.add(poRevisionLineId);
+      if (!Number.isInteger(line.numberOfBags) || line.numberOfBags <= 0) {
+        throw codedError('SHIPMENT_CONTAINER_LINE_BAG_COUNT_INVALID');
+      }
+      if (typeof line.netWeightMt !== 'number' || !Number.isFinite(line.netWeightMt) || line.netWeightMt <= 0) {
+        throw codedError('SHIPMENT_CONTAINER_LINE_NET_WEIGHT_INVALID');
+      }
+      return { poRevisionLineId, numberOfBags: line.numberOfBags, netWeightMt: line.netWeightMt };
+    });
+    return { containerNo, sealNo, lines };
+  });
 }
 
 export { codedError };

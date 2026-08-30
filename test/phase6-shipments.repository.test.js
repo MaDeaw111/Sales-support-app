@@ -5,7 +5,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { createShippingDiRepository } from '../src/shipping-di/repository.js';
 import { calculateScheduleResult } from '../src/shipping-di/validation.js';
 
-async function setupTestDb() {
+async function setupTestDb({ pauseFirstBatch } = {}) {
   const db = new DatabaseSync(':memory:');
   for (const migration of [
     '0001_auth.sql',
@@ -26,6 +26,15 @@ async function setupTestDb() {
   db.prepare("INSERT INTO products (product_id, product_code, product_name, short_name, category_id, form_id) VALUES ('P1', 'THP-65', 'Tapioca Pellet 65%', 'THP65', 'CAT1', 'FORM1')").run();
   db.prepare("INSERT INTO po_headers (po_id, customer_id, created_by) VALUES ('PO1', 'C1', 'U_EXPORT')").run();
   db.prepare("INSERT INTO po_revisions (revision_id, po_id, revision_no, status, ownership_type_snapshot, currency, incoterm, delivery_start, delivery_end, valid_until, created_by) VALUES ('REV1', 'PO1', 0, 'ACTIVE', 'HOUSE_ACCOUNT', 'USD', 'FOB', '2026-09-01', '2026-09-30', '2026-12-31', 'U_EXPORT')").run();
+  for (const [lineId, lineNo] of [['LINE-1', 10], ['LINE-2', 20]]) {
+    db.prepare(`
+      INSERT INTO po_revision_lines (
+        line_id, po_revision_id, line_no, product_id, spec_source, spec_revision_id,
+        contract_qty_mt, tolerance_pct, min_qty_mt, max_qty_mt, unit_price,
+        packaging, container_type, loading_pattern
+      ) VALUES (?, 'REV1', ?, 'P1', 'STANDARD', 'SPEC-REV-1', 100, 0, 100, 100, 350, 'Jumbo Bag', '40HC', 'Floor loaded')
+    `).run(lineId, lineNo);
+  }
   db.prepare("INSERT INTO delivery_instructions (di_id, customer_id, po_id, po_revision_id, di_no, shipping_month, shipping_period, status, created_by) VALUES ('DI-DRAFT', 'C1', 'PO1', 'REV1', 'DRAFT-1', '2026-09', 'FIRST_HALF', 'DRAFT', 'U_EXPORT')").run();
   db.prepare("INSERT INTO delivery_instructions (di_id, customer_id, po_id, po_revision_id, di_no, shipping_month, shipping_period, status, created_by) VALUES ('DI-CONFIRMED', 'C1', 'PO1', 'REV1', 'CONFIRMED-1', '2026-09', 'FIRST_HALF', 'CONFIRMED', 'U_EXPORT')").run();
   for (const [partnerId, partnerType] of [
@@ -39,6 +48,7 @@ async function setupTestDb() {
   }
 
   let releasePreviousBatch = Promise.resolve();
+  let firstBatch = true;
   const wrappedDb = {
     prepare(sql) {
       const statement = db.prepare(sql);
@@ -60,6 +70,13 @@ async function setupTestDb() {
       };
     },
     async batch(statements) {
+      if (firstBatch && pauseFirstBatch) {
+        const pause = await pauseFirstBatch();
+        if (pause) {
+          firstBatch = false;
+          await pause;
+        }
+      }
       const previousBatch = releasePreviousBatch;
       let releaseBatch;
       releasePreviousBatch = new Promise((resolve) => {
@@ -82,6 +99,27 @@ async function setupTestDb() {
   };
 
   return { db, wrappedDb };
+}
+
+function seedShipmentContainerLines(db, diId = 'DI-CONFIRMED') {
+  for (const [diLineId, poRevisionLineId, plannedQtyMt] of [
+    ['DIL-1', 'LINE-1', 10],
+    ['DIL-2', 'LINE-2', 10]
+  ]) {
+    db.prepare(`
+      INSERT INTO delivery_instruction_lines (
+        di_line_id, di_id, po_id, po_revision_id, po_revision_line_id, product_id,
+        planned_qty_mt, packing_snapshot, created_by
+      ) VALUES (?, ?, 'PO1', 'REV1', ?, 'P1', ?, 'Jumbo Bag', 'U_EXPORT')
+    `).run(diLineId, diId, poRevisionLineId, plannedQtyMt);
+  }
+}
+
+async function bookedShipmentWithActualLoadingDate(repo) {
+  const shipment = await repo.createShipmentForDeliveryInstruction('DI-CONFIRMED', 'U_EXPORT');
+  await repo.recordShipmentBooking(shipment.shipment_id, { bookingNo: 'BK-CONTAINER' }, 'U_EXPORT');
+  await repo.updateShipmentSchedule(shipment.shipment_id, { actualLoadingDate: '2026-09-15' }, 'U_EXPORT');
+  return shipment;
 }
 
 test('a confirmed DI creates exactly one separate rich Shipment in PLANNING', async () => {
@@ -315,4 +353,128 @@ test('simultaneous planned-date updates reject the stale writer without a false 
     old: '2026-09-08',
     new: finalShipment.planned_loading_date
   });
+});
+
+test('replacing actual containers records mixed-product net weight, bag counts, and promotes only a dated Shipment to LOADED', async () => {
+  const { db, wrappedDb } = await setupTestDb();
+  seedShipmentContainerLines(db);
+  const repo = createShippingDiRepository(wrappedDb);
+  const shipment = await bookedShipmentWithActualLoadingDate(repo);
+
+  const result = await repo.replaceShipmentContainers(shipment.shipment_id, [{
+    containerNo: 'EGSU2548896',
+    sealNo: 'SEAL1',
+    lines: [
+      { poRevisionLineId: 'LINE-1', numberOfBags: 10, netWeightMt: 9.5 },
+      { poRevisionLineId: 'LINE-2', numberOfBags: 10, netWeightMt: 9.5 }
+    ]
+  }], 'U_EXPORT');
+
+  assert.equal(result.actual_qty_mt, 19);
+  assert.equal(result.shipment.status, 'LOADED');
+  assert.equal(await repo.getShipmentActualQty(shipment.shipment_id), 19);
+  assert.deepEqual(await repo.listShipmentContainers(shipment.shipment_id), [{
+    container_no: 'EGSU2548896',
+    seal_no: 'SEAL1',
+    total_net_weight_mt: 19,
+    lines: [
+      { po_revision_line_id: 'LINE-1', number_of_bags: 10, net_weight_mt: 9.5 },
+      { po_revision_line_id: 'LINE-2', number_of_bags: 10, net_weight_mt: 9.5 }
+    ]
+  }]);
+  assert.equal(db.prepare("SELECT SUM(qty_mt) AS total FROM shipment_container_lines").get().total, result.actual_qty_mt);
+  assert.equal(db.prepare("SELECT COUNT(*) AS n FROM shipment_audit_events WHERE event_type = 'CONTAINER_ADDED'").get().n, 1);
+});
+
+test('recording the actual date promotes an already-containerized Shipment to LOADED', async () => {
+  const { db, wrappedDb } = await setupTestDb();
+  seedShipmentContainerLines(db);
+  const repo = createShippingDiRepository(wrappedDb);
+  const shipment = await repo.createShipmentForDeliveryInstruction('DI-CONFIRMED', 'U_EXPORT');
+  await repo.recordShipmentBooking(shipment.shipment_id, { bookingNo: 'BK-DATE-AFTER-CONTAINER' }, 'U_EXPORT');
+
+  const containerResult = await repo.replaceShipmentContainers(shipment.shipment_id, [{
+    containerNo: 'TGHU1234567',
+    lines: [{ poRevisionLineId: 'LINE-1', numberOfBags: 10, netWeightMt: 9.5 }]
+  }], 'U_EXPORT');
+  assert.equal(containerResult.shipment.status, 'BOOKED');
+
+  const scheduled = await repo.updateShipmentSchedule(
+    shipment.shipment_id,
+    { actualLoadingDate: '2026-09-15' },
+    'U_EXPORT'
+  );
+  assert.equal(scheduled.status, 'LOADED');
+  assert.equal(db.prepare("SELECT COUNT(*) AS n FROM shipment_audit_events WHERE event_type = 'ACTUAL_LOADING_DATE_RECORDED'").get().n, 1);
+});
+
+test('container replacement validates every line before replacing actual data', async () => {
+  const { db, wrappedDb } = await setupTestDb();
+  seedShipmentContainerLines(db);
+  const repo = createShippingDiRepository(wrappedDb);
+  const shipment = await bookedShipmentWithActualLoadingDate(repo);
+  await repo.replaceShipmentContainers(shipment.shipment_id, [{
+    containerNo: 'EGSU2548896',
+    lines: [{ poRevisionLineId: 'LINE-1', numberOfBags: 10, netWeightMt: 9.5 }]
+  }], 'U_EXPORT');
+
+  await assert.rejects(
+    () => repo.replaceShipmentContainers(shipment.shipment_id, [{
+      containerNo: 'EGSU2548896',
+      lines: [{ poRevisionLineId: 'LINE-1', numberOfBags: 10, netWeightMt: 10.01, grossWeightMt: 11 }]
+    }], 'U_EXPORT'),
+    /SHIPMENT_CONTAINER_LINE_PROPERTY_INVALID/
+  );
+  await assert.rejects(
+    () => repo.replaceShipmentContainers(shipment.shipment_id, [{
+      containerNo: 'EGSU2548896',
+      lines: [{ poRevisionLineId: 'LINE-1', numberOfBags: 10, netWeightMt: 10.01 }]
+    }], 'U_EXPORT'),
+    /CONTAINER_LINE_QTY_EXCEEDS_PLANNED/
+  );
+
+  assert.equal(await repo.getShipmentActualQty(shipment.shipment_id), 9.5);
+  assert.equal(db.prepare("SELECT COUNT(*) AS n FROM shipment_audit_events WHERE event_type = 'CONTAINER_UPDATED'").get().n, 0);
+});
+
+test('concurrent container replacements preserve one truthful winning actual state and audit event', async () => {
+  let armPause = false;
+  let releaseFirstBatch;
+  const firstBatchReleased = new Promise((resolve) => {
+    releaseFirstBatch = resolve;
+  });
+  let captureFirstBatch;
+  const firstBatchCaptured = new Promise((resolve) => {
+    captureFirstBatch = resolve;
+  });
+  const { db, wrappedDb } = await setupTestDb({
+    pauseFirstBatch: () => {
+      if (!armPause) return null;
+      captureFirstBatch();
+      return firstBatchReleased;
+    }
+  });
+  seedShipmentContainerLines(db);
+  const repo = createShippingDiRepository(wrappedDb);
+  const shipment = await bookedShipmentWithActualLoadingDate(repo);
+  armPause = true;
+  const replace = (containerNo) => repo.replaceShipmentContainers(shipment.shipment_id, [{
+    containerNo,
+    lines: [{ poRevisionLineId: 'LINE-1', numberOfBags: 10, netWeightMt: 9.5 }]
+  }], 'U_EXPORT');
+
+  const first = replace('EGSU2548896');
+  await firstBatchCaptured;
+  const second = replace('TGHU1234567');
+  await new Promise((resolve) => setImmediate(resolve));
+  releaseFirstBatch();
+  const results = await Promise.allSettled([first, second]);
+
+  assert.equal(results.filter((result) => result.status === 'fulfilled').length, 1);
+  assert.equal(results.filter((result) => result.status === 'rejected').length, 1);
+  assert.match(results.find((result) => result.status === 'rejected').reason.message, /SHIPMENT_CONTAINERS_STALE/);
+  const containers = await repo.listShipmentContainers(shipment.shipment_id);
+  assert.equal(containers.length, 1);
+  assert.ok(['EGSU2548896', 'TGHU1234567'].includes(containers[0].container_no));
+  assert.equal(db.prepare("SELECT COUNT(*) AS n FROM shipment_audit_events WHERE event_type = 'CONTAINER_ADDED'").get().n, 1);
 });

@@ -99,6 +99,12 @@ test('Phase 6 schema creates every shipping DI table and required lookup indexes
 
   const auditColumns = db.prepare('PRAGMA table_info(shipment_audit_events)').all().map((column) => column.name);
   assert.deepEqual(auditColumns, ['event_id', 'entity_type', 'entity_id', 'event_type', 'actor_id', 'metadata_json', 'created_at']);
+
+  const containerLineColumns = db.prepare('PRAGMA table_info(shipment_container_lines)').all().map((column) => column.name);
+  assert.ok(containerLineColumns.includes('number_of_bags'), 'container lines retain the recorded bag count');
+
+  const shipmentColumns = db.prepare('PRAGMA table_info(phase6_shipments)').all().map((column) => column.name);
+  assert.ok(shipmentColumns.includes('container_version'), 'shipments retain a container-write version');
 });
 
 test('Phase 6 service partners permit the approved SURVEYOR type and reject OTHER', async () => {

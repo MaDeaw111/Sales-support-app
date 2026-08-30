@@ -8,6 +8,7 @@ import {
   validateServicePartner,
   validateShipmentBooking,
   validateShipmentSchedule,
+  validateShipmentContainers,
   calculateScheduleResult
 } from './validation.js';
 
@@ -75,11 +76,57 @@ async function findPhase6Shipment(db, identifier) {
            trucking_partner_id, vessel, etd, eta, planned_loading_date, actual_loading_date,
            schedule_result, schedule_note, all_ship_docs_drive_url, digital_docs_sent_date,
            original_docs_required, dhl_sent_date, dhl_tracking_no, docs_note, cash_received_amount,
-           payment_status, payment_note, cancellation_note, created_by, created_at, updated_by, updated_at
+           payment_status, payment_note, cancellation_note, container_version, created_by, created_at, updated_by, updated_at,
+           COALESCE((
+             SELECT SUM(container_line.qty_mt)
+             FROM shipment_containers container
+             JOIN shipment_container_lines container_line ON container_line.container_id = container.container_id
+             WHERE container.shipment_id = phase6_shipments.shipment_id AND container.status <> 'CANCELLED'
+           ), 0) AS actual_qty_mt
     FROM phase6_shipments
     WHERE shipment_id = ? OR di_id = ?
     LIMIT 1
   `).bind(identifier, identifier).first();
+}
+
+async function findShipmentContainerLineReferences(db, diId, containers) {
+  const lineIds = [...new Set(containers.flatMap((container) => container.lines.map((line) => line.poRevisionLineId)))];
+  const placeholders = lineIds.map(() => '?').join(', ');
+  const { results } = await db.prepare(`
+    SELECT di_line_id, po_revision_line_id, planned_qty_mt
+    FROM delivery_instruction_lines
+    WHERE di_id = ? AND po_revision_line_id IN (${placeholders})
+  `).bind(diId, ...lineIds).all();
+  const references = new Map((results || []).map((line) => [line.po_revision_line_id, line]));
+  for (const lineId of lineIds) {
+    if (!references.has(lineId)) throw codedError('SHIPMENT_CONTAINER_LINE_PO_LINE_INVALID');
+  }
+  return references;
+}
+
+async function listShipmentContainers(db, shipmentId) {
+  const { results: containers } = await db.prepare(`
+    SELECT container_id, container_no, seal_no
+    FROM shipment_containers
+    WHERE shipment_id = ? AND status <> 'CANCELLED'
+    ORDER BY rowid ASC
+  `).bind(shipmentId).all();
+  return Promise.all((containers || []).map(async (container) => {
+    const { results: lines } = await db.prepare(`
+      SELECT dil.po_revision_line_id, scl.number_of_bags, scl.qty_mt AS net_weight_mt
+      FROM shipment_container_lines scl
+      JOIN delivery_instruction_lines dil ON dil.di_line_id = scl.delivery_instruction_line_id
+      WHERE scl.container_id = ?
+      ORDER BY dil.po_revision_line_id ASC
+    `).bind(container.container_id).all();
+    const containerLines = (lines || []).map((line) => ({ ...line }));
+    return {
+      container_no: container.container_no,
+      seal_no: container.seal_no,
+      total_net_weight_mt: containerLines.reduce((total, line) => total + Number(line.net_weight_mt), 0),
+      lines: containerLines
+    };
+  }));
 }
 
 function shipmentCreationStatement(db, diId, actorId, requirePreviousMutation = false) {
@@ -712,7 +759,14 @@ export function createShippingDiRepository(db) {
         const results = await db.batch([
           db.prepare(`
             UPDATE phase6_shipments
-            SET actual_loading_date = ?, schedule_result = ?, schedule_note = ?,
+            SET status = CASE WHEN EXISTS (
+                  SELECT 1
+                  FROM shipment_containers container
+                  JOIN shipment_container_lines container_line ON container_line.container_id = container.container_id
+                  WHERE container.shipment_id = phase6_shipments.shipment_id
+                    AND container.status <> 'CANCELLED'
+                ) THEN 'LOADED' ELSE 'BOOKED' END,
+                actual_loading_date = ?, schedule_result = ?, schedule_note = ?,
                 updated_by = ?, updated_at = CURRENT_TIMESTAMP
             WHERE shipment_id = ? AND status = 'BOOKED'
           `).bind(schedule.actualLoadingDate, scheduleResult, scheduleNote, actorId, shipmentId),
@@ -725,6 +779,125 @@ export function createShippingDiRepository(db) {
         if (!mutationApplied(results[0])) throw codedError('SHIPMENT_NOT_BOOKED');
       }
       return findPhase6Shipment(db, shipmentId);
+    },
+
+    async replaceShipmentContainers(shipmentId, containerInput, actorId) {
+      const containers = validateShipmentContainers(containerInput);
+      const shipment = await findPhase6Shipment(db, shipmentId);
+      if (!shipment || shipment.shipment_id !== shipmentId) throw codedError('SHIPMENT_NOT_FOUND');
+      if (!['BOOKED', 'LOADED'].includes(shipment.status)) throw codedError('SHIPMENT_NOT_BOOKED');
+
+      const lineReferences = await findShipmentContainerLineReferences(db, shipment.di_id, containers);
+      const quantitiesByPoLine = new Map();
+      for (const container of containers) {
+        for (const line of container.lines) {
+          quantitiesByPoLine.set(
+            line.poRevisionLineId,
+            Number(quantitiesByPoLine.get(line.poRevisionLineId) || 0) + line.netWeightMt
+          );
+        }
+      }
+      for (const [poRevisionLineId, actualQtyMt] of quantitiesByPoLine) {
+        const reference = lineReferences.get(poRevisionLineId);
+        if (actualQtyMt > Number(reference.planned_qty_mt) + 0.000001) {
+          throw codedError('CONTAINER_LINE_QTY_EXCEEDS_PLANNED');
+        }
+      }
+
+      const existingContainers = await listShipmentContainers(db, shipmentId);
+      const nextContainerVersion = Number(shipment.container_version) + 1;
+      const containerWriteToken = crypto.randomUUID();
+      const eventType = existingContainers.length ? 'CONTAINER_UPDATED' : 'CONTAINER_ADDED';
+      const statements = [
+        db.prepare(`
+          UPDATE phase6_shipments
+          SET container_version = ?, container_write_token = ?,
+              status = CASE WHEN actual_loading_date IS NOT NULL THEN 'LOADED' ELSE 'BOOKED' END,
+              updated_by = ?, updated_at = CURRENT_TIMESTAMP
+          WHERE shipment_id = ? AND status IN ('BOOKED', 'LOADED') AND container_version = ?
+        `).bind(nextContainerVersion, containerWriteToken, actorId, shipmentId, shipment.container_version),
+        db.prepare(`
+          DELETE FROM shipment_containers
+          WHERE shipment_id = ?
+            AND EXISTS (
+              SELECT 1 FROM phase6_shipments
+              WHERE shipment_id = ? AND container_version = ? AND container_write_token = ?
+            )
+        `).bind(shipmentId, shipmentId, nextContainerVersion, containerWriteToken)
+      ];
+
+      for (const container of containers) {
+        const containerId = `CTR-${crypto.randomUUID()}`;
+        statements.push(db.prepare(`
+          INSERT INTO shipment_containers (container_id, shipment_id, container_no, seal_no, status, created_by, updated_by)
+          SELECT ?, ?, ?, ?, 'LOADED', ?, ?
+          WHERE EXISTS (
+            SELECT 1 FROM phase6_shipments
+            WHERE shipment_id = ? AND container_version = ? AND container_write_token = ?
+          )
+        `).bind(containerId, shipmentId, container.containerNo, container.sealNo, actorId, actorId, shipmentId, nextContainerVersion, containerWriteToken));
+        for (const line of container.lines) {
+          const reference = lineReferences.get(line.poRevisionLineId);
+          statements.push(db.prepare(`
+            INSERT INTO shipment_container_lines (
+              container_line_id, container_id, delivery_instruction_line_id, number_of_bags, qty_mt, created_by, updated_by
+            )
+            SELECT ?, ?, ?, ?, ?, ?, ?
+            WHERE EXISTS (
+              SELECT 1 FROM phase6_shipments
+              WHERE shipment_id = ? AND container_version = ? AND container_write_token = ?
+            )
+          `).bind(
+            `CTRL-${crypto.randomUUID()}`,
+            containerId,
+            reference.di_line_id,
+            line.numberOfBags,
+            line.netWeightMt,
+            actorId,
+            actorId,
+            shipmentId,
+            nextContainerVersion,
+            containerWriteToken
+          ));
+        }
+      }
+      statements.push(db.prepare(`
+        INSERT INTO shipment_audit_events (event_id, entity_type, entity_id, event_type, actor_id, metadata_json)
+        SELECT ?, 'SHIPMENT', ?, ?, ?, ?
+        WHERE EXISTS (
+          SELECT 1 FROM phase6_shipments
+          WHERE shipment_id = ? AND container_version = ? AND container_write_token = ?
+        )
+      `).bind(
+        `EVT-${crypto.randomUUID()}`,
+        shipmentId,
+        eventType,
+        actorId,
+        JSON.stringify({ containers }),
+        shipmentId,
+        nextContainerVersion,
+        containerWriteToken
+      ));
+
+      const results = await db.batch(statements);
+      if (!mutationApplied(results[0])) throw codedError('SHIPMENT_CONTAINERS_STALE');
+      const updatedShipment = await findPhase6Shipment(db, shipmentId);
+      return {
+        actual_qty_mt: Number(updatedShipment.actual_qty_mt),
+        shipment: updatedShipment
+      };
+    },
+
+    async getShipmentActualQty(shipmentId) {
+      const shipment = await findPhase6Shipment(db, shipmentId);
+      if (!shipment || shipment.shipment_id !== shipmentId) throw codedError('SHIPMENT_NOT_FOUND');
+      return Number(shipment.actual_qty_mt);
+    },
+
+    async listShipmentContainers(shipmentId) {
+      const shipment = await findPhase6Shipment(db, shipmentId);
+      if (!shipment || shipment.shipment_id !== shipmentId) throw codedError('SHIPMENT_NOT_FOUND');
+      return listShipmentContainers(db, shipmentId);
     },
 
     async getPhase6Shipment(identifier) {

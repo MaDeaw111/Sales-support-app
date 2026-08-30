@@ -85,6 +85,31 @@ test('PUT /api/shipments-v2/:id/schedule lets operational writers update loading
   assert.equal(calls.length, 1);
 });
 
+test('PUT /api/shipments-v2/:id/containers lets operational writers replace actual Container data', async () => {
+  const calls = [];
+  const containers = [{ containerNo: 'EGSU2548896', lines: [{ poRevisionLineId: 'LINE-1', numberOfBags: 10, netWeightMt: 9.5 }] }];
+  const updated = { actual_qty_mt: 9.5, shipment: { shipment_id: 'SHP-1', status: 'LOADED' } };
+  let caller = { user_id: 'U_EXPORT', role: 'EXPORT' };
+  const handler = createShippingDiHandler({
+    repo: {
+      replaceShipmentContainers: async (...args) => {
+        calls.push(args);
+        return updated;
+      }
+    },
+    resolveUser: async () => caller
+  });
+
+  const response = await handler(request('/api/shipments-v2/SHP-1/containers', 'PUT', { containers }));
+  assert.equal(response.status, 200);
+  assert.deepEqual((await response.json()).data, updated);
+  assert.deepEqual(calls, [['SHP-1', containers, 'U_EXPORT']]);
+
+  caller = { user_id: 'U_SUPPORT', role: 'SALES_SUPPORT' };
+  assert.equal((await handler(request('/api/shipments-v2/SHP-1/containers', 'PUT', { containers }))).status, 403);
+  assert.equal(calls.length, 1);
+});
+
 test('Phase 6 Shipment routes require authentication and map missing records to 404', async () => {
   const unauthenticated = createShippingDiHandler({
     repo: {},
