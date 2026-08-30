@@ -11,6 +11,8 @@ import {
   validateShipmentContainers,
   validateShipmentInvoice,
   validateShipmentInvoiceFinalization,
+  validateShipmentDocuments,
+  isDocumentRequirementSatisfied,
   calculateScheduleResult
 } from './validation.js';
 
@@ -1102,6 +1104,45 @@ export function createShippingDiRepository(db) {
       const shipment = await findPhase6Shipment(db, shipmentId);
       if (!shipment || shipment.shipment_id !== shipmentId) throw codedError('SHIPMENT_NOT_FOUND');
       return listShipmentContainers(db, shipmentId);
+    },
+
+    async updateShipmentDocuments(shipmentId, dto, actorId) {
+      const documents = validateShipmentDocuments(dto);
+      const shipment = await findPhase6Shipment(db, shipmentId);
+      if (!shipment || shipment.shipment_id !== shipmentId) throw codedError('SHIPMENT_NOT_FOUND');
+      if (shipment.status !== 'LOADED') throw codedError('SHIPMENT_NOT_LOADED');
+      if (!isDocumentRequirementSatisfied(documents)) throw codedError('DOCUMENT_REQUIREMENT_NOT_SATISFIED');
+
+      const results = await db.batch([
+        db.prepare(`
+          UPDATE phase6_shipments
+          SET status = 'DOCS_SENT', all_ship_docs_drive_url = ?, digital_docs_sent_date = ?,
+              original_docs_required = ?, dhl_sent_date = ?, dhl_tracking_no = ?, docs_note = ?,
+              updated_by = ?, updated_at = CURRENT_TIMESTAMP
+          WHERE shipment_id = ? AND status = 'LOADED'
+        `).bind(
+          documents.allShipDocsDriveUrl,
+          documents.digitalDocsSentDate,
+          documents.originalDocsRequired ? 1 : 0,
+          documents.dhlSentDate,
+          documents.dhlTrackingNo,
+          documents.docsNote,
+          actorId,
+          shipmentId
+        ),
+        auditAfterMutationStatement(db, 'SHIPMENT', shipmentId, 'DOCS_EMAIL_SENT', actorId, {
+          allShipDocsDriveUrl: documents.allShipDocsDriveUrl,
+          digitalDocsSentDate: documents.digitalDocsSentDate
+        }),
+        ...(documents.originalDocsRequired ? [
+          auditAfterMutationStatement(db, 'SHIPMENT', shipmentId, 'DOCS_DHL_SENT', actorId, {
+            dhlSentDate: documents.dhlSentDate,
+            dhlTrackingNo: documents.dhlTrackingNo
+          })
+        ] : [])
+      ]);
+      if (!mutationApplied(results[0])) throw codedError('SHIPMENT_NOT_LOADED');
+      return findPhase6Shipment(db, shipmentId);
     },
 
     async createShipmentInvoice(shipmentId, dto, actorId) {

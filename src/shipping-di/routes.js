@@ -8,6 +8,7 @@ const SHIPMENT_BOOKING_WRITE_ROLES = ['ADMIN', 'MANAGER', 'EXPORT'];
 const SHIPMENT_SCHEDULE_WRITE_ROLES = ['ADMIN', 'MANAGER', 'EXPORT'];
 const SHIPMENT_CONTAINER_WRITE_ROLES = ['ADMIN', 'MANAGER', 'EXPORT'];
 const SHIPMENT_INVOICE_WRITE_ROLES = ['ADMIN', 'MANAGER', 'EXPORT'];
+const SHIPMENT_DOCUMENT_WRITE_ROLES = ['ADMIN', 'MANAGER', 'EXPORT'];
 
 function json(body, status = 200) {
   return new Response(JSON.stringify(body), {
@@ -168,6 +169,25 @@ export function createShippingDiHandler({ repo, resolveUser, db }) {
           caller.user_id
         );
         return json({ status: 'SUCCESS', data: result });
+      } catch (error) {
+        return json(
+          { status: 'ERROR', message: error.message },
+          error.code === 'SHIPMENT_NOT_FOUND' ? 404 : 400
+        );
+      }
+    }
+
+    const shipmentDocumentsMatch = path.match(/^\/api\/shipments-v2\/([^/]+)\/documents$/);
+    if (shipmentDocumentsMatch && method === 'PUT') {
+      if (!SHIPMENT_DOCUMENT_WRITE_ROLES.includes(caller.role)) return json({ status: 'ERROR', message: 'Permission denied.' }, 403);
+      const body = await readJson(request);
+      try {
+        const shipment = await activeRepo.updateShipmentDocuments(
+          decodeURIComponent(shipmentDocumentsMatch[1]),
+          body,
+          caller.user_id
+        );
+        return json({ status: 'SUCCESS', data: { shipment } });
       } catch (error) {
         return json(
           { status: 'ERROR', message: error.message },

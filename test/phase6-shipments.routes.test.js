@@ -202,3 +202,32 @@ test('Shipment Invoice routes expose reads and restrict Invoice writes to operat
   assert.equal((await handler(request('/api/shipments-v2/SHP-1/invoices/INV-1/finalize', 'PATCH', { lines: [] }))).status, 403);
   assert.equal((await handler(request('/api/shipments-v2/SHP-1/invoices'))).status, 200);
 });
+
+test('PUT /api/shipments-v2/:id/documents lets operational writers record shipment-level document delivery', async () => {
+  const calls = [];
+  let caller = { user_id: 'U_EXPORT', role: 'EXPORT' };
+  const shipment = { shipment_id: 'SHP-1', status: 'DOCS_SENT' };
+  const handler = createShippingDiHandler({
+    repo: {
+      updateShipmentDocuments: async (...args) => {
+        calls.push(args);
+        return shipment;
+      }
+    },
+    resolveUser: async () => caller
+  });
+  const payload = {
+    allShipDocsDriveUrl: 'https://drive.google.com/drive/folders/all-ship-docs',
+    digitalDocsSentDate: '2026-09-01',
+    originalDocsRequired: false
+  };
+
+  const response = await handler(request('/api/shipments-v2/SHP-1/documents', 'PUT', payload));
+  assert.equal(response.status, 200);
+  assert.deepEqual((await response.json()).data.shipment, shipment);
+  assert.deepEqual(calls, [['SHP-1', payload, 'U_EXPORT']]);
+
+  caller = { user_id: 'U_SUPPORT', role: 'SALES_SUPPORT' };
+  assert.equal((await handler(request('/api/shipments-v2/SHP-1/documents', 'PUT', payload))).status, 403);
+  assert.equal(calls.length, 1);
+});

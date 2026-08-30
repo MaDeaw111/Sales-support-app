@@ -28,6 +28,14 @@ const SHIPMENT_SCHEDULE_PROPERTIES = ['plannedLoadingDate', 'actualLoadingDate',
 const SHIPMENT_CONTAINER_PROPERTIES = ['containerNo', 'sealNo', 'lines'];
 const SHIPMENT_CONTAINER_LINE_PROPERTIES = ['poRevisionLineId', 'numberOfBags', 'netWeightMt'];
 const SHIPMENT_INVOICE_PROPERTIES = ['invoiceNo', 'version', 'invoiceDate', 'lines'];
+const SHIPMENT_DOCUMENT_PROPERTIES = [
+  'allShipDocsDriveUrl',
+  'digitalDocsSentDate',
+  'originalDocsRequired',
+  'dhlSentDate',
+  'dhlTrackingNo',
+  'docsNote'
+];
 
 function codedError(code) {
   const error = new Error(code);
@@ -328,6 +336,68 @@ export function validateShipmentInvoice(dto) {
 
 export function validateShipmentInvoiceFinalization(lines) {
   return validateInvoiceLines(lines);
+}
+
+function requiredDocumentDate(value, requiredCode, invalidCode) {
+  if (value === undefined || value === null || value === '') throw codedError(requiredCode);
+  try {
+    return optionalBookingDate(value);
+  } catch {
+    throw codedError(invalidCode);
+  }
+}
+
+function optionalDocumentDate(value, invalidCode) {
+  if (value === undefined || value === null) return null;
+  try {
+    return optionalBookingDate(value);
+  } catch {
+    throw codedError(invalidCode);
+  }
+}
+
+export function isDocumentRequirementSatisfied(documents) {
+  return Boolean(
+    documents?.allShipDocsDriveUrl &&
+    documents?.digitalDocsSentDate &&
+    (!documents?.originalDocsRequired || (documents?.dhlSentDate && documents?.dhlTrackingNo))
+  );
+}
+
+export function validateShipmentDocuments(dto) {
+  if (!dto || typeof dto !== 'object' || Array.isArray(dto)) throw codedError('SHIPMENT_DOCUMENTS_PAYLOAD_INVALID');
+  if (Object.keys(dto).some((property) => !SHIPMENT_DOCUMENT_PROPERTIES.includes(property))) {
+    throw codedError('SHIPMENT_DOCUMENTS_PROPERTY_INVALID');
+  }
+
+  const allShipDocsDriveUrl = validateGoogleDriveUrl(dto.allShipDocsDriveUrl, 'ALL_SHIP_DOCS_DRIVE_URL_INVALID');
+  if (!allShipDocsDriveUrl) throw codedError('ALL_SHIP_DOCS_DRIVE_URL_REQUIRED');
+  const digitalDocsSentDate = requiredDocumentDate(
+    dto.digitalDocsSentDate,
+    'DIGITAL_DOCS_SENT_DATE_REQUIRED',
+    'DIGITAL_DOCS_SENT_DATE_INVALID'
+  );
+  if (typeof dto.originalDocsRequired !== 'boolean') throw codedError('ORIGINAL_DOCS_REQUIRED_INVALID');
+  const dhlSentDate = optionalDocumentDate(dto.dhlSentDate, 'DHL_SENT_DATE_INVALID');
+  const dhlTrackingNo = dto.dhlTrackingNo === undefined || dto.dhlTrackingNo === null
+    ? null
+    : optionalBookingText(dto.dhlTrackingNo);
+  if (dto.originalDocsRequired && (!dhlSentDate || !dhlTrackingNo)) throw codedError('DHL_DETAILS_REQUIRED');
+  if (!dto.originalDocsRequired && Boolean(dhlSentDate) !== Boolean(dhlTrackingNo)) throw codedError('DHL_DETAILS_REQUIRED');
+  if (dto.docsNote !== undefined && dto.docsNote !== null && typeof dto.docsNote !== 'string') {
+    throw codedError('DOCS_NOTE_INVALID');
+  }
+
+  const documents = {
+    allShipDocsDriveUrl,
+    digitalDocsSentDate,
+    originalDocsRequired: dto.originalDocsRequired,
+    dhlSentDate,
+    dhlTrackingNo,
+    docsNote: dto.docsNote?.trim() || null
+  };
+  if (!isDocumentRequirementSatisfied(documents)) throw codedError('DOCUMENT_REQUIREMENT_NOT_SATISFIED');
+  return documents;
 }
 
 export { codedError };

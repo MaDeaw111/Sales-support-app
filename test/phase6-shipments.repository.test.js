@@ -129,6 +129,16 @@ async function bookedShipmentWithActualLoadingDate(repo) {
   return shipment;
 }
 
+async function loadedShipmentForDocuments(repo, db) {
+  seedShipmentContainerLines(db);
+  const shipment = await bookedShipmentWithActualLoadingDate(repo);
+  await repo.replaceShipmentContainers(shipment.shipment_id, [{
+    containerNo: 'EGSU2548896',
+    lines: [{ poRevisionLineId: 'LINE-1', numberOfBags: 10, netWeightMt: 9.5 }]
+  }], 'U_EXPORT');
+  return shipment;
+}
+
 test('a confirmed DI creates exactly one separate rich Shipment in PLANNING', async () => {
   const { db, wrappedDb } = await setupTestDb();
   const repo = createShippingDiRepository(wrappedDb);
@@ -770,4 +780,59 @@ test('container replacement loses to concurrent finalization and cannot stale FI
   await replacement;
   await assert.rejects(() => final, /INVOICE_NOT_PRELIMINARY/);
   assert.equal(await repo.getShipmentActualQty(shipment.shipment_id), 8.5);
+});
+
+test('digital document delivery stores one shipment folder and marks a digital-only Shipment DOCS_SENT', async () => {
+  const { db, wrappedDb } = await setupTestDb();
+  const repo = createShippingDiRepository(wrappedDb);
+  const shipment = await loadedShipmentForDocuments(repo, db);
+
+  const updated = await repo.updateShipmentDocuments(shipment.shipment_id, {
+    allShipDocsDriveUrl: 'https://drive.google.com/drive/folders/all-ship-docs',
+    digitalDocsSentDate: '2026-09-01',
+    originalDocsRequired: false,
+    docsNote: 'Email sent to Customer'
+  }, 'U_EXPORT');
+
+  assert.equal(updated.status, 'DOCS_SENT');
+  assert.equal(updated.all_ship_docs_drive_url, 'https://drive.google.com/drive/folders/all-ship-docs');
+  assert.equal(updated.digital_docs_sent_date, '2026-09-01');
+  assert.equal(updated.original_docs_required, 0);
+  assert.equal(db.prepare("SELECT COUNT(*) AS n FROM shipment_audit_events WHERE entity_id = ? AND event_type = 'DOCS_EMAIL_SENT'").get(shipment.shipment_id).n, 1);
+  assert.equal(db.prepare('SELECT COUNT(*) AS n FROM shipment_document_links').get().n, 0);
+});
+
+test('DHL-required Shipment cannot become DOCS_SENT without date and tracking number', async () => {
+  const { db, wrappedDb } = await setupTestDb();
+  const repo = createShippingDiRepository(wrappedDb);
+  const shipment = await loadedShipmentForDocuments(repo, db);
+
+  await assert.rejects(
+    () => repo.updateShipmentDocuments(shipment.shipment_id, {
+      allShipDocsDriveUrl: 'https://drive.google.com/folder/1',
+      digitalDocsSentDate: '2026-09-01',
+      originalDocsRequired: true
+    }, 'U_EXPORT'),
+    /DHL_DETAILS_REQUIRED/
+  );
+});
+
+test('DHL-required document delivery audits both email and DHL without individual document records', async () => {
+  const { db, wrappedDb } = await setupTestDb();
+  const repo = createShippingDiRepository(wrappedDb);
+  const shipment = await loadedShipmentForDocuments(repo, db);
+
+  const updated = await repo.updateShipmentDocuments(shipment.shipment_id, {
+    allShipDocsDriveUrl: 'https://drive.google.com/drive/folders/all-ship-docs',
+    digitalDocsSentDate: '2026-09-01',
+    originalDocsRequired: true,
+    dhlSentDate: '2026-09-02',
+    dhlTrackingNo: 'DHL-123',
+    docsNote: 'Originals dispatched'
+  }, 'U_EXPORT');
+
+  assert.equal(updated.status, 'DOCS_SENT');
+  assert.equal(db.prepare("SELECT COUNT(*) AS n FROM shipment_audit_events WHERE entity_id = ? AND event_type = 'DOCS_EMAIL_SENT'").get(shipment.shipment_id).n, 1);
+  assert.equal(db.prepare("SELECT COUNT(*) AS n FROM shipment_audit_events WHERE entity_id = ? AND event_type = 'DOCS_DHL_SENT'").get(shipment.shipment_id).n, 1);
+  assert.equal(db.prepare('SELECT COUNT(*) AS n FROM shipment_document_links').get().n, 0);
 });
