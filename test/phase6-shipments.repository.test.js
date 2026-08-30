@@ -925,23 +925,23 @@ test('credit cannot cross Customers or exceed remaining balance', async () => {
   const shipment = await loadedShipmentWithFinalInvoice(repo, db);
   seedSecondFinalPaymentShipment(db);
 
-  const credit = await repo.createCustomerCredit({ customerId: 'C1', amount: 100, reason: 'Commercial adjustment' }, 'U_EXPORT');
+  const credit = await repo.createCustomerCredit({ customerId: 'C1', amount: 100, reason: 'Commercial adjustment', requestKey: 'cross-credit-create' }, 'U_EXPORT');
   await assert.rejects(
-    () => repo.useCustomerCredit('S_FOR_C2', { creditId: credit.credit_id, amount: 1 }, 'U_EXPORT'),
+    () => repo.useCustomerCredit('S_FOR_C2', { creditId: credit.credit_id, amount: 1, requestKey: 'cross-customer-use' }, 'U_EXPORT'),
     /CREDIT_CUSTOMER_MISMATCH/
   );
   await assert.rejects(
-    () => repo.useCustomerCredit(shipment.shipment_id, { creditId: credit.credit_id, amount: 101 }, 'U_EXPORT'),
+    () => repo.useCustomerCredit(shipment.shipment_id, { creditId: credit.credit_id, amount: 101, requestKey: 'cross-over-credit' }, 'U_EXPORT'),
     /CREDIT_BALANCE_EXCEEDED/
   );
   await assert.rejects(
-    () => repo.useCustomerCredit(shipment.shipment_id, { creditId: credit.credit_id, amount: 1, invoiceId: 'INV-PAY-2' }, 'U_EXPORT'),
+    () => repo.useCustomerCredit(shipment.shipment_id, { creditId: credit.credit_id, amount: 1, invoiceId: 'INV-PAY-2', requestKey: 'cross-invoice-use' }, 'U_EXPORT'),
     /CREDIT_INVOICE_SHIPMENT_MISMATCH/
   );
 
-  const updated = await repo.useCustomerCredit(shipment.shipment_id, { creditId: credit.credit_id, amount: 40 }, 'U_EXPORT');
+  const updated = await repo.useCustomerCredit(shipment.shipment_id, { creditId: credit.credit_id, amount: 40, requestKey: 'cross-first-use' }, 'U_EXPORT');
   assert.equal(updated.payment_status, 'PARTIAL');
-  await repo.useCustomerCredit('S_FOR_C1_2', { creditId: credit.credit_id, amount: 60, invoiceId: 'INV-PAY-2' }, 'U_EXPORT');
+  await repo.useCustomerCredit('S_FOR_C1_2', { creditId: credit.credit_id, amount: 60, invoiceId: 'INV-PAY-2', requestKey: 'cross-second-use' }, 'U_EXPORT');
   assert.equal((await repo.listCustomerCredits({ customerId: 'C1' }))[0].remaining_amount, 0);
   assert.equal(db.prepare("SELECT COUNT(*) AS n FROM shipment_audit_events WHERE entity_id = ? AND event_type = 'CUSTOMER_CREDIT_USED'").get(credit.credit_id).n, 2);
 });
@@ -950,11 +950,11 @@ test('concurrent credit usage cannot overdraw one Customer credit', async () => 
   const { db, wrappedDb } = await setupTestDb();
   const repo = createShippingDiRepository(wrappedDb);
   const shipment = await loadedShipmentWithFinalInvoice(repo, db);
-  const credit = await repo.createCustomerCredit({ customerId: 'C1', amount: 100, reason: 'Commercial adjustment' }, 'U_EXPORT');
+  const credit = await repo.createCustomerCredit({ customerId: 'C1', amount: 100, reason: 'Commercial adjustment', requestKey: 'race-credit-create' }, 'U_EXPORT');
 
   const results = await Promise.allSettled([
-    repo.useCustomerCredit(shipment.shipment_id, { creditId: credit.credit_id, amount: 60 }, 'U_EXPORT'),
-    repo.useCustomerCredit(shipment.shipment_id, { creditId: credit.credit_id, amount: 60 }, 'U_EXPORT')
+    repo.useCustomerCredit(shipment.shipment_id, { creditId: credit.credit_id, amount: 60, requestKey: 'race-credit-use-1' }, 'U_EXPORT'),
+    repo.useCustomerCredit(shipment.shipment_id, { creditId: credit.credit_id, amount: 60, requestKey: 'race-credit-use-2' }, 'U_EXPORT')
   ]);
 
   assert.equal(results.filter((result) => result.status === 'fulfilled').length, 1);
@@ -980,9 +980,129 @@ test('payment uses only FINAL invoice totals and reports unpaid, partial, and pa
   await repo.finalizeShipmentInvoice((await repo.getShipmentInvoices(shipment.shipment_id))[0].invoice_id, [{
     poRevisionLineId: 'LINE-1', qtyMt: 9.5
   }], 'U_EXPORT');
+  assert.equal((await repo.getPhase6Shipment(shipment.shipment_id)).payment_status, 'PARTIAL');
   const partial = await repo.updateShipmentPayment(shipment.shipment_id, { cashReceivedAmount: 1000, paymentNote: 'Partial collection' }, 'U_EXPORT');
   assert.equal(partial.payment_status, 'PARTIAL');
   const paid = await repo.updateShipmentPayment(shipment.shipment_id, { cashReceivedAmount: 3325, paymentNote: 'Settled' }, 'U_EXPORT');
   assert.equal(paid.payment_status, 'PAID');
   assert.equal(db.prepare("SELECT COUNT(*) AS n FROM shipment_audit_events WHERE entity_id = ? AND event_type = 'PAYMENT_UPDATED'").get(shipment.shipment_id).n, 3);
+});
+
+test('payment rounds monetary coverage to currency precision', async () => {
+  const { db, wrappedDb } = await setupTestDb();
+  const repo = createShippingDiRepository(wrappedDb);
+  const shipment = await loadedShipmentForDocuments(repo, db);
+  db.prepare('UPDATE po_revision_lines SET unit_price = ? WHERE line_id = ?').run(0.1, 'LINE-1');
+  await repo.createShipmentInvoice(shipment.shipment_id, {
+    invoiceNo: 'WCAT-MONEY-ROUND', version: 'FINAL', invoiceDate: '2026-09-15',
+    lines: [{ poRevisionLineId: 'LINE-1', qtyMt: 3 }]
+  }, 'U_EXPORT');
+  const rounded = await repo.updateShipmentPayment(shipment.shipment_id, { cashReceivedAmount: 0.3 }, 'U_EXPORT');
+  assert.equal(rounded.payment_status, 'PAID');
+});
+
+test('credit and cash values reject fractions below the supported currency precision', async () => {
+  const { db, wrappedDb } = await setupTestDb();
+  const repo = createShippingDiRepository(wrappedDb);
+  const shipment = await loadedShipmentWithFinalInvoice(repo, db);
+  await assert.rejects(
+    () => repo.createCustomerCredit({ customerId: 'C1', amount: 0.001, reason: 'Precision', requestKey: 'precision-create' }, 'U_EXPORT'),
+    /CREDIT_AMOUNT_INVALID/
+  );
+  const credit = await repo.createCustomerCredit({ customerId: 'C1', amount: 1, reason: 'Precision', requestKey: 'precision-credit' }, 'U_EXPORT');
+  await assert.rejects(
+    () => repo.useCustomerCredit(shipment.shipment_id, { creditId: credit.credit_id, amount: 0.001, requestKey: 'precision-use' }, 'U_EXPORT'),
+    /CREDIT_USAGE_AMOUNT_INVALID/
+  );
+  await assert.rejects(
+    () => repo.updateShipmentPayment(shipment.shipment_id, { cashReceivedAmount: 0.001 }, 'U_EXPORT'),
+    /PAYMENT_CASH_RECEIVED_AMOUNT_INVALID/
+  );
+});
+
+test('a zero FINAL total is paid without cash or credit', async () => {
+  const { db, wrappedDb } = await setupTestDb();
+  const repo = createShippingDiRepository(wrappedDb);
+  const shipment = await loadedShipmentForDocuments(repo, db);
+  db.prepare('UPDATE po_revision_lines SET unit_price = ? WHERE line_id = ?').run(0, 'LINE-1');
+  await repo.createShipmentInvoice(shipment.shipment_id, {
+    invoiceNo: 'WCAT-MONEY-ZERO', version: 'FINAL', invoiceDate: '2026-09-15',
+    lines: [{ poRevisionLineId: 'LINE-1', qtyMt: 1 }]
+  }, 'U_EXPORT');
+  assert.equal((await repo.getPhase6Shipment(shipment.shipment_id)).payment_status, 'PAID');
+});
+
+test('credit create and usage request keys are idempotent without duplicate balances or audits', async () => {
+  const { db, wrappedDb } = await setupTestDb();
+  const repo = createShippingDiRepository(wrappedDb);
+  const shipment = await loadedShipmentWithFinalInvoice(repo, db);
+  const payload = { customerId: 'C1', amount: 100, reason: 'Commercial adjustment', requestKey: 'credit-create-1' };
+
+  const created = await repo.createCustomerCredit(payload, 'U_EXPORT');
+  const createdAgain = await repo.createCustomerCredit(payload, 'U_EXPORT');
+  assert.equal(createdAgain.credit_id, created.credit_id);
+  assert.equal(db.prepare('SELECT COUNT(*) AS n FROM customer_credits').get().n, 1);
+  assert.equal(db.prepare("SELECT COUNT(*) AS n FROM shipment_audit_events WHERE event_type = 'CUSTOMER_CREDIT_CREATED'").get().n, 1);
+
+  const used = await repo.useCustomerCredit(shipment.shipment_id, { creditId: created.credit_id, amount: 40, requestKey: 'credit-use-1' }, 'U_EXPORT');
+  const usedAgain = await repo.useCustomerCredit(shipment.shipment_id, { creditId: created.credit_id, amount: 40, requestKey: 'credit-use-1' }, 'U_EXPORT');
+  assert.equal(usedAgain.shipment_id, used.shipment_id);
+  assert.equal((await repo.listCustomerCredits({ customerId: 'C1' }))[0].remaining_amount, 60);
+  assert.equal(db.prepare('SELECT COUNT(*) AS n FROM customer_credit_usages').get().n, 1);
+  assert.equal(db.prepare("SELECT COUNT(*) AS n FROM shipment_audit_events WHERE event_type = 'CUSTOMER_CREDIT_USED'").get().n, 1);
+
+  await repo.useCustomerCredit(shipment.shipment_id, { creditId: created.credit_id, amount: 20, requestKey: 'credit-use-2' }, 'U_EXPORT');
+  assert.equal((await repo.listCustomerCredits({ customerId: 'C1' }))[0].remaining_amount, 40);
+
+  const concurrentCreates = await Promise.all([
+    repo.createCustomerCredit({ customerId: 'C1', amount: 100, reason: 'Concurrent adjustment', requestKey: 'credit-create-race' }, 'U_EXPORT'),
+    repo.createCustomerCredit({ customerId: 'C1', amount: 100, reason: 'Concurrent adjustment', requestKey: 'credit-create-race' }, 'U_EXPORT')
+  ]);
+  assert.equal(concurrentCreates[0].credit_id, concurrentCreates[1].credit_id);
+  const concurrentUses = await Promise.all([
+    repo.useCustomerCredit(shipment.shipment_id, { creditId: concurrentCreates[0].credit_id, amount: 40, requestKey: 'credit-use-race' }, 'U_EXPORT'),
+    repo.useCustomerCredit(shipment.shipment_id, { creditId: concurrentCreates[0].credit_id, amount: 40, requestKey: 'credit-use-race' }, 'U_EXPORT')
+  ]);
+  assert.equal(concurrentUses[0].shipment_id, concurrentUses[1].shipment_id);
+  assert.equal(db.prepare("SELECT COUNT(*) AS n FROM shipment_audit_events WHERE event_type = 'CUSTOMER_CREDIT_CREATED'").get().n, 2);
+  assert.equal(db.prepare("SELECT COUNT(*) AS n FROM shipment_audit_events WHERE event_type = 'CUSTOMER_CREDIT_USED'").get().n, 3);
+});
+
+test('credit allocation cannot exceed a Shipment FINAL obligation, including concurrent requests', async () => {
+  const { db, wrappedDb } = await setupTestDb();
+  const repo = createShippingDiRepository(wrappedDb);
+  const shipment = await loadedShipmentWithFinalInvoice(repo, db);
+  const credit = await repo.createCustomerCredit({ customerId: 'C1', amount: 200, reason: 'Commercial adjustment', requestKey: 'credit-limit-create' }, 'U_EXPORT');
+  await repo.updateShipmentPayment(shipment.shipment_id, { cashReceivedAmount: 3225 }, 'U_EXPORT');
+
+  await assert.rejects(
+    () => repo.useCustomerCredit(shipment.shipment_id, { creditId: credit.credit_id, amount: 101, requestKey: 'credit-limit-too-much' }, 'U_EXPORT'),
+    /CREDIT_SHIPMENT_BALANCE_EXCEEDED/
+  );
+  assert.equal((await repo.listCustomerCredits({ customerId: 'C1' }))[0].remaining_amount, 200);
+  assert.equal(db.prepare('SELECT COUNT(*) AS n FROM customer_credit_usages').get().n, 0);
+
+  const results = await Promise.allSettled([
+    repo.useCustomerCredit(shipment.shipment_id, { creditId: credit.credit_id, amount: 60, requestKey: 'credit-limit-race-1' }, 'U_EXPORT'),
+    repo.useCustomerCredit(shipment.shipment_id, { creditId: credit.credit_id, amount: 60, requestKey: 'credit-limit-race-2' }, 'U_EXPORT')
+  ]);
+  assert.equal(results.filter((result) => result.status === 'fulfilled').length, 1);
+  assert.match(String(results.find((result) => result.status === 'rejected').reason), /CREDIT_SHIPMENT_BALANCE_EXCEEDED/);
+  assert.equal((await repo.listCustomerCredits({ customerId: 'C1' }))[0].remaining_amount, 140);
+  assert.equal(db.prepare('SELECT COUNT(*) AS n FROM customer_credit_usages').get().n, 1);
+});
+
+test('FINAL invoice materializes payment recorded before FINAL invoice creation', async () => {
+  const { db, wrappedDb } = await setupTestDb();
+  const repo = createShippingDiRepository(wrappedDb);
+  const shipment = await loadedShipmentForDocuments(repo, db);
+  await repo.updateShipmentPayment(shipment.shipment_id, { cashReceivedAmount: 3324 }, 'U_EXPORT');
+  db.prepare("INSERT INTO customer_credits (credit_id, customer_id, amount, reason, remaining_amount, request_key, created_by) VALUES ('CR-LEGACY', 'C1', 1, 'Prior credit', 0, 'legacy-credit-create', 'U_EXPORT')").run();
+  db.prepare("INSERT INTO customer_credit_usages (credit_usage_id, credit_id, shipment_id, amount, request_key, actor_id) VALUES ('CRU-LEGACY', 'CR-LEGACY', ?, 1, 'legacy-credit-use', 'U_EXPORT')").run(shipment.shipment_id);
+
+  await repo.createShipmentInvoice(shipment.shipment_id, {
+    invoiceNo: 'WCAT-FINAL-PREPAID', version: 'FINAL', invoiceDate: '2026-09-15',
+    lines: [{ poRevisionLineId: 'LINE-1', qtyMt: 9.5 }]
+  }, 'U_EXPORT');
+  assert.equal((await repo.getPhase6Shipment(shipment.shipment_id)).payment_status, 'PAID');
 });

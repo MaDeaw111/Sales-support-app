@@ -36,14 +36,19 @@ const SHIPMENT_DOCUMENT_PROPERTIES = [
   'dhlTrackingNo',
   'docsNote'
 ];
-const CUSTOMER_CREDIT_PROPERTIES = ['customerId', 'amount', 'reason'];
-const CUSTOMER_CREDIT_USAGE_PROPERTIES = ['creditId', 'amount', 'invoiceId'];
+const CUSTOMER_CREDIT_PROPERTIES = ['customerId', 'amount', 'reason', 'requestKey'];
+const CUSTOMER_CREDIT_USAGE_PROPERTIES = ['creditId', 'amount', 'invoiceId', 'requestKey'];
 const SHIPMENT_PAYMENT_PROPERTIES = ['cashReceivedAmount', 'paymentNote'];
 
 function codedError(code) {
   const error = new Error(code);
   error.code = code;
   return error;
+}
+
+function isSupportedMoneyAmount(value) {
+  return typeof value === 'number' && Number.isFinite(value) &&
+    Math.abs(value * 100 - Math.round(value * 100)) < 0.0000001;
 }
 
 export function validateServicePartner(dto) {
@@ -368,12 +373,14 @@ export function validateCustomerCredit(dto) {
     throw codedError('CREDIT_PROPERTY_INVALID');
   }
   const customerId = requiredId(dto.customerId, 'CREDIT_CUSTOMER_REQUIRED');
-  if (typeof dto.amount !== 'number' || !Number.isFinite(dto.amount) || dto.amount <= 0) {
+  if (!isSupportedMoneyAmount(dto.amount) || dto.amount <= 0) {
     throw codedError('CREDIT_AMOUNT_INVALID');
   }
   const reason = typeof dto.reason === 'string' ? dto.reason.trim() : '';
   if (!reason) throw codedError('CREDIT_REASON_REQUIRED');
-  return { customerId, amount: dto.amount, reason };
+  const requestKey = typeof dto.requestKey === 'string' ? dto.requestKey.trim() : '';
+  if (!requestKey || requestKey.length > 200) throw codedError('CREDIT_REQUEST_KEY_INVALID');
+  return { customerId, amount: dto.amount, reason, requestKey };
 }
 
 export function validateCustomerCreditUsage(dto) {
@@ -382,13 +389,15 @@ export function validateCustomerCreditUsage(dto) {
     throw codedError('CREDIT_USAGE_PROPERTY_INVALID');
   }
   const creditId = requiredId(dto.creditId, 'CREDIT_USAGE_CREDIT_REQUIRED');
-  if (typeof dto.amount !== 'number' || !Number.isFinite(dto.amount) || dto.amount <= 0) {
+  if (!isSupportedMoneyAmount(dto.amount) || dto.amount <= 0) {
     throw codedError('CREDIT_USAGE_AMOUNT_INVALID');
   }
   const invoiceId = dto.invoiceId === undefined || dto.invoiceId === null
     ? null
     : requiredId(dto.invoiceId, 'CREDIT_USAGE_INVOICE_INVALID');
-  return { creditId, amount: dto.amount, invoiceId };
+  const requestKey = typeof dto.requestKey === 'string' ? dto.requestKey.trim() : '';
+  if (!requestKey || requestKey.length > 200) throw codedError('CREDIT_USAGE_REQUEST_KEY_INVALID');
+  return { creditId, amount: dto.amount, invoiceId, requestKey };
 }
 
 export function validateShipmentPayment(dto) {
@@ -396,7 +405,7 @@ export function validateShipmentPayment(dto) {
   if (Object.keys(dto).some((property) => !SHIPMENT_PAYMENT_PROPERTIES.includes(property))) {
     throw codedError('PAYMENT_PROPERTY_INVALID');
   }
-  if (typeof dto.cashReceivedAmount !== 'number' || !Number.isFinite(dto.cashReceivedAmount) || dto.cashReceivedAmount < 0) {
+  if (!isSupportedMoneyAmount(dto.cashReceivedAmount) || dto.cashReceivedAmount < 0) {
     throw codedError('PAYMENT_CASH_RECEIVED_AMOUNT_INVALID');
   }
   if (dto.paymentNote !== undefined && dto.paymentNote !== null && typeof dto.paymentNote !== 'string') {

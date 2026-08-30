@@ -254,7 +254,7 @@ test('Customer Credit and Payment routes expose reads and restrict writes to ope
     },
     resolveUser: async () => caller
   });
-  const creditPayload = { customerId: 'C1', amount: 100, reason: 'Commercial adjustment' };
+  const creditPayload = { customerId: 'C1', amount: 100, reason: 'Commercial adjustment', requestKey: 'route-credit-create' };
   const paymentPayload = { cashReceivedAmount: 50, paymentNote: 'Partial collection' };
 
   const created = await handler(request('/api/customer-credits', 'POST', creditPayload));

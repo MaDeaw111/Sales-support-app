@@ -158,6 +158,7 @@ CREATE TABLE customer_credits (
   amount REAL NOT NULL CHECK(amount > 0),
   reason TEXT NOT NULL CHECK(trim(reason) <> ''),
   remaining_amount REAL NOT NULL CHECK(remaining_amount >= 0 AND remaining_amount <= amount),
+  request_key TEXT NOT NULL UNIQUE CHECK(trim(request_key) <> ''),
   created_by TEXT NOT NULL REFERENCES users(user_id),
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
@@ -168,6 +169,7 @@ CREATE TABLE customer_credit_usages (
   shipment_id TEXT NOT NULL REFERENCES phase6_shipments(shipment_id),
   invoice_id TEXT REFERENCES shipment_invoices(invoice_id),
   amount REAL NOT NULL CHECK(amount > 0),
+  request_key TEXT NOT NULL UNIQUE CHECK(trim(request_key) <> ''),
   actor_id TEXT NOT NULL REFERENCES users(user_id),
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );

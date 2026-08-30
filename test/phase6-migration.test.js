@@ -188,7 +188,7 @@ test('Phase 6 credit schema is lightweight and accepts the approved payment audi
   db.prepare("INSERT INTO users (user_id, email, password_hash, password_salt, role, status, full_name) VALUES ('U1', 'export@example.com', 'hash', 'salt', 'EXPORT', 'ACTIVE', 'Export User')").run();
 
   const creditColumns = db.prepare('PRAGMA table_info(customer_credits)').all().map((column) => column.name);
-  assert.deepEqual(creditColumns, ['credit_id', 'customer_id', 'amount', 'reason', 'remaining_amount', 'created_by', 'created_at']);
+  assert.deepEqual(creditColumns, ['credit_id', 'customer_id', 'amount', 'reason', 'remaining_amount', 'request_key', 'created_by', 'created_at']);
   for (const [eventId, eventType] of [
     ['EVT-CREDIT-1', 'CUSTOMER_CREDIT_CREATED'],
     ['EVT-CREDIT-2', 'CUSTOMER_CREDIT_USED'],
@@ -197,4 +197,19 @@ test('Phase 6 credit schema is lightweight and accepts the approved payment audi
     db.prepare('INSERT INTO shipment_audit_events (event_id, entity_type, entity_id, event_type, actor_id) VALUES (?, ?, ?, ?, ?)')
       .run(eventId, eventType.startsWith('CUSTOMER') ? 'CREDIT' : 'SHIPMENT', 'SHP-1', eventType, 'U1');
   }
+});
+
+test('Phase 6 credit request keys are unique for idempotent creation and usage', async () => {
+  const db = await setupThrough0006();
+  db.exec(await readMigration('0007_shipping_di_integration.sql'));
+  seedDeliveryInstructionReferences(db);
+
+  const creditColumns = db.prepare('PRAGMA table_info(customer_credits)').all().map((column) => column.name);
+  const usageColumns = db.prepare('PRAGMA table_info(customer_credit_usages)').all().map((column) => column.name);
+  assert.ok(creditColumns.includes('request_key'));
+  assert.ok(usageColumns.includes('request_key'));
+  const creditSql = db.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'customer_credits'").get().sql;
+  const usageSql = db.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'customer_credit_usages'").get().sql;
+  assert.match(creditSql, /request_key\s+TEXT\s+NOT\s+NULL\s+UNIQUE/i);
+  assert.match(usageSql, /request_key\s+TEXT\s+NOT\s+NULL\s+UNIQUE/i);
 });

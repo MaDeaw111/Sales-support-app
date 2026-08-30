@@ -389,10 +389,26 @@ function auditAfterMutationStatement(db, entityType, entityId, eventType, actorI
 
 async function findCustomerCredit(db, creditId) {
   return db.prepare(`
-    SELECT credit_id, customer_id, amount, reason, remaining_amount, created_by, created_at
+    SELECT credit_id, customer_id, amount, reason, remaining_amount, request_key, created_by, created_at
     FROM customer_credits
     WHERE credit_id = ?
   `).bind(creditId).first();
+}
+
+async function findCustomerCreditByRequestKey(db, requestKey) {
+  return db.prepare(`
+    SELECT credit_id, customer_id, amount, reason, remaining_amount, request_key, created_by, created_at
+    FROM customer_credits
+    WHERE request_key = ?
+  `).bind(requestKey).first();
+}
+
+async function findCustomerCreditUsageByRequestKey(db, requestKey) {
+  return db.prepare(`
+    SELECT credit_usage_id, shipment_id
+    FROM customer_credit_usages
+    WHERE request_key = ?
+  `).bind(requestKey).first();
 }
 
 async function findShipmentCustomer(db, shipmentId) {
@@ -404,27 +420,42 @@ async function findShipmentCustomer(db, shipmentId) {
   `).bind(shipmentId).first();
 }
 
-function paymentStatusExpression(cashExpression) {
-  const finalTotal = `COALESCE((
+function finalInvoiceCountExpression(shipmentExpression = 'phase6_shipments.shipment_id') {
+  return `(SELECT COUNT(*) FROM shipment_invoices invoice WHERE invoice.shipment_id = ${shipmentExpression} AND invoice.version = 'FINAL')`;
+}
+
+function finalInvoiceTotalExpression(shipmentExpression = 'phase6_shipments.shipment_id') {
+  return `ROUND(COALESCE((
     SELECT SUM(invoice_line.line_amount)
     FROM shipment_invoice_lines invoice_line
     JOIN shipment_invoices invoice ON invoice.invoice_id = invoice_line.invoice_id
-    WHERE invoice.shipment_id = phase6_shipments.shipment_id AND invoice.version = 'FINAL'
-  ), 0)`;
-  const allocatedCredit = `COALESCE((
+    WHERE invoice.shipment_id = ${shipmentExpression} AND invoice.version = 'FINAL'
+  ), 0), 2)`;
+}
+
+function allocatedCreditExpression(shipmentExpression = 'phase6_shipments.shipment_id') {
+  return `ROUND(COALESCE((
     SELECT SUM(usage.amount)
     FROM customer_credit_usages usage
-    WHERE usage.shipment_id = phase6_shipments.shipment_id
-  ), 0)`;
-  const covered = `(${cashExpression} + ${allocatedCredit})`;
+    WHERE usage.shipment_id = ${shipmentExpression}
+  ), 0), 2)`;
+}
+
+function paymentStatusExpression(cashExpression) {
+  const finalInvoiceCount = finalInvoiceCountExpression();
+  const finalTotal = finalInvoiceTotalExpression();
+  const allocatedCredit = allocatedCreditExpression();
+  const covered = `ROUND(${cashExpression} + ${allocatedCredit}, 2)`;
   return `CASE
-    WHEN ${finalTotal} <= 0 OR ${covered} <= 0 THEN 'UNPAID'
+    WHEN ${finalInvoiceCount} = 0 THEN 'UNPAID'
+    WHEN ${finalTotal} = 0 THEN 'PAID'
+    WHEN ${covered} <= 0 THEN 'UNPAID'
     WHEN ${covered} >= ${finalTotal} THEN 'PAID'
     ELSE 'PARTIAL'
   END`;
 }
 
-function paymentUpdateStatement(db, shipmentId, actorId, payment = null, requiredCreditUsageId = null) {
+function paymentUpdateStatement(db, shipmentId, actorId, payment = null, requiredCreditUsageId = null, requiredInvoiceState = null) {
   const cashExpression = payment ? '?' : 'cash_received_amount';
   const fields = payment
     ? `cash_received_amount = ?, payment_note = ?,`
@@ -438,12 +469,57 @@ function paymentUpdateStatement(db, shipmentId, actorId, payment = null, require
         updated_by = ?, updated_at = CURRENT_TIMESTAMP
     WHERE shipment_id = ?
       ${requiredCreditUsageId ? 'AND EXISTS (SELECT 1 FROM customer_credit_usages WHERE credit_usage_id = ?)' : ''}
+      ${requiredInvoiceState ? `AND EXISTS (
+        SELECT 1 FROM shipment_invoices
+        WHERE invoice_id = ? AND version = ? AND invoice_version = ? AND invoice_write_token = ?
+          ${requiredInvoiceState.finalContainerVersion === null ? 'AND final_container_version IS NULL' : 'AND final_container_version = ?'}
+      )` : ''}
   `).bind(
     ...parameters,
     actorId,
     shipmentId,
-    ...(requiredCreditUsageId ? [requiredCreditUsageId] : [])
+    ...(requiredCreditUsageId ? [requiredCreditUsageId] : []),
+    ...(requiredInvoiceState ? [
+      requiredInvoiceState.invoiceId,
+      requiredInvoiceState.version,
+      requiredInvoiceState.invoiceVersion,
+      requiredInvoiceState.writeToken,
+      ...(requiredInvoiceState.finalContainerVersion === null ? [] : [requiredInvoiceState.finalContainerVersion])
+    ] : [])
   );
+}
+
+async function findShipmentPaymentSummary(db, shipmentId) {
+  return db.prepare(`
+    SELECT cash_received_amount,
+           ${finalInvoiceCountExpression('shipment.shipment_id')} AS final_invoice_count,
+           ${finalInvoiceTotalExpression('shipment.shipment_id')} AS final_total,
+           ${allocatedCreditExpression('shipment.shipment_id')} AS allocated_credit
+    FROM phase6_shipments shipment
+    WHERE shipment.shipment_id = ?
+  `).bind(shipmentId).first();
+}
+
+function moneyCents(value) {
+  return Math.round(Number(value || 0) * 100);
+}
+
+function creditUsageReservationStatement(db, shipmentId, creditId, customerId, amount) {
+  const finalInvoiceCount = finalInvoiceCountExpression('shipment.shipment_id');
+  const finalTotal = finalInvoiceTotalExpression('shipment.shipment_id');
+  const allocatedCredit = allocatedCreditExpression('shipment.shipment_id');
+  return db.prepare(`
+    UPDATE customer_credits
+    SET remaining_amount = ROUND(remaining_amount - ?, 2)
+    WHERE credit_id = ? AND customer_id = ? AND ROUND(remaining_amount, 2) >= ROUND(?, 2)
+      AND EXISTS (
+        SELECT 1
+        FROM phase6_shipments shipment
+        WHERE shipment.shipment_id = ?
+          AND ${finalInvoiceCount} > 0
+          AND ROUND(${finalTotal} - ROUND(shipment.cash_received_amount + ${allocatedCredit}, 2), 2) >= ROUND(?, 2)
+      )
+  `).bind(amount, creditId, customerId, amount, shipmentId, amount);
 }
 
 function mutationApplied(result) {
@@ -1209,20 +1285,29 @@ export function createShippingDiRepository(db) {
 
     async createCustomerCredit(dto, actorId) {
       const credit = validateCustomerCredit(dto);
+      const prior = await findCustomerCreditByRequestKey(db, credit.requestKey);
+      if (prior) return prior;
       const customer = await db.prepare('SELECT customer_id FROM customers WHERE customer_id = ?').bind(credit.customerId).first();
       if (!customer) throw codedError('CREDIT_CUSTOMER_NOT_FOUND');
       const creditId = `CR-${crypto.randomUUID()}`;
-      await db.batch([
-        db.prepare(`
-          INSERT INTO customer_credits (credit_id, customer_id, amount, reason, remaining_amount, created_by)
-          VALUES (?, ?, ?, ?, ?, ?)
-        `).bind(creditId, credit.customerId, credit.amount, credit.reason, credit.amount, actorId),
-        auditStatement(db, 'CREDIT', creditId, 'CUSTOMER_CREDIT_CREATED', actorId, {
-          customerId: credit.customerId,
-          amount: credit.amount,
-          reason: credit.reason
-        })
-      ]);
+      try {
+        await db.batch([
+          db.prepare(`
+            INSERT INTO customer_credits (credit_id, customer_id, amount, reason, remaining_amount, request_key, created_by)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+          `).bind(creditId, credit.customerId, credit.amount, credit.reason, credit.amount, credit.requestKey, actorId),
+          auditStatement(db, 'CREDIT', creditId, 'CUSTOMER_CREDIT_CREATED', actorId, {
+            customerId: credit.customerId,
+            amount: credit.amount,
+            reason: credit.reason
+          })
+        ]);
+      } catch (error) {
+        if (!String(error?.message || '').includes('UNIQUE constraint failed: customer_credits.request_key')) throw error;
+        const duplicate = await findCustomerCreditByRequestKey(db, credit.requestKey);
+        if (duplicate) return duplicate;
+        throw error;
+      }
       return findCustomerCredit(db, creditId);
     },
 
@@ -1270,6 +1355,8 @@ export function createShippingDiRepository(db) {
 
     async useCustomerCredit(shipmentId, dto, actorId) {
       const usage = validateCustomerCreditUsage(dto);
+      const priorUsage = await findCustomerCreditUsageByRequestKey(db, usage.requestKey);
+      if (priorUsage) return findPhase6Shipment(db, priorUsage.shipment_id);
       const shipment = await findShipmentCustomer(db, shipmentId);
       if (!shipment) throw codedError('SHIPMENT_NOT_FOUND');
       const credit = await findCustomerCredit(db, usage.creditId);
@@ -1284,19 +1371,22 @@ export function createShippingDiRepository(db) {
         if (!invoice) throw codedError('CREDIT_INVOICE_SHIPMENT_MISMATCH');
       }
       if (Number(credit.remaining_amount) < usage.amount) throw codedError('CREDIT_BALANCE_EXCEEDED');
+      const paymentSummary = await findShipmentPaymentSummary(db, shipmentId);
+      if (!paymentSummary || Number(paymentSummary.final_invoice_count) === 0 ||
+        moneyCents(usage.amount) > moneyCents(paymentSummary.final_total) - moneyCents(paymentSummary.cash_received_amount) - moneyCents(paymentSummary.allocated_credit)) {
+        throw codedError('CREDIT_SHIPMENT_BALANCE_EXCEEDED');
+      }
 
       const usageId = `CRU-${crypto.randomUUID()}`;
-      const results = await db.batch([
+      let results;
+      try {
+        results = await db.batch([
+        creditUsageReservationStatement(db, shipmentId, usage.creditId, shipment.customer_id, usage.amount),
         db.prepare(`
-          UPDATE customer_credits
-          SET remaining_amount = remaining_amount - ?
-          WHERE credit_id = ? AND customer_id = ? AND remaining_amount >= ?
-        `).bind(usage.amount, usage.creditId, shipment.customer_id, usage.amount),
-        db.prepare(`
-          INSERT INTO customer_credit_usages (credit_usage_id, credit_id, shipment_id, invoice_id, amount, actor_id)
-          SELECT ?, ?, ?, ?, ?, ?
+          INSERT INTO customer_credit_usages (credit_usage_id, credit_id, shipment_id, invoice_id, amount, request_key, actor_id)
+          SELECT ?, ?, ?, ?, ?, ?, ?
           WHERE changes() = 1
-        `).bind(usageId, usage.creditId, shipmentId, usage.invoiceId, usage.amount, actorId),
+        `).bind(usageId, usage.creditId, shipmentId, usage.invoiceId, usage.amount, usage.requestKey, actorId),
         paymentUpdateStatement(db, shipmentId, actorId, null, usageId),
         db.prepare(`
           INSERT INTO shipment_audit_events (event_id, entity_type, entity_id, event_type, actor_id, metadata_json)
@@ -1320,8 +1410,18 @@ export function createShippingDiRepository(db) {
           JSON.stringify({ creditId: usage.creditId, amount: usage.amount }),
           usageId
         )
-      ]);
-      if (!mutationApplied(results[0]) || !mutationApplied(results[1])) throw codedError('CREDIT_BALANCE_EXCEEDED');
+        ]);
+      } catch (error) {
+        if (!String(error?.message || '').includes('UNIQUE constraint failed: customer_credit_usages.request_key')) throw error;
+        const duplicate = await findCustomerCreditUsageByRequestKey(db, usage.requestKey);
+        if (duplicate) return findPhase6Shipment(db, duplicate.shipment_id);
+        throw error;
+      }
+      if (!mutationApplied(results[0]) || !mutationApplied(results[1])) {
+        const afterCredit = await findCustomerCredit(db, usage.creditId);
+        if (moneyCents(afterCredit?.remaining_amount) < moneyCents(usage.amount)) throw codedError('CREDIT_BALANCE_EXCEEDED');
+        throw codedError('CREDIT_SHIPMENT_BALANCE_EXCEEDED');
+      }
       return findPhase6Shipment(db, shipmentId);
     },
 
@@ -1351,6 +1451,7 @@ export function createShippingDiRepository(db) {
         writeToken: crypto.randomUUID()
       } : null;
       const invoiceState = {
+        invoiceId,
         version: invoice.version,
         invoiceVersion: 0,
         writeToken: invoiceWriteToken,
@@ -1390,6 +1491,7 @@ export function createShippingDiRepository(db) {
       ];
       if (invoice.version === 'FINAL') {
         statements.push(invoiceAuditForStateStatement(db, invoiceId, invoiceState, 'INVOICE_FINALIZED', actorId, { shipmentId }));
+        statements.push(paymentUpdateStatement(db, shipmentId, actorId, null, null, invoiceState));
       }
       try {
         const results = await db.batch(statements);
@@ -1454,7 +1556,7 @@ export function createShippingDiRepository(db) {
         version: Number(shipment.final_invoice_version) + 1,
         writeToken: crypto.randomUUID()
       };
-      const invoiceState = { version: 'FINAL', invoiceVersion: nextInvoiceVersion, writeToken: nextInvoiceWriteToken, finalContainerVersion };
+      const invoiceState = { invoiceId, version: 'FINAL', invoiceVersion: nextInvoiceVersion, writeToken: nextInvoiceWriteToken, finalContainerVersion };
       const results = await db.batch([
         finalInvoiceReservationStatement(db, shipment, resolved.lines, finalReservation),
         db.prepare(`
@@ -1479,7 +1581,8 @@ export function createShippingDiRepository(db) {
         invoiceAuditForStateStatement(db, invoiceId, invoiceState, 'INVOICE_FINALIZED', actorId, {
           shipmentId: shipment.shipment_id,
           invoiceNo: existing.invoice_no
-        })
+        }),
+        paymentUpdateStatement(db, shipment.shipment_id, actorId, null, null, invoiceState)
       ]);
       if (!mutationApplied(results[0]) || !mutationApplied(results[1])) throw codedError('INVOICE_NOT_PRELIMINARY');
       return findShipmentInvoice(db, invoiceId);
