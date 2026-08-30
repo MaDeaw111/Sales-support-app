@@ -31,3 +31,15 @@ The read-model and credit-usage route additions are additive Phase 6 APIs only. 
 
 - Focused frontend and RBAC tests: 18 passed.
 - Full suite: 281 passed; `git diff --check` completed without whitespace errors.
+
+## Final review correction round
+
+- Replaced every Phase 6 DI/Shipment detail action with escaped `data-*` attributes and one bound listener. This includes booking, schedule, containers, invoices, documents, payment, credit, back, and refresh actions; no detail action interpolates an identifier into inline JavaScript.
+- Detail refresh now reuses `selectedPhase6DeliveryInstructionId`, preserving a restricted caller's opaque `detail_ref` instead of substituting an internal DI identifier.
+- Added a reachable Cancel confirmed DI button, deliberately distinct from the Draft hard-delete action, and exercised its POST cancellation contract.
+- Customer-supplied DI numbers now preserve the exact entered value. The UI uses whitespace only to determine whether the optional field is blank, then sends the original string unchanged.
+
+### Final review verification
+
+- Focused frontend test suite: 15 passed.
+- Full suite: 285 passed; `git diff --check` completed without whitespace errors.

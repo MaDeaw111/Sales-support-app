@@ -213,3 +213,79 @@ test('list actions use data attributes and escape hostile DI labels', () => {
     delete globalThis.phase6StatusBadge;
   }
 });
+
+test('detail actions keep hostile IDs out of inline JavaScript and include confirmed cancellation', () => {
+  const detail = extractFunction('renderPhase6DeliveryInstructionDetail(di)');
+  assert.doesNotMatch(detail, /onclick=/);
+  assert.match(detail, /action\('cancel-confirmed'/);
+  assert.match(detail, /data-phase6-shipment-id=/);
+  const escape = new Function(`return (${extractFunction('escapePhase6Text(value)').trim()});`)();
+  const hostile = `S'1 <img src=x onerror=alert(1)>`;
+  globalThis.state = {
+    currentUser: { role: 'EXPORT' },
+    phase6ShipmentDetail: { shipment_id: hostile, status: 'PLANNING', containers: [] },
+    phase6PoBalances: [], phase6ShipmentInvoices: [], phase6ShipmentHistory: [], phase6CustomerCredits: []
+  };
+  globalThis.canEditPhase6Shipping = () => true;
+  globalThis.escapePhase6Text = escape;
+  globalThis.phase6PartnerOptions = () => '';
+  try {
+    const markup = new Function(`return (${detail.trim()});`)()({
+      di_id: hostile, di_no: hostile, di_status: 'CONFIRMED', status: 'CONFIRMED'
+    });
+    assert.doesNotMatch(markup, /onclick=/);
+    assert.match(markup, /data-phase6-shipment-id="S&#39;1 &lt;img src=x onerror=alert\(1\)&gt;"/);
+    assert.doesNotMatch(markup, /<img src=x onerror=alert/);
+  } finally {
+    delete globalThis.state;
+    delete globalThis.canEditPhase6Shipping;
+    delete globalThis.escapePhase6Text;
+    delete globalThis.phase6PartnerOptions;
+  }
+});
+
+test('Phase 6 refresh actions use the selected opaque reference', () => {
+  const binding = extractFunction('bindPhase6WorkspaceActions(container)');
+  assert.match(binding, /refresh-detail/);
+  assert.match(binding, /state\.selectedPhase6DeliveryInstructionId/);
+  assert.match(binding, /cancelConfirmedPhase6DeliveryInstruction/);
+});
+
+test('confirmed DI cancellation uses its separate cancellation endpoint', async () => {
+  const cancel = extractFunction('cancelConfirmedPhase6DeliveryInstruction(diId)');
+  globalThis.state = {
+    selectedPhase6DeliveryInstructionId: 'DI1',
+    deliveryInstructions: [{ di_id: 'DI1', di_status: 'CONFIRMED' }]
+  };
+  globalThis.prompt = () => 'Customer cancellation';
+  globalThis.fetch = async (url, options) => {
+    assert.equal(url, '/api/delivery-instructions/DI1/cancel');
+    assert.equal(options.method, 'POST');
+    assert.deepEqual(JSON.parse(options.body), { note: 'Customer cancellation' });
+    return success({ deliveryInstruction: { di_id: 'DI1', status: 'CANCELLED' } });
+  };
+  globalThis.clearPhase6DeliveryInstructionSelection = () => {};
+  globalThis.refreshPhase6ShippingWorkspace = async () => {};
+  try {
+    await new Function(`return (${cancel.trim()});`)()();
+  } finally {
+    delete globalThis.state;
+    delete globalThis.prompt;
+    delete globalThis.fetch;
+    delete globalThis.clearPhase6DeliveryInstructionSelection;
+    delete globalThis.refreshPhase6ShippingWorkspace;
+  }
+});
+
+test('optional customer DI numbers retain supplied whitespace while blank input becomes null', () => {
+  const optionalDiNo = extractFunction('phase6OptionalCustomerDiNo(elementId)');
+  globalThis.document = { getElementById: () => ({ value: '  Customer DI  ' }) };
+  try {
+    const fn = new Function(`return (${optionalDiNo.trim()});`)();
+    assert.equal(fn('phase6NewDiNo'), '  Customer DI  ');
+    globalThis.document = { getElementById: () => ({ value: '   ' }) };
+    assert.equal(fn('phase6NewDiNo'), null);
+  } finally {
+    delete globalThis.document;
+  }
+});
