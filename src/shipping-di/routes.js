@@ -34,52 +34,36 @@ function pick(record, fields) {
     .map((field) => [field, record[field]]));
 }
 
-function projectLinesForOperationalRead(lines) {
-  if (!Array.isArray(lines)) return undefined;
-  return lines.map((line) => pick(line, [
-    'di_line_id', 'po_revision_line_id', 'product_id', 'product_code', 'product_name',
-    'planned_qty_mt', 'qty_mt', 'net_weight_mt', 'number_of_bags', 'packing_snapshot', 'packing', 'packaging'
-  ]));
-}
-
-function projectContainersForOperationalRead(containers) {
-  if (!Array.isArray(containers)) return undefined;
-  return containers.map((container) => ({
-    ...pick(container, [
-      'container_id', 'container_no', 'container_type', 'seal_no', 'loading_date', 'status', 'total_net_weight_mt'
-    ]),
-    ...(Array.isArray(container.lines) ? { lines: projectLinesForOperationalRead(container.lines) } : {})
-  }));
+function pickPresent(record, fields) {
+  return Object.fromEntries(fields
+    .filter((field) => Object.hasOwn(record, field) && record[field] !== null && record[field] !== undefined)
+    .map((field) => [field, record[field]]));
 }
 
 export function projectShippingDiForRole(record, caller) {
   if (!record || !caller) return record;
-  if (!['EXTERNAL_SALES', 'PRODUCTION_WAREHOUSE'].includes(caller.role)) return record;
-
-  const isShipment = Object.hasOwn(record, 'shipment_id');
-  const fields = caller.role === 'PRODUCTION_WAREHOUSE'
-    ? (isShipment
-      ? [
-          'shipment_id', 'di_id', 'status', 'planned_loading_date', 'actual_loading_date',
-          'schedule_result', 'actual_qty_mt', 'container_plan', 'lines', 'containers'
-        ]
-      : [
-          'di_id', 'customer_id', 'di_no', 'shipping_month', 'shipping_period', 'status',
-          'planned_qty_mt', 'actual_qty_mt', 'container_plan', 'lines', 'containers'
-        ])
-    : (isShipment
-      ? [
-          'shipment_id', 'di_id', 'customer_id', 'status', 'booking_no', 'vessel', 'etd', 'eta',
-          'planned_loading_date', 'actual_loading_date', 'schedule_result', 'actual_qty_mt', 'lines', 'containers'
-        ]
-      : [
-          'di_id', 'customer_id', 'po_id', 'po_revision_id', 'di_no', 'shipping_month',
-          'shipping_period', 'status', 'lines', 'planned_qty_mt', 'actual_qty_mt', 'container_plan'
-        ]);
-  const projection = pick(record, fields);
-  if (Array.isArray(record.lines)) projection.lines = projectLinesForOperationalRead(record.lines);
-  if (Array.isArray(record.containers)) projection.containers = projectContainersForOperationalRead(record.containers);
-  return projection;
+  if (caller.role === 'EXTERNAL_SALES') {
+    return pickPresent(record, [
+      'di_no', 'status', 'booking_no', 'vessel', 'etd', 'eta',
+      'planned_loading_date', 'actual_loading_date', 'schedule_result'
+    ]);
+  }
+  if (caller.role === 'PRODUCTION_WAREHOUSE') {
+    return {
+      ...pickPresent(record, ['planned_loading_date', 'actual_loading_date']),
+      products: (record.products || []).map((product) => pick(product, [
+        'product_code', 'product_name', 'planned_qty_mt', 'packing_snapshot'
+      ])),
+      container_plan: (record.container_plan || []).map((plan) => pick(plan, ['container_type', 'container_count'])),
+      containers: (record.containers || []).map((container) => ({
+        ...pick(container, ['container_no', 'seal_no']),
+        lines: (container.lines || []).map((line) => pick(line, [
+          'product_code', 'product_name', 'number_of_bags', 'qty_mt'
+        ]))
+      }))
+    };
+  }
+  return record;
 }
 
 export function createShippingDiHandler({ repo, resolveUser, db }) {
@@ -221,7 +205,9 @@ export function createShippingDiHandler({ repo, resolveUser, db }) {
     const deliveryInstructionShipmentMatch = path.match(/^\/api\/delivery-instructions\/([^/]+)\/shipment$/);
     if (deliveryInstructionShipmentMatch && method === 'GET') {
       if (!PHASE6_READ_ROLES.includes(caller.role)) return json({ status: 'ERROR', message: 'Permission denied.' }, 403);
-      const shipment = await activeRepo.getPhase6Shipment(decodeURIComponent(deliveryInstructionShipmentMatch[1]));
+      const shipment = typeof activeRepo.getPhase6ShipmentForDeliveryInstruction === 'function'
+        ? await activeRepo.getPhase6ShipmentForDeliveryInstruction(decodeURIComponent(deliveryInstructionShipmentMatch[1]))
+        : await activeRepo.getPhase6Shipment(decodeURIComponent(deliveryInstructionShipmentMatch[1]));
       if (!shipment) return json({ status: 'ERROR', message: 'SHIPMENT_NOT_FOUND' }, 404);
       if (!await canReadShippingDiRecord(caller, shipment)) return json({ status: 'ERROR', message: 'Permission denied.' }, 403);
       return json({ status: 'SUCCESS', data: { shipment: projectShippingDiForRole(shipment, caller) } });
@@ -230,7 +216,9 @@ export function createShippingDiHandler({ repo, resolveUser, db }) {
     const shipmentMatch = path.match(/^\/api\/shipments-v2\/([^/]+)$/);
     if (shipmentMatch && method === 'GET') {
       if (!PHASE6_READ_ROLES.includes(caller.role)) return json({ status: 'ERROR', message: 'Permission denied.' }, 403);
-      const shipment = await activeRepo.getPhase6Shipment(decodeURIComponent(shipmentMatch[1]));
+      const shipment = typeof activeRepo.getPhase6ShipmentById === 'function'
+        ? await activeRepo.getPhase6ShipmentById(decodeURIComponent(shipmentMatch[1]))
+        : await activeRepo.getPhase6Shipment(decodeURIComponent(shipmentMatch[1]));
       if (!shipment) return json({ status: 'ERROR', message: 'SHIPMENT_NOT_FOUND' }, 404);
       if (!await canReadShippingDiRecord(caller, shipment)) return json({ status: 'ERROR', message: 'Permission denied.' }, 403);
       return json({ status: 'SUCCESS', data: { shipment: projectShippingDiForRole(shipment, caller) } });

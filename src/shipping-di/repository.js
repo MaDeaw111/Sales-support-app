@@ -137,6 +137,78 @@ async function listShipmentContainers(db, shipmentId) {
   }));
 }
 
+async function findPhase6ShipmentReadModel(db, identifier, lookupField) {
+  const shipment = await db.prepare(`
+    SELECT shipment.shipment_id, shipment.di_id, instruction.customer_id, instruction.di_no,
+           shipment.status, shipment.booking_no, shipment.forwarder_partner_id,
+           shipment.shipping_line_partner_id, shipment.trucking_partner_id, shipment.vessel,
+           shipment.etd, shipment.eta, shipment.planned_loading_date, shipment.actual_loading_date,
+           shipment.schedule_result, shipment.schedule_note, shipment.all_ship_docs_drive_url,
+           shipment.digital_docs_sent_date, shipment.original_docs_required, shipment.dhl_sent_date,
+           shipment.dhl_tracking_no, shipment.docs_note, shipment.cash_received_amount,
+           shipment.payment_status, shipment.payment_note, shipment.cancellation_note,
+           shipment.created_by, shipment.created_at, shipment.updated_by, shipment.updated_at
+    FROM phase6_shipments shipment
+    JOIN delivery_instructions instruction ON instruction.di_id = shipment.di_id
+    WHERE shipment.${lookupField} = ?
+  `).bind(identifier).first();
+  if (!shipment) return null;
+
+  const { results: products } = await db.prepare(`
+    SELECT product.product_code, product.product_name, instruction_line.planned_qty_mt,
+           instruction_line.packing_snapshot
+    FROM delivery_instruction_lines instruction_line
+    JOIN products product ON product.product_id = instruction_line.product_id
+    WHERE instruction_line.di_id = ?
+    ORDER BY instruction_line.di_line_id ASC
+  `).bind(shipment.di_id).all();
+
+  const { results: containerRows } = await db.prepare(`
+    SELECT container.container_no, container.container_type, container.seal_no,
+           product.product_code, product.product_name, container_line.number_of_bags,
+           container_line.qty_mt
+    FROM shipment_containers container
+    LEFT JOIN shipment_container_lines container_line ON container_line.container_id = container.container_id
+    LEFT JOIN delivery_instruction_lines instruction_line ON instruction_line.di_line_id = container_line.delivery_instruction_line_id
+    LEFT JOIN products product ON product.product_id = instruction_line.product_id
+    WHERE container.shipment_id = ? AND container.status <> 'CANCELLED'
+    ORDER BY container.rowid ASC, container_line.rowid ASC
+  `).bind(shipment.shipment_id).all();
+  const containersByNumber = new Map();
+  for (const row of containerRows || []) {
+    if (!containersByNumber.has(row.container_no)) {
+      containersByNumber.set(row.container_no, {
+        container_no: row.container_no,
+        container_type: row.container_type,
+        seal_no: row.seal_no,
+        lines: []
+      });
+    }
+    if (row.product_code) {
+      containersByNumber.get(row.container_no).lines.push({
+        product_code: row.product_code,
+        product_name: row.product_name,
+        number_of_bags: Number(row.number_of_bags),
+        qty_mt: Number(row.qty_mt)
+      });
+    }
+  }
+  const containers = [...containersByNumber.values()];
+  const planCounts = new Map();
+  for (const container of containers) {
+    if (container.container_type) {
+      planCounts.set(container.container_type, Number(planCounts.get(container.container_type) || 0) + 1);
+    }
+  }
+  return {
+    ...shipment,
+    products: (products || []).map((product) => ({ ...product, planned_qty_mt: Number(product.planned_qty_mt) })),
+    // A Phase 6 container plan is a display-only count grouped from actual, non-cancelled container types.
+    container_plan: [...planCounts].map(([container_type, container_count]) => ({ container_type, container_count })),
+    containers
+  };
+}
+
 async function findShipmentInvoice(db, invoiceId) {
   const invoice = await db.prepare(`
     SELECT invoice_id, shipment_id, invoice_no, invoice_date, currency, version, invoice_version, invoice_write_token, final_container_version,
@@ -1667,6 +1739,14 @@ export function createShippingDiRepository(db) {
 
     async getPhase6Shipment(identifier) {
       return findPhase6Shipment(db, identifier);
+    },
+
+    async getPhase6ShipmentById(shipmentId) {
+      return findPhase6ShipmentReadModel(db, shipmentId, 'shipment_id');
+    },
+
+    async getPhase6ShipmentForDeliveryInstruction(diId) {
+      return findPhase6ShipmentReadModel(db, diId, 'di_id');
     },
 
     async listDeliveryInstructions(filters = {}) {
