@@ -70,6 +70,7 @@ export default {
 
     if (
       url.pathname === '/api/service-partners' || url.pathname.startsWith('/api/service-partners/') ||
+      url.pathname === '/api/customer-credits' || url.pathname.startsWith('/api/customer-credits/') ||
       url.pathname === '/api/delivery-instructions' || url.pathname.startsWith('/api/delivery-instructions/') ||
       url.pathname === '/api/shipments-v2' || url.pathname.startsWith('/api/shipments-v2/')
     ) {

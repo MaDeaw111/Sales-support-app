@@ -68,6 +68,18 @@ test('PUT /api/shipments-v2/:id/booking lets operational writers record focused 
   assert.equal(calls.length, 1);
 });
 
+test('Phase 6 rejects generic Shipment PATCH and exposes focused business actions', async () => {
+  const handler = createShippingDiHandler({
+    repo: {
+      recordShipmentBooking: async () => ({ shipment_id: 'S1', booking_no: 'BK1' })
+    },
+    resolveUser: async () => ({ user_id: 'U_EXPORT', role: 'EXPORT' })
+  });
+
+  assert.equal((await handler(request('/api/shipments-v2/S1', 'PATCH', {}))).status, 404);
+  assert.equal((await handler(request('/api/shipments-v2/S1/booking', 'PUT', { bookingNo: 'BK1' }))).status, 200);
+});
+
 test('PUT /api/shipments-v2/:id/schedule lets operational writers update loading dates', async () => {
   const calls = [];
   const scheduled = { shipment_id: 'SHP-1', status: 'LOADED', actual_loading_date: '2026-09-15', schedule_result: 'ON_PLAN' };
@@ -153,6 +165,16 @@ test('Phase 6 Shipment routes require authentication and map missing records to 
 test('worker dispatches the /api/shipments-v2 namespace to the Phase 6 handler', async () => {
   const response = await worker.fetch(
     request('/api/shipments-v2/SHP-1/booking', 'PUT', { bookingNo: 'BK-01' }),
+    { DB: {} }
+  );
+
+  assert.equal(response.status, 401);
+  assert.equal((await response.json()).message, 'Authentication required.');
+});
+
+test('worker dispatches the /api/customer-credits namespace to the Phase 6 handler', async () => {
+  const response = await worker.fetch(
+    request('/api/customer-credits?customerId=C1'),
     { DB: {} }
   );
 
