@@ -78,7 +78,8 @@ async function findPhase6Shipment(db, identifier) {
            trucking_partner_id, vessel, etd, eta, planned_loading_date, actual_loading_date,
            schedule_result, schedule_note, all_ship_docs_drive_url, digital_docs_sent_date,
            original_docs_required, dhl_sent_date, dhl_tracking_no, docs_note, cash_received_amount,
-           payment_status, payment_note, cancellation_note, container_version, created_by, created_at, updated_by, updated_at,
+           payment_status, payment_note, cancellation_note, container_version,
+           final_invoice_version, final_invoice_write_token, created_by, created_at, updated_by, updated_at,
            COALESCE((
              SELECT SUM(container_line.qty_mt)
              FROM shipment_containers container
@@ -221,6 +222,44 @@ async function resolveShipmentInvoiceLines(db, shipment, lines, { final, prelimi
     };
   });
   return { currency, lines: resolved };
+}
+
+function finalInvoiceReservationStatement(db, shipment, lines, reservation) {
+  const quantityGuards = lines.map(() => `
+    AND (
+      COALESCE((
+        SELECT SUM(invoice_line.qty_mt)
+        FROM shipment_invoice_lines invoice_line
+        JOIN shipment_invoices invoice ON invoice.invoice_id = invoice_line.invoice_id
+        WHERE invoice.shipment_id = phase6_shipments.shipment_id
+          AND invoice.version = 'FINAL'
+          AND invoice_line.po_revision_line_id = ?
+      ), 0) + ?
+    ) <= COALESCE((
+      SELECT SUM(container_line.qty_mt)
+      FROM shipment_container_lines container_line
+      JOIN shipment_containers container ON container.container_id = container_line.container_id
+      JOIN delivery_instruction_lines instruction_line ON instruction_line.di_line_id = container_line.delivery_instruction_line_id
+      WHERE container.shipment_id = phase6_shipments.shipment_id
+        AND container.status <> 'CANCELLED'
+        AND instruction_line.po_revision_line_id = ?
+    ), 0) + 0.000001
+  `).join('');
+  return db.prepare(`
+    UPDATE phase6_shipments
+    SET final_invoice_version = ?, final_invoice_write_token = ?, updated_at = CURRENT_TIMESTAMP
+    WHERE shipment_id = ? AND status = 'LOADED' AND container_version = ?
+      AND final_invoice_version = ? AND final_invoice_write_token IS ?
+      ${quantityGuards}
+  `).bind(
+    reservation.version,
+    reservation.writeToken,
+    shipment.shipment_id,
+    shipment.container_version,
+    shipment.final_invoice_version,
+    shipment.final_invoice_write_token,
+    ...lines.flatMap((line) => [line.poRevisionLineId, line.qtyMt, line.poRevisionLineId])
+  );
 }
 
 function shipmentInvoiceLineStatements(db, invoiceId, lines, actorId, invoiceState = null) {
@@ -1086,6 +1125,10 @@ export function createShippingDiRepository(db) {
       const invoiceId = `INV-${crypto.randomUUID()}`;
       const invoiceWriteToken = crypto.randomUUID();
       const finalContainerVersion = invoice.version === 'FINAL' ? Number(shipment.container_version) : null;
+      const finalReservation = invoice.version === 'FINAL' ? {
+        version: Number(shipment.final_invoice_version) + 1,
+        writeToken: crypto.randomUUID()
+      } : null;
       const invoiceState = {
         version: invoice.version,
         invoiceVersion: 0,
@@ -1093,6 +1136,7 @@ export function createShippingDiRepository(db) {
         finalContainerVersion
       };
       const statements = [
+        ...(finalReservation ? [finalInvoiceReservationStatement(db, shipment, resolved.lines, finalReservation)] : []),
         db.prepare(`
           INSERT INTO shipment_invoices (
             invoice_id, shipment_id, invoice_no, invoice_date, currency, version, invoice_write_token, final_container_version, created_by, updated_by
@@ -1102,6 +1146,7 @@ export function createShippingDiRepository(db) {
               SELECT 1
               FROM phase6_shipments
               WHERE shipment_id = ? AND status = 'LOADED' AND container_version = ?
+                AND final_invoice_version = ? AND final_invoice_write_token = ?
             )
           ` : 'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'}
         `).bind(
@@ -1115,7 +1160,7 @@ export function createShippingDiRepository(db) {
           finalContainerVersion,
           actorId,
           actorId,
-          ...(invoice.version === 'FINAL' ? [shipmentId, finalContainerVersion] : [])
+          ...(invoice.version === 'FINAL' ? [shipmentId, finalContainerVersion, finalReservation.version, finalReservation.writeToken] : [])
         ),
         ...shipmentInvoiceLineStatements(db, invoiceId, resolved.lines, actorId, invoice.version === 'FINAL' ? invoiceState : null),
         invoice.version === 'FINAL'
@@ -1127,7 +1172,10 @@ export function createShippingDiRepository(db) {
       }
       try {
         const results = await db.batch(statements);
-        if (!mutationApplied(results[0])) throw codedError(invoice.version === 'FINAL' ? 'INVOICE_FINAL_STALE' : 'INVOICE_NOT_CREATED');
+        const headerResultIndex = invoice.version === 'FINAL' ? 1 : 0;
+        if ((invoice.version === 'FINAL' && !mutationApplied(results[0])) || !mutationApplied(results[headerResultIndex])) {
+          throw codedError(invoice.version === 'FINAL' ? 'INVOICE_FINAL_STALE' : 'INVOICE_NOT_CREATED');
+        }
       } catch (error) {
         if (String(error?.message || '').includes('UNIQUE constraint failed: shipment_invoices.shipment_id, shipment_invoices.invoice_no')) {
           throw codedError('INVOICE_NUMBER_DUPLICATE');
@@ -1181,8 +1229,13 @@ export function createShippingDiRepository(db) {
       const finalContainerVersion = Number(shipment.container_version);
       const nextInvoiceVersion = Number(existing.invoice_version) + 1;
       const nextInvoiceWriteToken = crypto.randomUUID();
+      const finalReservation = {
+        version: Number(shipment.final_invoice_version) + 1,
+        writeToken: crypto.randomUUID()
+      };
       const invoiceState = { version: 'FINAL', invoiceVersion: nextInvoiceVersion, writeToken: nextInvoiceWriteToken, finalContainerVersion };
       const results = await db.batch([
+        finalInvoiceReservationStatement(db, shipment, resolved.lines, finalReservation),
         db.prepare(`
           UPDATE shipment_invoices
           SET version = 'FINAL', currency = ?, invoice_version = ?, invoice_write_token = ?, final_container_version = ?, updated_by = ?, updated_at = CURRENT_TIMESTAMP
@@ -1191,8 +1244,9 @@ export function createShippingDiRepository(db) {
               SELECT 1
               FROM phase6_shipments
               WHERE shipment_id = ? AND status = 'LOADED' AND container_version = ?
+                AND final_invoice_version = ? AND final_invoice_write_token = ?
             )
-        `).bind(resolved.currency, nextInvoiceVersion, nextInvoiceWriteToken, finalContainerVersion, actorId, invoiceId, existing.invoice_version, existing.invoice_write_token, shipment.shipment_id, finalContainerVersion),
+        `).bind(resolved.currency, nextInvoiceVersion, nextInvoiceWriteToken, finalContainerVersion, actorId, invoiceId, existing.invoice_version, existing.invoice_write_token, shipment.shipment_id, finalContainerVersion, finalReservation.version, finalReservation.writeToken),
         db.prepare(`
           DELETE FROM shipment_invoice_lines
           WHERE invoice_id = ? AND EXISTS (
@@ -1206,7 +1260,7 @@ export function createShippingDiRepository(db) {
           invoiceNo: existing.invoice_no
         })
       ]);
-      if (!mutationApplied(results[0])) throw codedError('INVOICE_NOT_PRELIMINARY');
+      if (!mutationApplied(results[0]) || !mutationApplied(results[1])) throw codedError('INVOICE_NOT_PRELIMINARY');
       return findShipmentInvoice(db, invoiceId);
     },
 

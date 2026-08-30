@@ -105,6 +105,8 @@ test('Phase 6 schema creates every shipping DI table and required lookup indexes
 
   const shipmentColumns = db.prepare('PRAGMA table_info(phase6_shipments)').all().map((column) => column.name);
   assert.ok(shipmentColumns.includes('container_version'), 'shipments retain a container-write version');
+  assert.ok(shipmentColumns.includes('final_invoice_version'), 'shipments retain a FINAL invoice reservation version');
+  assert.ok(shipmentColumns.includes('final_invoice_write_token'), 'shipments retain a FINAL invoice reservation token');
 });
 
 test('Phase 6 service partners permit the approved SURVEYOR type and reject OTHER', async () => {

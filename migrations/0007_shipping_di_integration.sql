@@ -82,6 +82,8 @@ CREATE TABLE phase6_shipments (
   cancellation_note TEXT,
   container_version INTEGER NOT NULL DEFAULT 0 CHECK(container_version >= 0),
   container_write_token TEXT,
+  final_invoice_version INTEGER NOT NULL DEFAULT 0 CHECK(final_invoice_version >= 0),
+  final_invoice_write_token TEXT,
   created_by TEXT NOT NULL REFERENCES users(user_id),
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_by TEXT REFERENCES users(user_id),

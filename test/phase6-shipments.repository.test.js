@@ -595,6 +595,87 @@ test('Invoices permit independent manual numbers and aggregate FINAL quantities 
   );
 });
 
+test('concurrent FINAL invoice creation reserves the remaining actual quantity exactly once', async () => {
+  let armPause = false;
+  let releaseFirstBatch;
+  const firstBatchReleased = new Promise((resolve) => { releaseFirstBatch = resolve; });
+  let captureFirstBatch;
+  const firstBatchCaptured = new Promise((resolve) => { captureFirstBatch = resolve; });
+  const { db, wrappedDb } = await setupTestDb({
+    pauseQueuedFirstBatch: () => armPause ? (captureFirstBatch(), firstBatchReleased) : null
+  });
+  seedShipmentContainerLines(db);
+  const repo = createShippingDiRepository(wrappedDb);
+  const shipment = await bookedShipmentWithActualLoadingDate(repo);
+  await repo.replaceShipmentContainers(shipment.shipment_id, [{
+    containerNo: 'EGSU2548896',
+    lines: [{ poRevisionLineId: 'LINE-2', numberOfBags: 10, netWeightMt: 8.5 }]
+  }], 'U_EXPORT');
+
+  armPause = true;
+  const first = repo.createShipmentInvoice(shipment.shipment_id, {
+    invoiceNo: 'WCAT-FINAL-RACE-1', version: 'FINAL', invoiceDate: '2026-09-15',
+    lines: [{ poRevisionLineId: 'LINE-2', qtyMt: 8.5 }]
+  }, 'U_EXPORT');
+  await firstBatchCaptured;
+  const second = repo.createShipmentInvoice(shipment.shipment_id, {
+    invoiceNo: 'WCAT-FINAL-RACE-2', version: 'FINAL', invoiceDate: '2026-09-15',
+    lines: [{ poRevisionLineId: 'LINE-2', qtyMt: 8.5 }]
+  }, 'U_EXPORT');
+  await new Promise((resolve) => setImmediate(resolve));
+  releaseFirstBatch();
+
+  const results = await Promise.allSettled([first, second]);
+  assert.equal(results.filter((result) => result.status === 'fulfilled').length, 1);
+  assert.equal(results.filter((result) => result.status === 'rejected').length, 1);
+  assert.match(results.find((result) => result.status === 'rejected').reason.message, /INVOICE_FINAL_STALE/);
+  assert.equal(db.prepare(`
+    SELECT COALESCE(SUM(invoice_line.qty_mt), 0) AS total_qty_mt
+    FROM shipment_invoice_lines invoice_line
+    JOIN shipment_invoices invoice ON invoice.invoice_id = invoice_line.invoice_id
+    WHERE invoice.shipment_id = ? AND invoice.version = 'FINAL' AND invoice_line.po_revision_line_id = 'LINE-2'
+  `).get(shipment.shipment_id).total_qty_mt, 8.5);
+});
+
+test('concurrent preliminary finalizations reserve the remaining actual quantity exactly once', async () => {
+  let armPause = false;
+  let releaseFirstBatch;
+  const firstBatchReleased = new Promise((resolve) => { releaseFirstBatch = resolve; });
+  let captureFirstBatch;
+  const firstBatchCaptured = new Promise((resolve) => { captureFirstBatch = resolve; });
+  const { db, wrappedDb } = await setupTestDb({
+    pauseQueuedFirstBatch: () => armPause ? (captureFirstBatch(), firstBatchReleased) : null
+  });
+  seedShipmentContainerLines(db);
+  db.prepare('UPDATE po_revision_lines SET tolerance_pct = 5, max_qty_mt = 105 WHERE line_id = ?').run('LINE-1');
+  const repo = createShippingDiRepository(wrappedDb);
+  const shipment = await bookedShipmentWithActualLoadingDate(repo);
+  await repo.replaceShipmentContainers(shipment.shipment_id, [{
+    containerNo: 'EGSU2548896',
+    lines: [{ poRevisionLineId: 'LINE-1', numberOfBags: 10, netWeightMt: 9.5 }]
+  }], 'U_EXPORT');
+  const preliminaryInvoices = await Promise.all(['WCAT-FINALIZE-RACE-1', 'WCAT-FINALIZE-RACE-2'].map((invoiceNo) => repo.createShipmentInvoice(shipment.shipment_id, {
+    invoiceNo, version: 'PRELIMINARY', invoiceDate: '2026-09-15', lines: [{ poRevisionLineId: 'LINE-1', qtyMt: 105 }]
+  }, 'U_EXPORT')));
+
+  armPause = true;
+  const first = repo.finalizeShipmentInvoice(preliminaryInvoices[0].invoice_id, [{ poRevisionLineId: 'LINE-1', qtyMt: 9.5 }], 'U_EXPORT');
+  await firstBatchCaptured;
+  const second = repo.finalizeShipmentInvoice(preliminaryInvoices[1].invoice_id, [{ poRevisionLineId: 'LINE-1', qtyMt: 9.5 }], 'U_EXPORT');
+  await new Promise((resolve) => setImmediate(resolve));
+  releaseFirstBatch();
+
+  const results = await Promise.allSettled([first, second]);
+  assert.equal(results.filter((result) => result.status === 'fulfilled').length, 1);
+  assert.equal(results.filter((result) => result.status === 'rejected').length, 1);
+  assert.equal(db.prepare(`
+    SELECT COALESCE(SUM(invoice_line.qty_mt), 0) AS total_qty_mt
+    FROM shipment_invoice_lines invoice_line
+    JOIN shipment_invoices invoice ON invoice.invoice_id = invoice_line.invoice_id
+    WHERE invoice.shipment_id = ? AND invoice.version = 'FINAL' AND invoice_line.po_revision_line_id = 'LINE-1'
+  `).get(shipment.shipment_id).total_qty_mt, 9.5);
+});
+
 test('Invoice Date is mandatory and unapproved invoice note and Drive URL inputs are rejected', async () => {
   const { db, wrappedDb } = await setupTestDb();
   seedShipmentContainerLines(db);
