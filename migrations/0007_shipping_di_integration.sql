@@ -29,6 +29,7 @@ CREATE TABLE delivery_instructions (
   shipping_month TEXT NOT NULL,
   shipping_period TEXT NOT NULL CHECK(shipping_period IN ('FIRST_HALF','SECOND_HALF')),
   status TEXT NOT NULL DEFAULT 'DRAFT' CHECK(status IN ('DRAFT','CONFIRMED','IN_PROGRESS','COMPLETED','CANCELLED')),
+  lifecycle_version INTEGER NOT NULL DEFAULT 0 CHECK(lifecycle_version >= 0),
   note TEXT,
   cancellation_note TEXT,
   created_by TEXT NOT NULL REFERENCES users(user_id),

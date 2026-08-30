@@ -47,7 +47,7 @@ function isAvailabilityReservationFailure(error) {
 async function findDeliveryInstruction(db, diId) {
   const deliveryInstruction = await db.prepare(`
     SELECT di_id, customer_id, po_id, po_revision_id, di_no, shipping_month, shipping_period,
-           status, note, cancellation_note, di_drive_url, surveyor_partner_id, forwarder_partner_id,
+           status, lifecycle_version, note, cancellation_note, di_drive_url, surveyor_partner_id, forwarder_partner_id,
            created_by, created_at, updated_by, updated_at
     FROM delivery_instructions
     WHERE di_id = ?
@@ -183,7 +183,7 @@ async function validateDeliveryInstructionReferences(db, deliveryInstruction) {
   }
 }
 
-function deliveryInstructionLineReservationStatement(db, diId, deliveryInstruction, line, actorId) {
+function deliveryInstructionLineReservationStatement(db, diId, deliveryInstruction, line, actorId, lifecycleVersion) {
   return db.prepare(`
     WITH requested_line (
       di_line_id, di_id, po_id, po_revision_id, po_revision_line_id, product_id,
@@ -243,7 +243,9 @@ function deliveryInstructionLineReservationStatement(db, diId, deliveryInstructi
     WHERE EXISTS (
       SELECT 1
       FROM delivery_instructions current_di
-      WHERE current_di.di_id = requested.di_id AND current_di.status = 'DRAFT'
+      WHERE current_di.di_id = requested.di_id
+        AND current_di.status = 'DRAFT'
+        AND current_di.lifecycle_version = ?
     )
   `).bind(
     `DIL-${crypto.randomUUID()}`,
@@ -255,7 +257,8 @@ function deliveryInstructionLineReservationStatement(db, diId, deliveryInstructi
     line.plannedQtyMt,
     line.packingSnapshot,
     actorId,
-    actorId
+    actorId,
+    lifecycleVersion
   );
 }
 
@@ -455,8 +458,8 @@ export function createShippingDiRepository(db) {
           UPDATE delivery_instructions
           SET customer_id = ?, po_id = ?, po_revision_id = ?, di_no = ?, shipping_month = ?, shipping_period = ?,
               note = ?, di_drive_url = ?, surveyor_partner_id = ?, forwarder_partner_id = ?,
-              updated_by = ?, updated_at = CURRENT_TIMESTAMP
-          WHERE di_id = ? AND status = 'DRAFT'
+              lifecycle_version = lifecycle_version + 1, updated_by = ?, updated_at = CURRENT_TIMESTAMP
+          WHERE di_id = ? AND status = 'DRAFT' AND lifecycle_version = ?
         `).bind(
           deliveryInstruction.customerId,
           deliveryInstruction.poId,
@@ -469,7 +472,8 @@ export function createShippingDiRepository(db) {
           deliveryInstruction.surveyorPartnerId,
           deliveryInstruction.forwarderPartnerId,
           actorId,
-          diId
+          diId,
+          existing.lifecycle_version
         ),
         auditAfterMutationStatement(db, 'DI', diId, 'DI_UPDATED', actorId, {
           old: deliveryInstructionSnapshot(existing),
@@ -479,12 +483,20 @@ export function createShippingDiRepository(db) {
           DELETE FROM delivery_instruction_lines
           WHERE di_id = ?
             AND EXISTS (
-              SELECT 1 FROM delivery_instructions WHERE di_id = ? AND status = 'DRAFT'
+              SELECT 1 FROM delivery_instructions
+              WHERE di_id = ? AND status = 'DRAFT' AND lifecycle_version = ?
             )
-        `).bind(diId, diId)
+        `).bind(diId, diId, existing.lifecycle_version + 1)
       ];
       for (const line of deliveryInstruction.lines) {
-        statements.push(deliveryInstructionLineReservationStatement(db, diId, deliveryInstruction, line, actorId));
+        statements.push(deliveryInstructionLineReservationStatement(
+          db,
+          diId,
+          deliveryInstruction,
+          line,
+          actorId,
+          existing.lifecycle_version + 1
+        ));
       }
       try {
         const results = await db.batch(statements);
@@ -504,9 +516,9 @@ export function createShippingDiRepository(db) {
       const results = await db.batch([
         db.prepare(`
           UPDATE delivery_instructions
-          SET status = 'CONFIRMED', updated_by = ?, updated_at = CURRENT_TIMESTAMP
-          WHERE di_id = ? AND status = 'DRAFT'
-        `).bind(actorId, diId),
+          SET status = 'CONFIRMED', lifecycle_version = lifecycle_version + 1, updated_by = ?, updated_at = CURRENT_TIMESTAMP
+          WHERE di_id = ? AND status = 'DRAFT' AND lifecycle_version = ?
+        `).bind(actorId, diId, deliveryInstruction.lifecycle_version),
         auditAfterMutationStatement(db, 'DI', diId, 'DI_CONFIRMED', actorId, {
           oldStatus: deliveryInstruction.status,
           newStatus: 'CONFIRMED'
@@ -525,9 +537,9 @@ export function createShippingDiRepository(db) {
       const results = await db.batch([
         db.prepare(`
           UPDATE delivery_instructions
-          SET status = 'CANCELLED', cancellation_note = ?, updated_by = ?, updated_at = CURRENT_TIMESTAMP
-          WHERE di_id = ? AND status = 'CONFIRMED'
-        `).bind(cancellationNote, actorId, diId),
+          SET status = 'CANCELLED', cancellation_note = ?, lifecycle_version = lifecycle_version + 1, updated_by = ?, updated_at = CURRENT_TIMESTAMP
+          WHERE di_id = ? AND status = 'CONFIRMED' AND lifecycle_version = ?
+        `).bind(cancellationNote, actorId, diId, deliveryInstruction.lifecycle_version),
         auditAfterMutationStatement(db, 'DI', diId, 'DI_CANCELLED', actorId, {
           oldStatus: deliveryInstruction.status,
           newStatus: 'CANCELLED',
@@ -544,8 +556,8 @@ export function createShippingDiRepository(db) {
       if (deliveryInstruction.status !== 'DRAFT') throw codedError('DI_HARD_DELETE_FORBIDDEN');
       const result = await db.prepare(`
         DELETE FROM delivery_instructions
-        WHERE di_id = ? AND status = 'DRAFT'
-      `).bind(diId).run();
+        WHERE di_id = ? AND status = 'DRAFT' AND lifecycle_version = ?
+      `).bind(diId, deliveryInstruction.lifecycle_version).run();
       if (!mutationApplied(result)) {
         const current = await findDeliveryInstruction(db, diId);
         if (!current) throw codedError('DI_NOT_FOUND');
@@ -570,7 +582,7 @@ export function createShippingDiRepository(db) {
     async listDeliveryInstructions(filters = {}) {
       let query = `
         SELECT di_id, customer_id, po_id, po_revision_id, di_no, shipping_month, shipping_period,
-               status, note, cancellation_note, di_drive_url, surveyor_partner_id, forwarder_partner_id,
+               status, lifecycle_version, note, cancellation_note, di_drive_url, surveyor_partner_id, forwarder_partner_id,
                created_by, created_at, updated_by, updated_at
         FROM delivery_instructions
         WHERE 1 = 1

@@ -93,7 +93,7 @@ test('Phase 6 schema creates every shipping DI table and required lookup indexes
   }
 
   const deliveryInstructionColumns = db.prepare('PRAGMA table_info(delivery_instructions)').all().map((column) => column.name);
-  for (const column of ['di_drive_url', 'surveyor_partner_id', 'forwarder_partner_id']) {
+  for (const column of ['di_drive_url', 'surveyor_partner_id', 'forwarder_partner_id', 'lifecycle_version']) {
     assert.ok(deliveryInstructionColumns.includes(column), `${column} should exist on delivery_instructions`);
   }
 

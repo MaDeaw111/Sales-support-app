@@ -76,3 +76,20 @@ The initial lifecycle methods checked the DI status before their write, then iss
 - `node --test test/delivery-instructions.repository.test.js test/delivery-instructions.routes.test.js test/phase6-migration.test.js` — 24 passed, 0 failed.
 - `npm test` — 199 passed, 0 failed, 0 skipped.
 - `git diff --check` — no whitespace errors.
+
+## Fix round 2: PATCH-first optimistic lifecycle guard
+
+### Root cause and RED evidence
+
+The Fix Round 1 status predicate prevented confirmation-first stale writes, but a PATCH that committed first remained `DRAFT`; a confirmation that had already read `DRAFT` could therefore still match. A deterministic test paused the confirmation immediately after it captured the DRAFT row, committed the PATCH, then released confirmation. Before this fix, confirmation fulfilled and produced both `DI_UPDATED` and `DI_CONFIRMED` audit events. The migration test also failed because there was no durable lifecycle version column.
+
+### Fix
+
+`delivery_instructions.lifecycle_version` is a non-negative integer, initialized to zero. DRAFT edits and every lifecycle mutation increment it and require the pre-read value in their SQL predicate. DRAFT line replacement requires the newly incremented version, so stale writes cannot delete or recreate lines. This keeps the approved status set unchanged and allows a successful edit to remain a valid `DRAFT` for later, newly-read confirmation.
+
+### Fix-round verification
+
+- Deterministic PATCH-first race: PATCH succeeds, stale confirm rejects `DI_NOT_DRAFT`, status remains DRAFT, and history is exactly `DI_CREATED`, `DI_UPDATED`.
+- `node --test test/delivery-instructions.repository.test.js test/delivery-instructions.routes.test.js test/phase6-migration.test.js` — 25 passed, 0 failed.
+- `npm test` — 200 passed, 0 failed, 0 skipped.
+- `git diff --check` — no whitespace errors.

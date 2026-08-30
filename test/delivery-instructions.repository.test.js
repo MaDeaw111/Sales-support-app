@@ -4,7 +4,7 @@ import { readFile } from 'node:fs/promises';
 import { DatabaseSync } from 'node:sqlite';
 import { createShippingDiRepository } from '../src/shipping-di/repository.js';
 
-async function setupTestDb({ collisionDiNo = null, failLineId = null } = {}) {
+async function setupTestDb({ collisionDiNo = null, failLineId = null, pauseFirst = null } = {}) {
   const db = new DatabaseSync(':memory:');
   for (const migration of [
     '0001_auth.sql',
@@ -46,7 +46,9 @@ async function setupTestDb({ collisionDiNo = null, failLineId = null } = {}) {
           return this;
         },
         async first() {
-          return statement.all(...this.params)[0] || null;
+          const row = statement.all(...this.params)[0] || null;
+          if (pauseFirst) await pauseFirst({ sql, params: this.params, row });
+          return row;
         },
         async all() {
           return { results: statement.all(...this.params), success: true };
@@ -449,6 +451,39 @@ test('PATCH and confirmation conflicts apply only one DRAFT transition and audit
   assert.equal((await repo.getDeliveryInstruction(created.di_id)).note, 'Before confirmation');
   assert.deepEqual((await repo.getShippingDiHistory(created.di_id)).map((event) => event.event_type), ['DI_CREATED', 'DI_CONFIRMED']);
   assert.equal(db.prepare("SELECT COUNT(*) AS n FROM shipment_audit_events WHERE entity_id = ? AND event_type = 'DI_UPDATED'").get(created.di_id).n, 0);
+});
+
+test('a PATCH-first conflict rejects the stale confirmation with one DRAFT audit outcome', async () => {
+  let releaseConfirmationRead;
+  const confirmationReadReleased = new Promise((resolve) => {
+    releaseConfirmationRead = resolve;
+  });
+  let captureConfirmationRead;
+  const confirmationReadCaptured = new Promise((resolve) => {
+    captureConfirmationRead = resolve;
+  });
+  let pauseNextRead = false;
+  const { wrappedDb } = await setupTestDb({
+    pauseFirst: async () => {
+      if (!pauseNextRead) return;
+      pauseNextRead = false;
+      captureConfirmationRead();
+      await confirmationReadReleased;
+    }
+  });
+  const repo = createShippingDiRepository(wrappedDb);
+  const created = await repo.createDeliveryInstruction(diPayload({ note: 'Before PATCH' }), 'U_EXPORT');
+  pauseNextRead = true;
+
+  const confirmation = repo.confirmDeliveryInstruction(created.di_id, 'U_EXPORT');
+  await confirmationReadCaptured;
+  const patched = await repo.updateDraftDeliveryInstruction(created.di_id, { note: 'PATCH wins' }, 'U_EXPORT');
+  releaseConfirmationRead();
+
+  await assert.rejects(() => confirmation, /DI_NOT_DRAFT/);
+  assert.equal(patched.status, 'DRAFT');
+  assert.equal((await repo.getDeliveryInstruction(created.di_id)).note, 'PATCH wins');
+  assert.deepEqual((await repo.getShippingDiHistory(created.di_id)).map((event) => event.event_type), ['DI_CREATED', 'DI_UPDATED']);
 });
 
 test('DELETE and confirmation conflicts preserve exactly one winning DRAFT transition', async () => {
