@@ -293,6 +293,18 @@ test('Booking rejects fields outside its focused contract and mismatched partner
   assert.equal(db.prepare("SELECT COUNT(*) AS n FROM shipment_audit_events WHERE event_type = 'BOOKING_RECORDED'").get().n, 0);
 });
 
+test('Shipment history exposes only direct Shipment audit events through its Shipment ID', async () => {
+  const { wrappedDb } = await setupTestDb();
+  const repo = createShippingDiRepository(wrappedDb);
+  const shipment = await repo.createShipmentForDeliveryInstruction('DI-CONFIRMED', 'U_EXPORT');
+  await repo.recordShipmentBooking(shipment.shipment_id, { bookingNo: 'BK-HISTORY' }, 'U_EXPORT');
+
+  const history = await repo.getPhase6ShipmentHistoryByShipmentId(shipment.shipment_id);
+  assert.deepEqual(history.map((event) => event.event_type), ['BOOKING_RECORDED']);
+  assert.ok(history.every((event) => event.entity_type === 'SHIPMENT' && event.entity_id === shipment.shipment_id));
+  await assert.rejects(() => repo.getPhase6ShipmentHistoryByShipmentId('DI-CONFIRMED'), /SHIPMENT_NOT_FOUND/);
+});
+
 test('schedule result compares Actual Loading Date to the Customer shipping half-month', () => {
   assert.equal(calculateScheduleResult('2026-09', 'FIRST_HALF', '2026-09-15'), 'ON_PLAN');
   assert.equal(calculateScheduleResult('2026-09', 'FIRST_HALF', '2026-09-16'), 'OUT_OF_PLAN');

@@ -221,6 +221,16 @@ export function createShippingDiHandler({ repo, resolveUser, db }) {
       return json({ status: 'SUCCESS', data: { shipment: projectShippingDiForRole(shipment, caller) } });
     }
 
+    const shipmentHistoryMatch = path.match(/^\/api\/shipments-v2\/([^/]+)\/history$/);
+    if (shipmentHistoryMatch && method === 'GET') {
+      if (!OPERATIONAL_READER_ROLES.includes(caller.role)) return json({ status: 'ERROR', message: 'Permission denied.' }, 403);
+      const shipmentId = decodeURIComponent(shipmentHistoryMatch[1]);
+      const shipment = await activeRepo.getPhase6ShipmentByShipmentId(shipmentId);
+      if (!shipment) return json({ status: 'ERROR', message: 'SHIPMENT_NOT_FOUND' }, 404);
+      const history = await activeRepo.getPhase6ShipmentHistoryByShipmentId(shipmentId);
+      return json({ status: 'SUCCESS', data: { history } });
+    }
+
     const shipmentBookingMatch = path.match(/^\/api\/shipments-v2\/([^/]+)\/booking$/);
     if (shipmentBookingMatch && method === 'PUT') {
       if (!SHIPMENT_BOOKING_WRITE_ROLES.includes(caller.role)) return json({ status: 'ERROR', message: 'Permission denied.' }, 403);

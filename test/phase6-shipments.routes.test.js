@@ -42,6 +42,54 @@ test('Phase 6 read routes use their explicit Shipment-ID and DI-ID repository co
   assert.deepEqual(lookups, [['di', 'DI-1'], ['shipment', 'SHP-1'], ['di', 'DI-MISSING'], ['shipment', 'DI-1']]);
 });
 
+test('GET /api/shipments-v2/:id/history returns direct Shipment audit events by Shipment ID only', async () => {
+  const shipment = { shipment_id: 'SHP-1', customer_id: 'C1', status: 'LOADED' };
+  const history = [{
+    event_id: 'EVT-1', entity_type: 'SHIPMENT', entity_id: 'SHP-1',
+    event_type: 'BOOKING_RECORDED', actor_id: 'U_EXPORT', metadata_json: '{"bookingNo":"BK-1"}', created_at: '2026-09-01 00:00:00'
+  }];
+  const calls = [];
+  const handler = createShippingDiHandler({
+    repo: {
+      getPhase6ShipmentByShipmentId: async (identifier) => {
+        calls.push(['shipment', identifier]);
+        return identifier === 'SHP-1' ? shipment : null;
+      },
+      getPhase6ShipmentHistoryByShipmentId: async (identifier) => {
+        calls.push(['history', identifier]);
+        return history;
+      }
+    },
+    resolveUser: async () => ({ user_id: 'U_SUPPORT', role: 'SALES_SUPPORT' })
+  });
+
+  const response = await handler(request('/api/shipments-v2/SHP-1/history'));
+  assert.equal(response.status, 200);
+  assert.deepEqual((await response.json()).data.history, history);
+  assert.equal((await handler(request('/api/shipments-v2/DI-1/history'))).status, 404);
+  assert.deepEqual(calls, [['shipment', 'SHP-1'], ['history', 'SHP-1'], ['shipment', 'DI-1']]);
+});
+
+test('Shipment history rejects wrong methods, unauthenticated callers, and non-operational audit readers', async () => {
+  const repo = {
+    getPhase6ShipmentByShipmentId: async () => ({ shipment_id: 'SHP-1', customer_id: 'C1' }),
+    getPhase6ShipmentHistoryByShipmentId: async () => []
+  };
+  const operational = createShippingDiHandler({
+    repo,
+    resolveUser: async () => ({ user_id: 'U_EXPORT', role: 'EXPORT' })
+  });
+  const externalSales = createShippingDiHandler({
+    repo,
+    resolveUser: async () => ({ user_id: 'U_SALES', role: 'EXTERNAL_SALES' })
+  });
+  const unauthenticated = createShippingDiHandler({ repo, resolveUser: async () => null });
+
+  assert.equal((await operational(request('/api/shipments-v2/SHP-1/history', 'POST', {}))).status, 404);
+  assert.equal((await unauthenticated(request('/api/shipments-v2/SHP-1/history'))).status, 401);
+  assert.equal((await externalSales(request('/api/shipments-v2/SHP-1/history'))).status, 403);
+});
+
 test('PUT /api/shipments-v2/:id/booking lets operational writers record focused Booking data', async () => {
   const calls = [];
   const booked = { shipment_id: 'SHP-1', status: 'BOOKED', booking_no: 'BK-01' };
@@ -165,6 +213,16 @@ test('Phase 6 Shipment routes require authentication and map missing records to 
 test('worker dispatches the /api/shipments-v2 namespace to the Phase 6 handler', async () => {
   const response = await worker.fetch(
     request('/api/shipments-v2/SHP-1/booking', 'PUT', { bookingNo: 'BK-01' }),
+    { DB: {} }
+  );
+
+  assert.equal(response.status, 401);
+  assert.equal((await response.json()).message, 'Authentication required.');
+});
+
+test('worker dispatches Phase 6 Shipment history without using the legacy Shipment namespace', async () => {
+  const response = await worker.fetch(
+    request('/api/shipments-v2/SHP-1/history'),
     { DB: {} }
   );
 

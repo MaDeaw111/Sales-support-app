@@ -1747,6 +1747,18 @@ export function createShippingDiRepository(db) {
       return findPhase6ShipmentReadModel(db, diId, 'di_id');
     },
 
+    async getPhase6ShipmentHistoryByShipmentId(shipmentId) {
+      const shipment = await findPhase6Shipment(db, shipmentId);
+      if (!shipment || shipment.shipment_id !== shipmentId) throw codedError('SHIPMENT_NOT_FOUND');
+      const { results } = await db.prepare(`
+        SELECT event_id, entity_type, entity_id, event_type, actor_id, metadata_json, created_at
+        FROM shipment_audit_events
+        WHERE entity_type = 'SHIPMENT' AND entity_id = ?
+        ORDER BY created_at ASC, rowid ASC
+      `).bind(shipmentId).all();
+      return results || [];
+    },
+
     async listDeliveryInstructions(filters = {}) {
       let query = `
         SELECT di_id, customer_id, po_id, po_revision_id, di_no, shipping_month, shipping_period, container_plan,
