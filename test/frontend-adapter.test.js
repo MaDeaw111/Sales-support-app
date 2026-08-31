@@ -57,6 +57,15 @@ test('bootstrapAuth validates the HttpOnly cookie through /api/auth/me', () => {
   assert.doesNotMatch(block, /google\.script\.run/);
 });
 
+test('authenticated bootstrap uses D1 REST loaders and never requests legacy GET_MASTER_DATA', () => {
+  const block = functionBlock('startAuthenticatedApp()', 'openChangePasswordModal');
+  assert.doesNotMatch(block, /GET_MASTER_DATA/);
+  assert.doesNotMatch(block, /callBackend\(/);
+  assert.match(block, /loadCustomersFromApi\(\)/);
+  assert.match(block, /loadProductsFromApi\(\)/);
+  assert.match(block, /loadSpecParametersFromApi\(\)/);
+});
+
 test('password change and sign out use Cloudflare auth endpoints', () => {
   const passwordBlock = functionBlock('submitPasswordChange(forced = false)', 'signOut');
   const signOutBlock = functionBlock('signOut()', 'parseNum');

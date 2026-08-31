@@ -708,9 +708,6 @@
             state.currentView = 'dashboard';
             renderSidebar();
             renderView();
-            if (typeof callBackend === 'function') {
-                callBackend('GET_MASTER_DATA', {}, hydrateData, msg => console.warn('Master data migration pending:', msg));
-            }
             loadCustomersFromApi();
             loadCustomerOwnersFromApi();
             loadExternalSalesFromApi();
