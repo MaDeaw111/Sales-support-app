@@ -66,6 +66,17 @@ test('authenticated bootstrap uses D1 REST loaders and never requests legacy GET
   assert.match(block, /loadSpecParametersFromApi\(\)/);
 });
 
+test('D1-backed PO Manage detail uses a defined renderer with revision, lines, documents, and history', () => {
+  const engine = functionBlock('renderPOEngine(container)', 'renderRealPOListTable');
+  const detail = extractFunction('renderRealPODetailCard(po)');
+  assert.match(engine, /renderRealPODetailCard\(selectedPo\)/);
+  assert.doesNotMatch(detail, /google\.script\.run|callBackend\(/);
+  assert.match(detail, /Overview/);
+  assert.match(detail, /Lines/);
+  assert.match(detail, /Documents/);
+  assert.match(detail, /History/);
+});
+
 test('password change and sign out use Cloudflare auth endpoints', () => {
   const passwordBlock = functionBlock('submitPasswordChange(forced = false)', 'signOut');
   const signOutBlock = functionBlock('signOut()', 'parseNum');

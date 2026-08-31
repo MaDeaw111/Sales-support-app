@@ -3596,6 +3596,25 @@
             lucide.createIcons();
         }
 
+        function renderRealPODetailCard(po) {
+            const header = po.header || po;
+            const revisions = Array.isArray(po.revisions) ? po.revisions : [];
+            const active = revisions.find(revision => revision.status === 'ACTIVE');
+            const draft = revisions.find(revision => revision.status === 'DRAFT');
+            const revision = revisions.find(item => item.revision_id === state.selectedRevisionId) || draft || active || revisions[revisions.length - 1] || null;
+            const customerId = header.customer_id || po.customerId || '';
+            const customer = (state.customers || []).find(item => item.id === customerId);
+            const lines = revision?.lines || [];
+            const documents = revision?.documents || [];
+            const history = po.audit_events || po.auditEvents || [];
+            const poId = header.po_id || po.id;
+            const revisionTabs = revisions.map(item => `<button onclick="state.selectedRevisionId='${item.revision_id}'; renderView();" class="px-3 py-1.5 rounded text-xs font-bold ${revision?.revision_id === item.revision_id ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-600'}">Rev. ${item.revision_no} · ${item.status}</button>`).join('');
+            const lineRows = lines.length ? lines.map(line => `<tr><td class="p-3">${line.line_no}</td><td class="p-3 font-bold">${line.product_id}</td><td class="p-3 text-right">${Number(line.contract_qty_mt || 0).toFixed(3)} MT</td><td class="p-3 text-right">${Number(line.min_qty_mt || 0).toFixed(3)}–${Number(line.max_qty_mt || 0).toFixed(3)} MT</td><td class="p-3">${line.packaging || '-'}</td></tr>`).join('') : '<tr><td colspan="5" class="p-5 text-center text-slate-400">No lines in this revision.</td></tr>';
+            const documentRows = documents.length ? documents.map(document => `<li class="flex justify-between gap-3 py-2 border-b last:border-0"><span>${document.label || document.document_type}</span>${document.url ? `<a class="text-blue-600 font-bold" href="${document.url}" target="_blank" rel="noopener">Open</a>` : ''}</li>`).join('') : '<li class="py-3 text-slate-400">No documents.</li>';
+            const historyRows = history.length ? history.map(event => `<li class="py-2 border-b last:border-0"><span class="font-bold">${event.event_type || event.type || 'Event'}</span><span class="text-slate-500"> · ${event.created_at || event.createdAt || '-'}</span></li>`).join('') : '<li class="py-3 text-slate-400">No history entries.</li>';
+            return `<div class="space-y-4"><section class="bg-white rounded-xl border border-blue-200 p-5"><div class="flex justify-between gap-4"><div><div class="text-xs text-slate-400 font-mono">${poId}</div><h3 class="text-xl font-black">${revision?.customer_po_no || poId}</h3><p class="text-sm text-slate-600">${customer?.name || customerId || '-'}</p></div><span class="px-2 py-1 h-fit rounded text-xs font-bold bg-blue-100 text-blue-800">${header.header_status || 'OPEN'}</span></div><div class="mt-4 flex flex-wrap gap-2">${revisionTabs}</div></section><section class="bg-white rounded-xl border border-slate-200 p-5"><h4 class="font-black">Overview</h4><div class="grid md:grid-cols-3 gap-3 mt-3 text-xs"><div>Revision: <strong>${revision ? `Rev. ${revision.revision_no} · ${revision.status}` : '-'}</strong></div><div>Incoterm: <strong>${revision?.incoterm || '-'}</strong></div><div>Delivery: <strong>${revision?.delivery_start || '-'} – ${revision?.delivery_end || '-'}</strong></div></div></section><section class="bg-white rounded-xl border border-slate-200 overflow-hidden"><div class="p-4 border-b font-black">Lines</div><table class="ui-table w-full text-xs"><thead><tr><th class="p-3">#</th><th class="p-3">Product</th><th class="p-3 text-right">Contract Qty</th><th class="p-3 text-right">Allowed Qty</th><th class="p-3">Packaging</th></tr></thead><tbody>${lineRows}</tbody></table></section><section class="bg-white rounded-xl border border-slate-200 p-5"><h4 class="font-black">Documents</h4><ul class="mt-2 text-xs">${documentRows}</ul></section><section class="bg-white rounded-xl border border-slate-200 p-5"><h4 class="font-black">History</h4><ul class="mt-2 text-xs">${historyRows}</ul></section></div>`;
+        }
+
         function renderRealPOListTable() {
             const filters = state.poFilters;
             const searchText = String(filters.search || '').trim().toLowerCase();
