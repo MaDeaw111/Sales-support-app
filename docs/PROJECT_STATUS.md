@@ -467,6 +467,14 @@ Next Action:
 - [x] Role-based PO access behaves correctly (Phase 5F)
 - [x] Restricted commercial fields do not leak (Phase 5F)
 - [x] PO frontend loads without JS errors (Phase 5F)
+- [x] Phase 6 Shipping / DI Integration — COMPLETE / MERGED / DEPLOYED / PRODUCTION VERIFIED
+  - Original Phase 6 merge: `67d8be70d7a1ad61861d02a21997215de31c5597`
+  - Release hotfix: `e8ffb52dc6c36f6e4bca07f6116f830cdc9b27c4`
+  - Migration `0007_shipping_di_integration.sql` applied and verified in production.
+  - Worker version `859fe84f-9a7f-4232-a5e9-2ae92141976e`; Cloudflare build `a7483865-94e5-4b4f-8f6f-e5cdceec8cbe`.
+  - Human-authenticated browser smoke passed; the legacy `GET_MASTER_DATA` bootstrap 501 is absent.
+  - Final automated verification: 311 passed, 0 failed; legacy Phase 5E and Phase 5F data/schema preserved; no production test/commercial records created.
+  - Limitation: comprehensive authenticated multi-role RBAC production smoke was not exercised. Tailwind CDN production warning remains known non-blocking technical debt.
 
 ---
 
