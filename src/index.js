@@ -69,6 +69,17 @@ export default {
     }
 
     if (
+      url.pathname === '/api/service-partners' || url.pathname.startsWith('/api/service-partners/') ||
+      url.pathname === '/api/customer-credits' || url.pathname.startsWith('/api/customer-credits/') ||
+      url.pathname === '/api/delivery-instructions' || url.pathname.startsWith('/api/delivery-instructions/') ||
+      url.pathname === '/api/shipments-v2' || url.pathname.startsWith('/api/shipments-v2/')
+    ) {
+      if (!env.DB) return jsonResponse({ status: 'ERROR', message: 'D1 DB binding is not configured.' }, 503);
+      const { createShippingDiHandlerFromEnv } = await import('./shipping-di/routes.js');
+      return createShippingDiHandlerFromEnv(env)(request);
+    }
+
+    if (
       url.pathname === '/api/products' || url.pathname.startsWith('/api/products/') ||
       url.pathname === '/api/product-categories' || url.pathname.startsWith('/api/product-categories/') ||
       url.pathname === '/api/product-forms' || url.pathname.startsWith('/api/product-forms/') ||
