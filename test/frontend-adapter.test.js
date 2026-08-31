@@ -945,4 +945,144 @@ test('userScopeForRole maps roles to correct D1 customer scopes', () => {
   assert.equal(fn('PRODUCTION_WAREHOUSE'), 'NONE');
 });
 
+test('Product and Spec Master shows parameter maintenance only to ADMIN and MANAGER', () => {
+  const renderProducts = new Function(`return (${extractFunction('renderProducts').trim()});`)();
+  const renderFor = (role) => {
+    globalThis.state = {
+      currentUser: { role },
+      products: [],
+      specParameters: [{ id: 'PAR-001', code: 'STARCH', name: 'Starch', defaultUnit: '%', status: 'ACTIVE' }]
+    };
+    globalThis.lucide = { createIcons() {} };
+    const container = { innerHTML: '' };
+    renderProducts(container);
+    return container.innerHTML;
+  };
+
+  try {
+    for (const role of ['ADMIN', 'MANAGER']) {
+      const html = renderFor(role);
+      assert.match(html, /Spec Parameter Master/);
+      assert.match(html, /\+ Add Parameter/);
+      assert.match(html, /STARCH/);
+      assert.match(html, /Edit Parameter/);
+    }
+    for (const role of ['SALES_SUPPORT', 'EXTERNAL_SALES', 'EXPORT']) {
+      assert.doesNotMatch(renderFor(role), /Spec Parameter Master|\+ Add Parameter|Edit Parameter/);
+    }
+  } finally {
+    delete globalThis.state;
+    delete globalThis.lucide;
+  }
+});
+
+test('saveSpecParameter reuses POST, refreshes parameters, and surfaces duplicate-code errors', async () => {
+  const saveSpecParameter = new Function(`return (${extractFunction('saveSpecParameter').trim()});`)();
+  const fields = {
+    specParameterCode: { value: 'STARCH' },
+    specParameterName: { value: 'Starch' },
+    specParameterDataType: { value: 'NUMBER' },
+    specParameterDefaultUnit: { value: '%' },
+    specParameterSortOrder: { value: '1' },
+    specParameterStatus: { value: 'ACTIVE' },
+    specParameterFormError: { textContent: '', classList: { add() {}, remove() {} } }
+  };
+  let request;
+  let refreshes = 0;
+  let closes = 0;
+  globalThis.document = { getElementById: (id) => fields[id] || null };
+  globalThis.fetch = async (url, options) => {
+    request = { url, options };
+    return { async json() { return { status: 'SUCCESS', data: { parameter: { id: 'PAR-001' } } }; } };
+  };
+  globalThis.loadSpecParametersFromApi = async () => { refreshes += 1; };
+  globalThis.closeModal = () => { closes += 1; };
+
+  try {
+    await saveSpecParameter();
+    assert.equal(request.url, '/api/spec-parameters');
+    assert.equal(request.options.method, 'POST');
+    assert.deepEqual(JSON.parse(request.options.body), {
+      code: 'STARCH', name: 'Starch', dataType: 'NUMBER', defaultUnit: '%', sortOrder: 1, status: 'ACTIVE'
+    });
+    assert.equal(refreshes, 1);
+    assert.equal(closes, 1);
+
+    globalThis.fetch = async () => ({ async json() { return { status: 'ERROR', message: 'Parameter code already exists.' }; } });
+    await saveSpecParameter();
+    assert.match(fields.specParameterFormError.textContent, /Parameter code already exists/);
+    assert.equal(refreshes, 1);
+  } finally {
+    delete globalThis.document;
+    delete globalThis.fetch;
+    delete globalThis.loadSpecParametersFromApi;
+    delete globalThis.closeModal;
+  }
+});
+
+test('saveSpecParameter uses PUT for immutable-code status edits', async () => {
+  const saveSpecParameter = new Function(`return (${extractFunction('saveSpecParameter').trim()});`)();
+  const fields = {
+    specParameterCode: { value: 'STARCH' },
+    specParameterName: { value: 'Starch' },
+    specParameterDataType: { value: 'NUMBER' },
+    specParameterDefaultUnit: { value: '%' },
+    specParameterSortOrder: { value: '2' },
+    specParameterStatus: { value: 'INACTIVE' },
+    specParameterFormError: { textContent: '', classList: { add() {}, remove() {} } }
+  };
+  let request;
+  globalThis.document = { getElementById: (id) => fields[id] || null };
+  globalThis.fetch = async (url, options) => {
+    request = { url, options };
+    return { async json() { return { status: 'SUCCESS', data: { parameter: { id: 'PAR-001' } } }; } };
+  };
+  globalThis.loadSpecParametersFromApi = async () => {};
+  globalThis.closeModal = () => {};
+
+  try {
+    await saveSpecParameter('PAR-001');
+    assert.equal(request.url, '/api/spec-parameters/PAR-001');
+    assert.equal(request.options.method, 'PUT');
+    assert.deepEqual(JSON.parse(request.options.body), {
+      name: 'Starch', dataType: 'NUMBER', defaultUnit: '%', sortOrder: 2, status: 'INACTIVE'
+    });
+  } finally {
+    delete globalThis.document;
+    delete globalThis.fetch;
+    delete globalThis.loadSpecParametersFromApi;
+    delete globalThis.closeModal;
+  }
+});
+
+test('Product list and detail render nested category and form DTO values', () => {
+  const renderProducts = new Function(`return (${extractFunction('renderProducts').trim()});`)();
+  const renderProductDashboard = new Function(`return (${extractFunction('renderProductDashboard').trim()});`)();
+  const product = {
+    id: 'PROD-001', code: 'TAP', name: 'Tapioca', shortName: 'TAP', status: 'ACTIVE', defaultUnit: 'MT',
+    category: { id: 'CAT-001', name: 'Starch' }, form: { id: 'FORM-001', name: 'Powder' }, applications: ['FEED_GRADE']
+  };
+  globalThis.state = {
+    currentUser: { role: 'ADMIN' }, products: [product], specParameters: [], selectedProductId: product.id,
+    selectedProductApp: 'FEED_GRADE', currentStandardSpecs: [], productCategories: [], productForms: []
+  };
+  globalThis.lucide = { createIcons() {} };
+  globalThis.changeView = () => {};
+  try {
+    const list = { innerHTML: '' };
+    const detail = { innerHTML: '' };
+    renderProducts(list);
+    renderProductDashboard(detail);
+    for (const html of [list.innerHTML, detail.innerHTML]) {
+      assert.match(html, /Starch/);
+      assert.match(html, /Powder/);
+      assert.doesNotMatch(html, /undefined/);
+    }
+  } finally {
+    delete globalThis.state;
+    delete globalThis.lucide;
+    delete globalThis.changeView;
+  }
+});
+
 

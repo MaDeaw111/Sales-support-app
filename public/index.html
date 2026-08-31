@@ -6883,6 +6883,25 @@
         // --- PRODUCTS ---
         function renderProducts(container) {
             const isAdminOrManager = ['ADMIN', 'MANAGER'].includes(state.currentUser.role);
+            const parameterMaster = isAdminOrManager ? `
+                <section class="mt-6 bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+                    <div class="p-4 bg-slate-50 border-b border-slate-200 flex items-center justify-between gap-3">
+                        <div>
+                            <h3 class="text-sm font-black text-slate-900">Spec Parameter Master</h3>
+                            <p class="text-xs text-slate-500 mt-1">Manage reusable quality parameters for Standard Specifications.</p>
+                        </div>
+                        <button onclick="openSpecParameterModal()" class="ui-btn ui-btn-primary text-xs">+ Add Parameter</button>
+                    </div>
+                    <div class="overflow-x-auto">
+                        <table class="ui-table min-w-full text-xs">
+                            <thead class="bg-white text-slate-500"><tr><th class="p-3 text-left">Code</th><th class="p-3 text-left">Name</th><th class="p-3 text-left">Type</th><th class="p-3 text-left">Default Unit</th><th class="p-3 text-left">Status</th><th class="p-3 text-right">Action</th></tr></thead>
+                            <tbody class="divide-y divide-slate-100">
+                                ${(state.specParameters || []).map(parameter => `<tr><td class="p-3 font-mono font-bold">${parameter.code}</td><td class="p-3">${parameter.name}</td><td class="p-3">${parameter.dataType}</td><td class="p-3">${parameter.defaultUnit || '-'}</td><td class="p-3">${parameter.status}</td><td class="p-3 text-right"><button onclick="openSpecParameterModal('${parameter.id}')" class="text-blue-600 font-bold hover:underline">Edit Parameter</button></td></tr>`).join('') || '<tr><td class="p-3 text-slate-400" colspan="6">No Spec Parameters configured.</td></tr>'}
+                            </tbody>
+                        </table>
+                    </div>
+                </section>
+            ` : '';
             container.innerHTML = `
                 <div class="flex justify-between items-center mb-6">
                     <div>
@@ -6897,8 +6916,8 @@
                 </div>
                 <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                     ${state.products && state.products.length > 0 ? state.products.map(p => {
-                        const cat = (state.productCategories || []).find(c => c.id === p.categoryId) || {};
-                        const frm = (state.productForms || []).find(f => f.id === p.formId) || {};
+                        const cat = p.category || {};
+                        const frm = p.form || {};
                         return `
                             <div class="bg-white rounded-xl border border-slate-200 shadow-sm p-4 space-y-3 hover:shadow-md transition-shadow flex flex-col justify-between cursor-pointer" onclick="openProductDashboard('${p.id}')">
                                 <div class="space-y-3">
@@ -6913,8 +6932,8 @@
                                         </div>
                                     </div>
                                     <div class="bg-slate-50 p-2.5 rounded-lg border border-slate-200/80 text-[11px] space-y-1.5">
-                                        <div>หมวดหมู่: <strong class="text-slate-800">${cat.name || p.categoryId}</strong></div>
-                                        <div>รูปแบบสินค้า: <strong class="text-slate-800">${frm.name || p.formId}</strong></div>
+                                        <div>หมวดหมู่: <strong class="text-slate-800">${cat.name || cat.id || '-'}</strong></div>
+                                        <div>รูปแบบสินค้า: <strong class="text-slate-800">${frm.name || frm.id || '-'}</strong></div>
                                         <div>พิกัดศุลกากร (HS): <strong class="text-slate-800">${p.hsCode || '-'}</strong></div>
                                         <div class="flex flex-wrap gap-1 mt-1.5">
                                             ${(p.applications || []).map(app => `<span class="bg-slate-200 text-slate-700 text-[9px] px-1 rounded">${app}</span>`).join('')}
@@ -6934,8 +6953,62 @@
                         </div>
                     `}
                 </div>
+                ${parameterMaster}
             `;
             lucide.createIcons();
+        }
+
+        function openSpecParameterModal(parameterId = null) {
+            if (!['ADMIN', 'MANAGER'].includes(state.currentUser.role)) return;
+            const parameter = parameterId ? (state.specParameters || []).find(item => item.id === parameterId) : null;
+            const title = parameter ? 'Edit Spec Parameter' : 'Add Spec Parameter';
+            openModal(`
+                <div class="space-y-4">
+                    <div><div class="text-[10px] font-black uppercase tracking-wider text-blue-600">Product & Spec Master</div><h3 class="text-lg font-black text-slate-900">${title}</h3></div>
+                    <div class="grid grid-cols-2 gap-4">
+                        <label class="text-xs font-bold text-slate-600 block">Parameter Code *<input id="specParameterCode" class="ui-input mt-1" value="${parameter ? parameter.code : ''}" ${parameter ? 'disabled' : ''}></label>
+                        <label class="text-xs font-bold text-slate-600 block">Parameter Name *<input id="specParameterName" class="ui-input mt-1" value="${parameter ? parameter.name : ''}"></label>
+                        <label class="text-xs font-bold text-slate-600 block">Data Type *<select id="specParameterDataType" class="ui-input mt-1"><option value="NUMBER" ${parameter?.dataType === 'NUMBER' ? 'selected' : ''}>NUMBER</option><option value="TEXT" ${parameter?.dataType === 'TEXT' ? 'selected' : ''}>TEXT</option></select></label>
+                        <label class="text-xs font-bold text-slate-600 block">Default Unit<input id="specParameterDefaultUnit" class="ui-input mt-1" value="${parameter ? parameter.defaultUnit || '' : ''}"></label>
+                        <label class="text-xs font-bold text-slate-600 block">Sort Order<input id="specParameterSortOrder" type="number" class="ui-input mt-1" value="${parameter ? parameter.sortOrder : 0}"></label>
+                        <label class="text-xs font-bold text-slate-600 block">Status *<select id="specParameterStatus" class="ui-input mt-1">${['ACTIVE', 'INACTIVE', 'ARCHIVED'].map(status => `<option value="${status}" ${parameter?.status === status || (!parameter && status === 'ACTIVE') ? 'selected' : ''}>${status}</option>`).join('')}</select></label>
+                    </div>
+                    <div id="specParameterFormError" class="hidden rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-bold text-rose-700"></div>
+                    <div class="flex justify-end gap-2"><button onclick="closeModal()" class="ui-btn ui-btn-secondary">Cancel</button><button onclick="saveSpecParameter(${parameter ? `'${parameter.id}'` : 'null'})" class="ui-btn ui-btn-primary">Save Parameter</button></div>
+                </div>
+            `);
+        }
+
+        async function saveSpecParameter(parameterId = null) {
+            const error = document.getElementById('specParameterFormError');
+            if (error) error.classList.add('hidden');
+            const code = document.getElementById('specParameterCode')?.value.trim() || '';
+            const name = document.getElementById('specParameterName')?.value.trim() || '';
+            const dataType = document.getElementById('specParameterDataType')?.value || '';
+            const defaultUnit = document.getElementById('specParameterDefaultUnit')?.value.trim() || '';
+            const sortOrder = Number(document.getElementById('specParameterSortOrder')?.value || 0);
+            const status = document.getElementById('specParameterStatus')?.value || '';
+            const payload = { name, dataType, defaultUnit, sortOrder, status };
+            if (!parameterId) payload.code = code;
+
+            if (!name || !dataType || !status || (!parameterId && !code)) {
+                if (error) { error.textContent = 'Parameter Code, Name, Data Type, and Status are required.'; error.classList.remove('hidden'); }
+                return;
+            }
+
+            try {
+                const res = await fetch(parameterId ? `/api/spec-parameters/${parameterId}` : '/api/spec-parameters', {
+                    method: parameterId ? 'PUT' : 'POST',
+                    headers: { 'content-type': 'application/json' },
+                    body: JSON.stringify(parameterId ? payload : { code, ...payload })
+                });
+                const body = await res.json();
+                if (!body || body.status !== 'SUCCESS') throw new Error(body?.message || 'Unable to save Spec Parameter.');
+                await loadSpecParametersFromApi();
+                closeModal();
+            } catch (err) {
+                if (error) { error.textContent = err.message; error.classList.remove('hidden'); }
+            }
         }
 
         function openProductDashboard(productId, activeApp = null) {
@@ -6967,8 +7040,8 @@
             const p = state.products.find(x => x.id === state.selectedProductId);
             if (!p) { changeView('products'); return; }
 
-            const cat = (state.productCategories || []).find(c => c.id === p.categoryId) || {};
-            const frm = (state.productForms || []).find(f => f.id === p.formId) || {};
+            const cat = p.category || {};
+            const frm = p.form || {};
             const activeApp = state.selectedProductApp || 'FEED_GRADE';
             const standardSpecs = state.currentStandardSpecs || [];
             
@@ -7001,7 +7074,7 @@
                                 <span class="bg-blue-50 text-blue-700 font-mono text-xs font-bold px-2.5 py-1 rounded border border-blue-200">${p.code}</span>
                                 <span class="px-2.5 py-1 rounded text-xs font-bold ${p.status === 'ACTIVE' ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-100 text-slate-600'}">${p.status}</span>
                             </div>
-                            <p class="text-xs text-slate-500 mt-2">หมวดหมู่: <strong class="text-slate-700">${cat.name || p.categoryId}</strong> <span class="mx-2 text-slate-300">|</span> รูปแบบ: <strong class="text-slate-700">${frm.name || p.formId}</strong> <span class="mx-2 text-slate-300">|</span> พิกัด HS: <strong class="text-slate-700">${p.hsCode || '-'}</strong> <span class="mx-2 text-slate-300">|</span> หน่วยตั้งต้น: <strong class="text-slate-700">${p.defaultUnit || '-'}</strong></p>
+                            <p class="text-xs text-slate-500 mt-2">หมวดหมู่: <strong class="text-slate-700">${cat.name || cat.id || '-'}</strong> <span class="mx-2 text-slate-300">|</span> รูปแบบ: <strong class="text-slate-700">${frm.name || frm.id || '-'}</strong> <span class="mx-2 text-slate-300">|</span> พิกัด HS: <strong class="text-slate-700">${p.hsCode || '-'}</strong> <span class="mx-2 text-slate-300">|</span> หน่วยตั้งต้น: <strong class="text-slate-700">${p.defaultUnit || '-'}</strong></p>
                         </div>
                     </div>
 
@@ -7177,10 +7250,10 @@
             const title = p ? 'แก้ไขข้อมูลสินค้า' : 'เพิ่มสินค้าใหม่';
             
             const categoriesHtml = (state.productCategories || []).map(c => `
-                <option value="${c.id}" ${p && p.categoryId === c.id ? 'selected' : ''}>${c.name} (${c.code})</option>
+                <option value="${c.id}" ${p && p.category?.id === c.id ? 'selected' : ''}>${c.name} (${c.code})</option>
             `).join('');
             const formsHtml = (state.productForms || []).map(f => `
-                <option value="${f.id}" ${p && p.formId === f.id ? 'selected' : ''}>${f.name} (${f.code})</option>
+                <option value="${f.id}" ${p && p.form?.id === f.id ? 'selected' : ''}>${f.name} (${f.code})</option>
             `).join('');
 
             const appFeedChecked = p && p.applications.includes('FEED_GRADE') ? 'checked' : '';
