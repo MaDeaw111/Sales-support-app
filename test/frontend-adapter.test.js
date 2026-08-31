@@ -66,6 +66,15 @@ test('authenticated bootstrap uses D1 REST loaders and never requests legacy GET
   assert.match(block, /loadSpecParametersFromApi\(\)/);
 });
 
+test('production shell omits obsolete Sheets sync controls and prototype branding', () => {
+  const visibleShell = html.slice(0, html.indexOf('<script>'));
+  assert.doesNotMatch(visibleShell, /Sync ทุกเมนู \+ Sheet/);
+  assert.doesNotMatch(visibleShell, /10 Core Sheets/);
+  assert.doesNotMatch(visibleShell, /Live Connected/);
+  assert.doesNotMatch(visibleShell, /Frontend Prototype/);
+  assert.match(visibleShell, /WCAT · Sales & Export Operations/);
+});
+
 test('D1-backed PO Manage detail uses a defined renderer with revision, lines, documents, and history', () => {
   const engine = functionBlock('renderPOEngine(container)', 'renderRealPOListTable');
   const detail = extractFunction('renderRealPODetailCard(po)');

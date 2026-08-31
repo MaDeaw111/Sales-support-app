@@ -90,16 +90,11 @@
                 <div class="bg-blue-600 text-white p-2 rounded-lg font-black text-xl">WCAT</div>
                 <div>
                     <h1 class="text-base font-bold leading-tight">Sales Support System (Clean DB)</h1>
-                    <p class="text-xs text-slate-400">Frontend Prototype v3.16 · DI Pallet Plan</p>
+                    <p class="text-xs text-slate-400">WCAT · Sales & Export Operations</p>
                 </div>
             </div>
 
             <div class="flex items-center space-x-4">
-                <button id="btnMasterSync" onclick="masterSyncAllSheets()" class="ui-btn-success bg-emerald-600 hover:bg-emerald-700 px-3 py-1.5 rounded-lg flex items-center space-x-1.5 text-xs font-bold transition-all shadow-sm">
-                    <i data-lucide="refresh-cw" class="w-3.5 h-3.5"></i>
-                    <span>Sync ทุกเมนู + Sheet</span>
-                </button>
-
                 <div class="hidden sm:block text-right">
                     <div id="authUserName" class="text-xs font-black text-white">—</div>
                     <div id="authUserRole" class="text-[9px] font-bold tracking-wide text-amber-300">—</div>
@@ -128,13 +123,6 @@
                     <button onclick="changeView('payments')" class="w-full flex items-center space-x-3 px-3 py-2.5 rounded-lg text-xs font-semibold text-slate-600"><span>การเงิน &amp; รับชำระเงิน</span></button>
                     <button onclick="changeView('commissions')" class="w-full flex items-center space-x-3 px-3 py-2.5 rounded-lg text-xs font-semibold text-slate-600"><span>ระบบคำนวณคอมมิชชั่น</span></button>
                 </nav>
-                <div class="pt-4 border-t border-slate-100">
-                    <div class="text-[11px] font-bold text-slate-400 uppercase px-3 mb-2">สถานะระบบ (Database)</div>
-                    <div class="px-3 py-2 bg-slate-50 rounded-lg text-xs border border-slate-200 text-slate-600 space-y-1">
-                        <div class="flex justify-between"><span>Tables:</span> <span class="font-bold text-slate-900">10 Core Sheets</span></div>
-                        <div class="flex justify-between"><span>Sync:</span> <span class="text-emerald-600 font-bold" id="syncStatusText">Live Connected</span></div>
-                    </div>
-                </div>
             </div>
         </aside>
 
