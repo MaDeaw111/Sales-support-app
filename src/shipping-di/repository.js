@@ -165,7 +165,7 @@ function containerPoLineCapacityGuard(diLines, quantitiesByPoLine) {
         JOIN delivery_instructions other_planned_di ON other_planned_di.di_id = other_planned_line.di_id
         WHERE other_planned_line.po_revision_line_id = ?
           AND other_planned_line.di_id <> phase6_shipments.di_id
-          AND other_planned_di.status <> 'CANCELLED'
+          AND other_planned_di.status IN ('DRAFT', 'CONFIRMED', 'IN_PROGRESS')
           AND NOT EXISTS (
             SELECT 1
             FROM shipment_container_lines represented_line
@@ -211,7 +211,7 @@ async function assertContainerPoLineCapacity(db, shipment, diLines, quantitiesBy
           JOIN delivery_instructions other_planned_di ON other_planned_di.di_id = other_planned_line.di_id
           WHERE other_planned_line.po_revision_line_id = po_line.line_id
             AND other_planned_line.di_id <> ?
-            AND other_planned_di.status <> 'CANCELLED'
+            AND other_planned_di.status IN ('DRAFT', 'CONFIRMED', 'IN_PROGRESS')
             AND NOT EXISTS (
               SELECT 1
               FROM shipment_container_lines represented_line
@@ -924,7 +924,7 @@ function deliveryInstructionLineReservationStatement(db, diId, deliveryInstructi
                    JOIN delivery_instructions planned_di
                      ON planned_di.di_id = planned_di_line.di_id
                    WHERE planned_di_line.po_revision_line_id = requested.po_revision_line_id
-                     AND planned_di.status <> 'CANCELLED'
+                     AND planned_di.status IN ('DRAFT', 'CONFIRMED', 'IN_PROGRESS')
                      AND NOT EXISTS (
                        SELECT 1
                        FROM delivery_instruction_lines actual_di_line
@@ -1102,7 +1102,7 @@ export function createShippingDiRepository(db) {
                            JOIN delivery_instructions planned_di
                              ON planned_di.di_id = planned_di_line.di_id
                            WHERE planned_di_line.po_revision_line_id = requested.po_revision_line_id
-                             AND planned_di.status <> 'CANCELLED'
+                             AND planned_di.status IN ('DRAFT', 'CONFIRMED', 'IN_PROGRESS')
                              AND NOT EXISTS (
                                SELECT 1
                                FROM delivery_instruction_lines actual_di_line
@@ -1248,15 +1248,32 @@ export function createShippingDiRepository(db) {
       const cancellationNote = validateCancellationNote(note);
       const deliveryInstruction = await findDeliveryInstruction(db, diId);
       if (!deliveryInstruction) throw codedError('DI_NOT_FOUND');
-      if (deliveryInstruction.status !== 'CONFIRMED') throw codedError('DI_NOT_CONFIRMED');
       const shipment = await findPhase6Shipment(db, diId);
+      const cancellablePair = (
+        deliveryInstruction.status === 'CONFIRMED' && shipment?.status === 'PLANNING'
+      ) || (
+        deliveryInstruction.status === 'IN_PROGRESS' && shipment?.status === 'BOOKED'
+      );
+      if (!cancellablePair) throw codedError('DI_NOT_CONFIRMED');
 
       const results = await db.batch([
         db.prepare(`
           UPDATE delivery_instructions
           SET status = 'CANCELLED', cancellation_note = ?, lifecycle_version = lifecycle_version + 1, updated_by = ?, updated_at = CURRENT_TIMESTAMP
-          WHERE di_id = ? AND status = 'CONFIRMED' AND lifecycle_version = ?
-        `).bind(cancellationNote, actorId, diId, deliveryInstruction.lifecycle_version),
+          WHERE di_id = ? AND status = ? AND lifecycle_version = ?
+            AND EXISTS (
+              SELECT 1 FROM phase6_shipments
+              WHERE di_id = ? AND status = ?
+            )
+        `).bind(
+          cancellationNote,
+          actorId,
+          diId,
+          deliveryInstruction.status,
+          deliveryInstruction.lifecycle_version,
+          diId,
+          shipment.status
+        ),
         auditAfterMutationStatement(db, 'DI', diId, 'DI_CANCELLED', actorId, {
           oldStatus: deliveryInstruction.status,
           newStatus: 'CANCELLED',
@@ -1265,13 +1282,13 @@ export function createShippingDiRepository(db) {
         db.prepare(`
           UPDATE phase6_shipments
           SET status = 'CANCELLED', cancellation_note = ?, updated_by = ?, updated_at = CURRENT_TIMESTAMP
-          WHERE di_id = ? AND status = 'PLANNING'
-        `).bind(cancellationNote, actorId, diId),
+          WHERE di_id = ? AND status = ? AND changes() = 1
+        `).bind(cancellationNote, actorId, diId, shipment.status),
         ...(shipment ? [auditAfterMutationStatement(
           db, 'SHIPMENT', shipment.shipment_id, 'SHIPMENT_CANCELLED', actorId, { cancellationNote }
         )] : [])
       ]);
-      if (!mutationApplied(results[0])) throw codedError('DI_NOT_CONFIRMED');
+      if (!mutationApplied(results[0]) || !mutationApplied(results[2])) throw codedError('DI_NOT_CONFIRMED');
       return findDeliveryInstruction(db, diId);
     },
 
@@ -2094,7 +2111,7 @@ export function createShippingDiRepository(db) {
           FROM delivery_instruction_lines dil
           JOIN delivery_instructions di ON di.di_id = dil.di_id
           WHERE di.po_id = ?
-            AND di.status <> 'CANCELLED'
+            AND di.status IN ('DRAFT', 'CONFIRMED', 'IN_PROGRESS')
             AND NOT EXISTS (
               SELECT 1
               FROM delivery_instruction_lines actual_dil
@@ -2133,7 +2150,7 @@ export function createShippingDiRepository(db) {
           FROM delivery_instruction_lines dil
           JOIN delivery_instructions di ON di.di_id = dil.di_id
           WHERE dil.di_id = ?
-            AND di.status <> 'CANCELLED'
+            AND di.status IN ('DRAFT', 'CONFIRMED', 'IN_PROGRESS')
             AND NOT EXISTS (
               SELECT 1
               FROM delivery_instruction_lines actual_dil

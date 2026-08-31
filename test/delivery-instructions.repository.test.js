@@ -311,6 +311,73 @@ test('PO line balance subtracts planned only until that DI has actual container 
   assert.equal(balanceByLine.get('LINE-20').available_qty_mt, 90); // its plan remains reserved until this exact line has actuals
 });
 
+test('COMPLETED combined DI retains historical plans but availability consumes only actual and active plans', async () => {
+  const { db, wrappedDb } = await setupTestDb();
+  const repo = createShippingDiRepository(wrappedDb);
+
+  for (const [diId, diNo, status] of [
+    ['DI-COMPLETED', 'HISTORICAL-COMPLETED', 'COMPLETED'],
+    ['DI-CANCELLED-HISTORY', 'HISTORICAL-CANCELLED', 'CANCELLED'],
+    ['DI-ACTIVE', 'ACTIVE-PLAN', 'DRAFT']
+  ]) {
+    db.prepare(`
+      INSERT INTO delivery_instructions (
+        di_id, customer_id, po_id, po_revision_id, di_no, shipping_month, shipping_period, container_plan, status, created_by
+      ) VALUES (?, 'C1', 'PO-2026-015', 'REV-1', ?, '2026-09', 'FIRST_HALF', '2 × 20GP', ?, 'U_EXPORT')
+    `).run(diId, diNo, status);
+  }
+  for (const [lineId, diId, poLineId, plannedQtyMt] of [
+    ['DIL-COMPLETED-10', 'DI-COMPLETED', 'LINE-10', 60],
+    ['DIL-COMPLETED-20', 'DI-COMPLETED', 'LINE-20', 40],
+    ['DIL-CANCELLED-HISTORY', 'DI-CANCELLED-HISTORY', 'LINE-10', 99],
+    ['DIL-ACTIVE-10', 'DI-ACTIVE', 'LINE-10', 20],
+    ['DIL-ACTIVE-20', 'DI-ACTIVE', 'LINE-20', 25]
+  ]) {
+    db.prepare(`
+      INSERT INTO delivery_instruction_lines (
+        di_line_id, di_id, po_id, po_revision_id, po_revision_line_id, product_id, planned_qty_mt, packing_snapshot, created_by
+      ) VALUES (?, ?, 'PO-2026-015', 'REV-1', ?, 'P1', ?, 'Jumbo Bag', 'U_EXPORT')
+    `).run(lineId, diId, poLineId, plannedQtyMt);
+  }
+  db.prepare("INSERT INTO phase6_shipments (shipment_id, di_id, status, created_by) VALUES ('SHIP-COMPLETED', 'DI-COMPLETED', 'COMPLETED', 'U_EXPORT')").run();
+  db.prepare("INSERT INTO shipment_containers (container_id, shipment_id, container_no, status, created_by) VALUES ('CONT-COMPLETED', 'SHIP-COMPLETED', 'HISTORICAL-1', 'LOADED', 'U_EXPORT')").run();
+  db.prepare("INSERT INTO shipment_container_lines (container_line_id, container_id, delivery_instruction_line_id, number_of_bags, qty_mt, created_by) VALUES ('CL-COMPLETED', 'CONT-COMPLETED', 'DIL-COMPLETED-10', 30, 30, 'U_EXPORT')").run();
+
+  const before = new Map((await repo.getPoLineBalances('PO-2026-015'))
+    .map((balance) => [balance.po_revision_line_id, balance]));
+  assert.deepEqual({
+    actual: before.get('LINE-10').actual_qty_mt,
+    activePlan: before.get('LINE-10').unrepresented_planned_qty_mt,
+    available: before.get('LINE-10').available_qty_mt
+  }, { actual: 30, activePlan: 20, available: 50 });
+  assert.deepEqual({
+    actual: before.get('LINE-20').actual_qty_mt,
+    activePlan: before.get('LINE-20').unrepresented_planned_qty_mt,
+    available: before.get('LINE-20').available_qty_mt
+  }, { actual: 0, activePlan: 25, available: 75 });
+  assert.equal(db.prepare("SELECT SUM(planned_qty_mt) AS total FROM delivery_instruction_lines WHERE di_id = 'DI-COMPLETED'").get().total, 100);
+
+  await repo.createDeliveryInstruction(diPayload({
+    diNo: 'EXACT-REMAINDER',
+    lines: [
+      { poId: 'PO-2026-015', poRevisionId: 'REV-1', poRevisionLineId: 'LINE-10', plannedQtyMt: 50, packingSnapshot: 'Jumbo Bag' },
+      { poId: 'PO-2026-015', poRevisionId: 'REV-1', poRevisionLineId: 'LINE-20', plannedQtyMt: 75, packingSnapshot: 'Jumbo Bag' }
+    ]
+  }), 'U_EXPORT');
+
+  const after = new Map((await repo.getPoLineBalances('PO-2026-015'))
+    .map((balance) => [balance.po_revision_line_id, balance]));
+  assert.equal(after.get('LINE-10').available_qty_mt, 0);
+  assert.equal(after.get('LINE-20').available_qty_mt, 0);
+  await assert.rejects(
+    () => repo.createDeliveryInstruction(diPayload({
+      diNo: 'ABOVE-MAX',
+      lines: [{ poId: 'PO-2026-015', poRevisionId: 'REV-1', poRevisionLineId: 'LINE-10', plannedQtyMt: 0.01, packingSnapshot: 'Jumbo Bag' }]
+    }), 'U_EXPORT'),
+    /DI_QTY_EXCEEDS_MAX_ALLOWED/
+  );
+});
+
 test('DI creation rejects planned quantity above the exact PO line maximum', async () => {
   const { wrappedDb } = await setupTestDb();
   const repo = createShippingDiRepository(wrappedDb);
@@ -459,14 +526,6 @@ test('cancelling a DI requires a note, releases planned availability, and record
 
   await assert.rejects(() => repo.cancelDeliveryInstruction(created.di_id, '', 'U_EXPORT'), /CANCEL_NOTE_REQUIRED/);
   await assert.rejects(() => repo.cancelDeliveryInstruction(created.di_id, 'Customer changed schedule', 'U_EXPORT'), /DI_NOT_CONFIRMED/);
-  for (const status of ['IN_PROGRESS', 'COMPLETED']) {
-    const nonCancellable = await repo.createDeliveryInstruction(diPayload({
-      diNo: `CANCEL-${status}`,
-      lines: [{ poId: 'PO-2026-015', poRevisionId: 'REV-1', poRevisionLineId: 'LINE-20', plannedQtyMt: 1, packingSnapshot: 'Jumbo Bag' }]
-    }), 'U_EXPORT');
-    db.prepare('UPDATE delivery_instructions SET status = ? WHERE di_id = ?').run(status, nonCancellable.di_id);
-    await assert.rejects(() => repo.cancelDeliveryInstruction(nonCancellable.di_id, 'No approved cancellation rule', 'U_EXPORT'), /DI_NOT_CONFIRMED/);
-  }
   await repo.confirmDeliveryInstruction(created.di_id, 'U_EXPORT');
   const cancelled = await repo.cancelDeliveryInstruction(created.di_id, 'Customer changed schedule', 'U_EXPORT');
 
@@ -479,6 +538,77 @@ test('cancelling a DI requires a note, releases planned availability, and record
   assert.ok(history.every((event) => event.entity_type === 'DI' && event.entity_id === created.di_id && event.actor_id === 'U_EXPORT' && event.created_at));
   assert.equal(JSON.parse(history.at(-1).metadata_json).cancellationNote, 'Customer changed schedule');
   assert.equal(db.prepare("SELECT COUNT(*) AS n FROM shipment_audit_events WHERE entity_type = 'DI' AND entity_id = ?").get(created.di_id).n, 3);
+});
+
+test('cancellation admits only CONFIRMED/PLANNING and IN_PROGRESS/BOOKED pairs without deleting actual history', async () => {
+  const { db, wrappedDb } = await setupTestDb();
+  const repo = createShippingDiRepository(wrappedDb);
+  const created = await repo.createDeliveryInstruction(diPayload({ note: 'Preserve this operational note' }), 'U_EXPORT');
+  await repo.confirmDeliveryInstruction(created.di_id, 'U_EXPORT');
+  const shipment = await repo.getPhase6Shipment(created.di_id);
+  await repo.recordShipmentBooking(shipment.shipment_id, { bookingNo: 'BK-CANCEL-1' }, 'U_EXPORT');
+  await repo.replaceShipmentContainers(shipment.shipment_id, [{
+    containerNo: 'HISTORICAL-CONT-1',
+    lines: [{ poRevisionLineId: 'LINE-10', numberOfBags: 10, netWeightMt: 10 }]
+  }], 'U_EXPORT');
+
+  const cancelled = await repo.cancelDeliveryInstruction(created.di_id, 'Customer cancelled after booking', 'U_EXPORT');
+  const cancelledShipment = await repo.getPhase6Shipment(shipment.shipment_id);
+
+  assert.deepEqual({
+    status: cancelled.status,
+    note: cancelled.note,
+    cancellationNote: cancelled.cancellation_note
+  }, {
+    status: 'CANCELLED',
+    note: 'Preserve this operational note',
+    cancellationNote: 'Customer cancelled after booking'
+  });
+  assert.deepEqual({
+    status: cancelledShipment.status,
+    bookingNo: cancelledShipment.booking_no,
+    actualQtyMt: cancelledShipment.actual_qty_mt,
+    cancellationNote: cancelledShipment.cancellation_note
+  }, {
+    status: 'CANCELLED',
+    bookingNo: 'BK-CANCEL-1',
+    actualQtyMt: 10,
+    cancellationNote: 'Customer cancelled after booking'
+  });
+  assert.equal(db.prepare("SELECT COUNT(*) AS n FROM shipment_containers WHERE shipment_id = ?").get(shipment.shipment_id).n, 1);
+  assert.equal(db.prepare("SELECT COUNT(*) AS n FROM shipment_container_lines WHERE container_id = (SELECT container_id FROM shipment_containers WHERE shipment_id = ?)").get(shipment.shipment_id).n, 1);
+  assert.deepEqual((await repo.getShippingDiHistory(created.di_id)).map((event) => event.event_type), [
+    'DI_CREATED', 'DI_CONFIRMED', 'DI_CANCELLED'
+  ]);
+  assert.deepEqual(db.prepare(`
+    SELECT event_type FROM shipment_audit_events
+    WHERE entity_type = 'SHIPMENT' AND entity_id = ?
+    ORDER BY rowid ASC
+  `).all(shipment.shipment_id).map((event) => event.event_type), [
+    'BOOKING_RECORDED', 'CONTAINER_ADDED', 'SHIPMENT_CANCELLED'
+  ]);
+  assert.equal((await repo.getPoLineBalances('PO-2026-015'))[0].available_qty_mt, 100);
+
+  for (const [diStatus, shipmentStatus] of [
+    ['IN_PROGRESS', 'LOADED'],
+    ['IN_PROGRESS', 'DOCS_SENT'],
+    ['COMPLETED', 'COMPLETED']
+  ]) {
+    const terminal = await repo.createDeliveryInstruction(diPayload({
+      diNo: `NO-CANCEL-${shipmentStatus}`,
+      lines: [{ poId: 'PO-2026-015', poRevisionId: 'REV-1', poRevisionLineId: 'LINE-20', plannedQtyMt: 1, packingSnapshot: 'Jumbo Bag' }]
+    }), 'U_EXPORT');
+    await repo.confirmDeliveryInstruction(terminal.di_id, 'U_EXPORT');
+    db.prepare('UPDATE delivery_instructions SET status = ? WHERE di_id = ?').run(diStatus, terminal.di_id);
+    db.prepare('UPDATE phase6_shipments SET status = ? WHERE di_id = ?').run(shipmentStatus, terminal.di_id);
+
+    await assert.rejects(
+      () => repo.cancelDeliveryInstruction(terminal.di_id, 'Not approved for cancellation', 'U_EXPORT'),
+      /DI_NOT_CONFIRMED/
+    );
+    assert.equal((await repo.getDeliveryInstruction(terminal.di_id)).status, diStatus);
+    assert.equal((await repo.getPhase6Shipment(terminal.di_id)).status, shipmentStatus);
+  }
 });
 
 test('PATCH and confirmation conflicts apply only one DRAFT transition and audit event', async () => {
