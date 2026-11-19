@@ -7931,6 +7931,43 @@
                     ${state.products && state.products.length > 0 ? state.products.map(p => {
                         const cat = p.category || {};
                         const frm = p.form || {};
+                        const escSpec = (v) => String(v ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+                        const formatSpecItemBadge = (item) => {
+                            const label = escSpec(item.parameterName || item.parameterCode || item.parameterId || '-');
+                            const unitRaw = item.unit || '';
+                            const unitSuffix = unitRaw ? (unitRaw === '%' ? '%' : ` ${escSpec(unitRaw)}`) : '';
+                            if (item.operator === 'MIN') return `${label} ≥ ${escSpec(item.numericValue)}${unitSuffix}`;
+                            if (item.operator === 'MAX') return `${label} ≤ ${escSpec(item.numericValue)}${unitSuffix}`;
+                            if (item.operator === 'EXACT') return `${label} = ${escSpec(item.numericValue)}${unitSuffix}`;
+                            if (item.operator === 'RANGE') return `${label} ${escSpec(item.numericValue)}–${escSpec(item.numericValueTo)}${unitSuffix}`;
+                            if (item.operator === 'TEXT') return `${label}: ${escSpec(item.textValue || '-')}`;
+                            return label;
+                        };
+                        const activeSpecs = (Array.isArray(p.standardSpecs) ? p.standardSpecs : []).filter(s => s && Array.isArray(s.items) && s.items.length > 0);
+                        let specSummaryHtml = '<div class="text-[10px] text-slate-400 italic pt-1">สเปกมาตรฐาน: ยังไม่ได้กำหนด</div>';
+                        if (activeSpecs.length > 0) {
+                            const maxBadgesPerSpec = activeSpecs.length > 1 ? 3 : 4;
+                            specSummaryHtml = `
+                                <div class="pt-1.5 border-t border-slate-100 space-y-1.5">
+                                    <div class="text-[10px] font-bold text-slate-500 uppercase tracking-wide flex items-center justify-between">
+                                        <span>สเปกมาตรฐาน (Standard Spec)</span>
+                                        <span class="text-[9px] font-semibold text-teal-700">${activeSpecs.reduce((acc, s) => acc + s.items.length, 0)} เกณฑ์</span>
+                                    </div>
+                                    ${activeSpecs.map(spec => {
+                                        const visibleItems = spec.items.slice(0, maxBadgesPerSpec);
+                                        const hiddenCount = spec.items.length - visibleItems.length;
+                                        const appLabel = activeSpecs.length > 1 ? `<span class="text-[9px] font-bold uppercase text-slate-500 mr-1">${spec.application === 'FEED_GRADE' ? 'FEED' : spec.application === 'PET_GRADE' ? 'PET' : escSpec(spec.application)}:</span>` : '';
+                                        return `
+                                            <div class="flex flex-wrap items-center gap-1">
+                                                ${appLabel}
+                                                ${visibleItems.map(item => `<span class="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold bg-teal-50 text-teal-800 border border-teal-200/80">${formatSpecItemBadge(item)}</span>`).join('')}
+                                                ${hiddenCount > 0 ? `<span class="inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-bold bg-slate-100 text-slate-600">+${hiddenCount}</span>` : ''}
+                                            </div>
+                                        `;
+                                    }).join('')}
+                                </div>
+                            `;
+                        }
                         return `
                             <div class="bg-white rounded-xl border border-slate-200 shadow-sm p-4 space-y-3 hover:shadow-md transition-shadow flex flex-col justify-between cursor-pointer" onclick="openProductDashboard('${p.id}')">
                                 <div class="space-y-3">
@@ -7952,6 +7989,7 @@
                                             ${(p.applications || []).map(app => `<span class="bg-slate-200 text-slate-700 text-[9px] px-1 rounded">${app}</span>`).join('')}
                                         </div>
                                     </div>
+                                    ${specSummaryHtml}
                                 </div>
                                 ${isAdminOrManager ? `
                                     <div class="pt-2 border-t flex justify-end">
@@ -8234,6 +8272,7 @@
                 const res = await fetch(`/api/standard-specs/${specId}/activate`, { method: 'POST' });
                 const body = await res.json();
                 if (body && body.status === 'SUCCESS') {
+                    await loadProductsFromApi();
                     openProductDashboard(state.selectedProductId, state.selectedProductApp);
                 } else {
                     alert('Activation failed: ' + body.message);
@@ -8249,6 +8288,7 @@
                 const res = await fetch(`/api/standard-specs/${specId}/archive`, { method: 'POST' });
                 const body = await res.json();
                 if (body && body.status === 'SUCCESS') {
+                    await loadProductsFromApi();
                     openProductDashboard(state.selectedProductId, state.selectedProductApp);
                 } else {
                     alert('Archive failed: ' + body.message);
@@ -8258,8 +8298,408 @@
             }
         }
 
+        function escapeProductSpecHtml(value) {
+            return String(value ?? '')
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;')
+                .replace(/'/g, '&#39;');
+        }
+
+        function getActiveSpecParametersForProductModal(includeParameterId = null) {
+            const params = Array.isArray(state.specParameters) ? state.specParameters : [];
+            return params
+                .filter(item => item && (item.status === 'ACTIVE' || (includeParameterId && item.id === includeParameterId)))
+                .slice()
+                .sort((a, b) => (Number(a.sortOrder || 0) - Number(b.sortOrder || 0)) || String(a.name || '').localeCompare(String(b.name || '')));
+        }
+
+        function serializeProductSpecItems(items = []) {
+            return JSON.stringify((items || []).map(item => ({
+                parameterId: String(item.parameterId || ''),
+                operator: String(item.operator || '').toUpperCase(),
+                numericValue: item.numericValue !== undefined && item.numericValue !== null && item.numericValue !== '' ? Number(item.numericValue) : null,
+                numericValueTo: item.numericValueTo !== undefined && item.numericValueTo !== null && item.numericValueTo !== '' ? Number(item.numericValueTo) : null,
+                textValue: item.textValue !== undefined && item.textValue !== null ? String(item.textValue).trim() : null,
+                unit: String(item.unit || '').trim(),
+                notes: String(item.notes || '').trim()
+            })));
+        }
+
+        function buildProductSpecOperatorOptionsHtml(dataType, selectedOperator) {
+            const isText = String(dataType || '').toUpperCase() === 'TEXT';
+            if (isText) {
+                return `<option value="TEXT" selected>TEXT</option>`;
+            }
+            const op = ['MIN', 'MAX', 'RANGE', 'EXACT'].includes(selectedOperator) ? selectedOperator : 'MIN';
+            return `
+                <option value="MIN" ${op === 'MIN' ? 'selected' : ''}>MIN (≥)</option>
+                <option value="MAX" ${op === 'MAX' ? 'selected' : ''}>MAX (≤)</option>
+                <option value="RANGE" ${op === 'RANGE' ? 'selected' : ''}>RANGE (Min - Max)</option>
+                <option value="EXACT" ${op === 'EXACT' ? 'selected' : ''}>EXACT (=)</option>
+            `;
+        }
+
+        function buildProductSpecRowHtml(rowData) {
+            rowData = rowData || {};
+            const selectedParamId = rowData.parameterId || '';
+            const params = getActiveSpecParametersForProductModal(selectedParamId);
+            const matchedParam = params.find(p => p.id === selectedParamId) || null;
+            const dataType = matchedParam?.dataType || (rowData.operator === 'TEXT' ? 'TEXT' : 'NUMBER');
+            const operator = dataType === 'TEXT'
+                ? 'TEXT'
+                : (['MIN', 'MAX', 'RANGE', 'EXACT'].includes(rowData.operator) ? rowData.operator : 'MIN');
+            const unitVal = rowData.unit !== undefined && rowData.unit !== null
+                ? rowData.unit
+                : (matchedParam?.defaultUnit || '');
+            const numVal = rowData.numericValue !== undefined && rowData.numericValue !== null ? rowData.numericValue : '';
+            const numValTo = rowData.numericValueTo !== undefined && rowData.numericValueTo !== null ? rowData.numericValueTo : '';
+            const textVal = rowData.textValue !== undefined && rowData.textValue !== null ? rowData.textValue : '';
+            const notesVal = rowData.notes || '';
+
+            const paramOptions = params.map(param => {
+                const statusSuffix = param.status !== 'ACTIVE' ? ` [${param.status}]` : '';
+                return `<option value="${escapeProductSpecHtml(param.id)}" ${param.id === selectedParamId ? 'selected' : ''}>${escapeProductSpecHtml(param.name)} (${escapeProductSpecHtml(param.code)})${statusSuffix}</option>`;
+            }).join('');
+
+            const isRange = operator === 'RANGE';
+            const isText = operator === 'TEXT';
+
+            return `
+                <div class="prod-spec-row rounded-lg border border-slate-200 bg-slate-50/80 p-2.5 space-y-2">
+                    <div class="grid grid-cols-12 gap-2 items-center">
+                        <div class="col-span-5">
+                            <select class="ui-input text-xs prod-spec-param" onchange="onProductSpecParameterChange(this)">
+                                <option value="">-- เลือกพารามิเตอร์ --</option>
+                                ${paramOptions}
+                            </select>
+                        </div>
+                        <div class="col-span-3">
+                            <select class="ui-input text-xs prod-spec-operator" onchange="onProductSpecOperatorChange(this)">
+                                ${buildProductSpecOperatorOptionsHtml(dataType, operator)}
+                            </select>
+                        </div>
+                        <div class="col-span-3">
+                            <input type="text" class="ui-input text-xs prod-spec-unit" placeholder="หน่วย (Unit)" value="${escapeProductSpecHtml(unitVal)}">
+                        </div>
+                        <div class="col-span-1 flex justify-end">
+                            <button type="button" onclick="removeProductSpecRow(this)" class="prod-spec-remove text-rose-500 hover:text-rose-700 hover:bg-rose-50 rounded p-1 text-xs font-bold" title="ลบเกณฑ์สเปก">✕</button>
+                        </div>
+                    </div>
+                    <div class="grid grid-cols-12 gap-2 items-center">
+                        <div class="col-span-7 flex items-center gap-1.5">
+                            <input type="number" step="any" class="ui-input text-xs prod-spec-num ${isText ? 'hidden' : ''}" placeholder="${isRange ? 'ค่าต่ำสุด (Min)' : 'ค่ากำหนด'}" value="${escapeProductSpecHtml(numVal)}">
+                            <span class="prod-spec-range-sep text-xs font-bold text-slate-400 ${isRange ? '' : 'hidden'}">-</span>
+                            <input type="number" step="any" class="ui-input text-xs prod-spec-num-to ${isRange ? '' : 'hidden'}" placeholder="ค่าสูงสุด (Max)" value="${escapeProductSpecHtml(numValTo)}">
+                            <input type="text" class="ui-input text-xs prod-spec-text ${isText ? '' : 'hidden'}" placeholder="ระบุข้อความ (Text Spec)" value="${escapeProductSpecHtml(textVal)}">
+                        </div>
+                        <div class="col-span-5">
+                            <input type="text" class="ui-input text-xs prod-spec-notes" placeholder="หมายเหตุ (ไม่บังคับ)" value="${escapeProductSpecHtml(notesVal)}">
+                        </div>
+                    </div>
+                </div>
+            `;
+        }
+
+        function readProductSpecRowsFromDom() {
+            const container = document.getElementById('productSpecRows');
+            if (!container || typeof container.querySelectorAll !== 'function') return [];
+            const rows = [];
+            container.querySelectorAll('.prod-spec-row').forEach(rowEl => {
+                const parameterId = rowEl.querySelector('.prod-spec-param')?.value || '';
+                const operator = rowEl.querySelector('.prod-spec-operator')?.value || 'MIN';
+                const unit = rowEl.querySelector('.prod-spec-unit')?.value || '';
+                const numericValue = rowEl.querySelector('.prod-spec-num')?.value ?? '';
+                const numericValueTo = rowEl.querySelector('.prod-spec-num-to')?.value ?? '';
+                const textValue = rowEl.querySelector('.prod-spec-text')?.value ?? '';
+                const notes = rowEl.querySelector('.prod-spec-notes')?.value || '';
+                rows.push({ parameterId, operator, numericValue, numericValueTo, textValue, unit, notes });
+            });
+            return rows;
+        }
+
+        function renderProductSpecRowsIntoDom(rows = []) {
+            const container = document.getElementById('productSpecRows');
+            const emptyHint = document.getElementById('productSpecEmptyHint');
+            if (!container) return;
+            const list = Array.isArray(rows) ? rows : [];
+            container.innerHTML = list.map(row => buildProductSpecRowHtml(row)).join('');
+            if (emptyHint) {
+                if (list.length === 0) emptyHint.classList.remove('hidden');
+                else emptyHint.classList.add('hidden');
+            }
+        }
+
+        function addProductSpecRow(initialData = null) {
+            const container = document.getElementById('productSpecRows');
+            if (!container) return;
+            const activeParams = getActiveSpecParametersForProductModal();
+            if (!initialData && activeParams.length === 0) {
+                const errDiv = document.getElementById('productFormError');
+                if (errDiv) {
+                    errDiv.innerText = 'ยังไม่มี Spec Parameter ที่เปิดใช้งาน กรุณาเพิ่มใน Spec Parameter Master ก่อน';
+                    errDiv.classList.remove('hidden');
+                }
+                return;
+            }
+            if (state.productModalSpecState) {
+                state.productModalSpecState.userModified = true;
+            }
+            let rowData = initialData;
+            if (!rowData) {
+                const usedIds = new Set(readProductSpecRowsFromDom().map(r => r.parameterId).filter(Boolean));
+                const nextParam = activeParams.find(p => !usedIds.has(p.id)) || null;
+                rowData = nextParam ? {
+                    parameterId: nextParam.id,
+                    operator: nextParam.dataType === 'TEXT' ? 'TEXT' : 'MIN',
+                    unit: nextParam.defaultUnit || ''
+                } : {};
+            }
+            container.insertAdjacentHTML('beforeend', buildProductSpecRowHtml(rowData));
+            const emptyHint = document.getElementById('productSpecEmptyHint');
+            if (emptyHint) emptyHint.classList.add('hidden');
+        }
+
+        function removeProductSpecRow(buttonEl) {
+            const rowEl = buttonEl?.closest ? buttonEl.closest('.prod-spec-row') : null;
+            if (rowEl && typeof rowEl.remove === 'function') rowEl.remove();
+            if (state.productModalSpecState) {
+                state.productModalSpecState.userModified = true;
+            }
+            const container = document.getElementById('productSpecRows');
+            const emptyHint = document.getElementById('productSpecEmptyHint');
+            if (container && emptyHint && container.querySelectorAll('.prod-spec-row').length === 0) {
+                emptyHint.classList.remove('hidden');
+            }
+        }
+
+        function onProductSpecParameterChange(selectEl) {
+            const rowEl = selectEl?.closest ? selectEl.closest('.prod-spec-row') : null;
+            if (!rowEl) return;
+            if (state.productModalSpecState) {
+                state.productModalSpecState.userModified = true;
+            }
+            const paramId = selectEl.value || '';
+            const param = (state.specParameters || []).find(item => item.id === paramId) || null;
+            const unitInput = rowEl.querySelector('.prod-spec-unit');
+            const opSelect = rowEl.querySelector('.prod-spec-operator');
+            if (param && unitInput) {
+                unitInput.value = param.defaultUnit || '';
+            }
+            if (param && opSelect) {
+                const prevOp = opSelect.value;
+                opSelect.innerHTML = buildProductSpecOperatorOptionsHtml(param.dataType, prevOp);
+                opSelect.value = param.dataType === 'TEXT'
+                    ? 'TEXT'
+                    : (['MIN', 'MAX', 'RANGE', 'EXACT'].includes(prevOp) ? prevOp : 'MIN');
+                onProductSpecOperatorChange(opSelect);
+            }
+        }
+
+        function onProductSpecOperatorChange(opSelectEl) {
+            const rowEl = opSelectEl?.closest ? opSelectEl.closest('.prod-spec-row') : null;
+            if (!rowEl) return;
+            if (state.productModalSpecState) {
+                state.productModalSpecState.userModified = true;
+            }
+            const op = String(opSelectEl.value || 'MIN').toUpperCase();
+            const isText = op === 'TEXT';
+            const isRange = op === 'RANGE';
+            const numInput = rowEl.querySelector('.prod-spec-num');
+            const rangeSep = rowEl.querySelector('.prod-spec-range-sep');
+            const numToInput = rowEl.querySelector('.prod-spec-num-to');
+            const textInput = rowEl.querySelector('.prod-spec-text');
+            if (numInput) {
+                numInput.classList.toggle('hidden', isText);
+                numInput.placeholder = isRange ? 'ค่าต่ำสุด (Min)' : 'ค่ากำหนด';
+            }
+            if (rangeSep) rangeSep.classList.toggle('hidden', !isRange);
+            if (numToInput) numToInput.classList.toggle('hidden', !isRange);
+            if (textInput) textInput.classList.toggle('hidden', !isText);
+        }
+
+        function getCheckedProductModalApplications() {
+            const apps = [];
+            if (document.getElementById('prodAppFeed')?.checked) apps.push('FEED_GRADE');
+            if (document.getElementById('prodAppPet')?.checked) apps.push('PET_GRADE');
+            return apps;
+        }
+
+        function syncProductModalAppScopes() {
+            const modalState = state.productModalSpecState;
+            const scopeSelect = document.getElementById('prodSpecAppScope');
+            if (!modalState || !scopeSelect) return;
+
+            modalState.rowsByApp[modalState.activeScope] = readProductSpecRowsFromDom();
+            const checkedApps = getCheckedProductModalApplications();
+            const options = [];
+            if (!modalState.productId) {
+                if (checkedApps.length !== 1) {
+                    options.push({ value: 'ALL', label: checkedApps.length > 1 ? 'ทุกเกรดที่เลือก (FEED + PET)' : 'ทุกเกรดที่เลือก' });
+                }
+                checkedApps.forEach(app => options.push({ value: app, label: app }));
+            } else {
+                checkedApps.forEach(app => options.push({ value: app, label: app }));
+                if (options.length === 0) {
+                    options.push({ value: 'FEED_GRADE', label: 'FEED_GRADE' });
+                }
+            }
+
+            const prevScope = modalState.activeScope;
+            const stillValid = options.some(o => o.value === prevScope);
+            const nextScope = stillValid ? prevScope : options[0].value;
+            if (!modalState.productId && !stillValid && modalState.rowsByApp[prevScope]?.length && !(modalState.rowsByApp[nextScope]?.length)) {
+                modalState.rowsByApp[nextScope] = modalState.rowsByApp[prevScope].map(r => ({ ...r }));
+            }
+            modalState.activeScope = nextScope;
+            scopeSelect.innerHTML = options.map(o => `<option value="${o.value}" ${o.value === nextScope ? 'selected' : ''}>${o.label}</option>`).join('');
+            renderProductSpecRowsIntoDom(modalState.rowsByApp[nextScope] || []);
+        }
+
+        function onProductSpecAppScopeChange() {
+            const modalState = state.productModalSpecState;
+            const scopeSelect = document.getElementById('prodSpecAppScope');
+            if (!modalState || !scopeSelect) return;
+            const prevScope = modalState.activeScope;
+            const nextScope = scopeSelect.value;
+            modalState.rowsByApp[prevScope] = readProductSpecRowsFromDom();
+            if (!modalState.productId && prevScope === 'ALL' && nextScope !== 'ALL' && !modalState.rowsByApp[nextScope] && modalState.rowsByApp['ALL']?.length) {
+                modalState.rowsByApp[nextScope] = modalState.rowsByApp['ALL'].map(r => ({ ...r }));
+            }
+            modalState.activeScope = nextScope;
+            renderProductSpecRowsIntoDom(modalState.rowsByApp[nextScope] || []);
+        }
+
+        function validateAndNormalizeProductSpecRows(rawRows = [], specParameters = []) {
+            const paramMap = new Map((specParameters || []).map(p => [p.id, p]));
+            const seen = new Set();
+            const items = [];
+
+            for (let i = 0; i < rawRows.length; i += 1) {
+                const row = rawRows[i] || {};
+                const parameterId = String(row.parameterId || '').trim();
+                if (!parameterId) {
+                    return { valid: false, error: `กรุณาเลือกพารามิเตอร์สเปกในแถวที่ ${i + 1}` };
+                }
+                if (seen.has(parameterId)) {
+                    return { valid: false, error: 'ห้ามเลือกพารามิเตอร์สเปกซ้ำในรายการเดียวกัน' };
+                }
+                seen.add(parameterId);
+
+                const param = paramMap.get(parameterId);
+                if (!param) {
+                    return { valid: false, error: `ไม่พบพารามิเตอร์สเปก (${parameterId})` };
+                }
+                if (param.status === 'ARCHIVED') {
+                    return { valid: false, error: `พารามิเตอร์ ${param.code} ถูกจัดเก็บ (ARCHIVED) ไม่สามารถใช้งานได้` };
+                }
+
+                const operator = String(row.operator || '').trim().toUpperCase();
+                if (!['MIN', 'MAX', 'RANGE', 'EXACT', 'TEXT'].includes(operator)) {
+                    return { valid: false, error: `เงื่อนไขสเปกไม่ถูกต้อง (${operator})` };
+                }
+                if (param.dataType === 'TEXT' && operator !== 'TEXT') {
+                    return { valid: false, error: `พารามิเตอร์ข้อความ (${param.name}) ต้องใช้เงื่อนไข TEXT เท่านั้น` };
+                }
+                if (param.dataType === 'NUMBER' && operator === 'TEXT') {
+                    return { valid: false, error: `พารามิเตอร์ตัวเลข (${param.name}) ต้องใช้เงื่อนไข MIN, MAX, EXACT หรือ RANGE` };
+                }
+
+                let numericValue = null;
+                let numericValueTo = null;
+                let textValue = null;
+
+                if (operator === 'TEXT') {
+                    textValue = String(row.textValue ?? '').trim();
+                    if (!textValue) {
+                        return { valid: false, error: `กรุณาระบุข้อความเกณฑ์สเปกสำหรับ ${param.name}` };
+                    }
+                } else if (operator === 'RANGE') {
+                    const lowStr = String(row.numericValue ?? '').trim();
+                    const highStr = String(row.numericValueTo ?? '').trim();
+                    if (lowStr === '' || highStr === '') {
+                        return { valid: false, error: `เงื่อนไข RANGE สำหรับ ${param.name} ต้องระบุทั้งค่าต่ำสุดและค่าสูงสุด` };
+                    }
+                    numericValue = Number(lowStr);
+                    numericValueTo = Number(highStr);
+                    if (Number.isNaN(numericValue) || Number.isNaN(numericValueTo)) {
+                        return { valid: false, error: `ค่าตัวเลขของ ${param.name} ไม่ถูกต้อง` };
+                    }
+                    if (numericValueTo <= numericValue) {
+                        return { valid: false, error: `ค่าสูงสุดของ ${param.name} ต้องมากกว่าค่าต่ำสุด` };
+                    }
+                } else {
+                    const valStr = String(row.numericValue ?? '').trim();
+                    if (valStr === '') {
+                        return { valid: false, error: `กรุณาระบุค่าตัวเลขสำหรับ ${param.name}` };
+                    }
+                    numericValue = Number(valStr);
+                    if (Number.isNaN(numericValue)) {
+                        return { valid: false, error: `ค่าตัวเลขของ ${param.name} ไม่ถูกต้อง` };
+                    }
+                }
+
+                items.push({
+                    parameterId,
+                    operator,
+                    numericValue,
+                    numericValueTo,
+                    textValue,
+                    unit: String(row.unit ?? '').trim() || param.defaultUnit || '',
+                    sortOrder: i,
+                    notes: String(row.notes ?? '').trim()
+                });
+            }
+
+            return { valid: true, items };
+        }
+
+        async function loadProductModalStandardSpecs(productId, applications = []) {
+            const modalState = state.productModalSpecState;
+            if (!modalState || modalState.productId !== productId) return;
+            const loadingHint = document.getElementById('productSpecLoadingHint');
+            if (loadingHint) loadingHint.classList.remove('hidden');
+
+            try {
+                const apps = Array.isArray(applications) && applications.length > 0 ? applications : ['FEED_GRADE'];
+                await Promise.all(apps.map(async (app) => {
+                    const res = await fetch(`/api/products/${productId}/standard-specs?application=${encodeURIComponent(app)}`);
+                    if (!res.ok) return;
+                    const body = await res.json();
+                    if (!body || body.status !== 'SUCCESS' || !Array.isArray(body.data?.standardSpecs)) return;
+                    const specs = body.data.standardSpecs;
+                    const chosen = specs.find(s => s.status === 'ACTIVE') || specs.find(s => s.status === 'DRAFT') || null;
+                    if (state.productModalSpecState !== modalState) return;
+                    modalState.loadedSpecsByApp[app] = chosen;
+                    const normalizedItems = (chosen?.items || []).map(item => ({
+                        parameterId: item.parameterId,
+                        operator: item.operator,
+                        numericValue: item.numericValue,
+                        numericValueTo: item.numericValueTo,
+                        textValue: item.textValue,
+                        unit: item.unit,
+                        notes: item.notes || ''
+                    }));
+                    modalState.originalSnapshotByApp[app] = serializeProductSpecItems(normalizedItems);
+                    if (!modalState.userModified) {
+                        modalState.rowsByApp[app] = normalizedItems;
+                    }
+                }));
+
+                if (state.productModalSpecState === modalState && !modalState.userModified) {
+                    renderProductSpecRowsIntoDom(modalState.rowsByApp[modalState.activeScope] || []);
+                }
+            } catch (err) {
+                console.error('Failed to preload product standard specs:', err);
+            } finally {
+                if (loadingHint) loadingHint.classList.add('hidden');
+            }
+        }
+
         function openAddProductModal(productId = null) {
-            const p = productId ? state.products.find(x => x.id === productId) : null;
+            if (state.currentUser && !['ADMIN', 'MANAGER'].includes(state.currentUser.role)) return;
+            const p = productId ? (state.products || []).find(x => x.id === productId) : null;
             const title = p ? 'แก้ไขข้อมูลสินค้า' : 'เพิ่มสินค้าใหม่';
             
             const categoriesHtml = (state.productCategories || []).map(c => `
@@ -8269,8 +8709,50 @@
                 <option value="${f.id}" ${p && p.form?.id === f.id ? 'selected' : ''}>${f.name} (${f.code})</option>
             `).join('');
 
-            const appFeedChecked = p && p.applications.includes('FEED_GRADE') ? 'checked' : '';
-            const appPetChecked = p && p.applications.includes('PET_GRADE') ? 'checked' : '';
+            const appFeedChecked = p && (p.applications || []).includes('FEED_GRADE') ? 'checked' : '';
+            const appPetChecked = p && (p.applications || []).includes('PET_GRADE') ? 'checked' : '';
+            const initialApps = p ? (p.applications || []) : [];
+
+            const rowsByApp = {};
+            const loadedSpecsByApp = {};
+            const originalSnapshotByApp = {};
+            if (p && Array.isArray(p.standardSpecs)) {
+                p.standardSpecs.forEach(spec => {
+                    if (!spec || !spec.application) return;
+                    loadedSpecsByApp[spec.application] = spec;
+                    const items = (spec.items || []).map(item => ({
+                        parameterId: item.parameterId,
+                        operator: item.operator,
+                        numericValue: item.numericValue,
+                        numericValueTo: item.numericValueTo,
+                        textValue: item.textValue,
+                        unit: item.unit,
+                        notes: item.notes || ''
+                    }));
+                    rowsByApp[spec.application] = items;
+                    originalSnapshotByApp[spec.application] = serializeProductSpecItems(items);
+                });
+            }
+            initialApps.forEach(app => {
+                if (!rowsByApp[app]) rowsByApp[app] = [];
+                if (!originalSnapshotByApp[app]) originalSnapshotByApp[app] = serializeProductSpecItems([]);
+            });
+
+            const initialScope = p ? (initialApps[0] || 'FEED_GRADE') : 'ALL';
+            state.productModalSpecState = {
+                productId: p ? p.id : null,
+                activeScope: initialScope,
+                rowsByApp,
+                loadedSpecsByApp,
+                originalSnapshotByApp,
+                userModified: false
+            };
+
+            const initialRows = rowsByApp[initialScope] || [];
+            const scopeOptionsHtml = p
+                ? (initialApps.length ? initialApps : ['FEED_GRADE']).map(app => `<option value="${app}" ${app === initialScope ? 'selected' : ''}>${app}</option>`).join('')
+                : `<option value="ALL" selected>ทุกเกรดที่เลือก</option>`;
+            const activeParamCount = getActiveSpecParametersForProductModal().length;
 
             openModal(`
                 <div class="space-y-4">
@@ -8282,22 +8764,22 @@
                     <div class="grid grid-cols-2 gap-4">
                         <label class="text-xs font-bold text-slate-600 block">
                             รหัสสินค้า (Product Code) *
-                            <input id="prodCode" type="text" class="ui-input mt-1" value="${p ? p.code : ''}" ${p ? 'disabled' : ''}>
+                            <input id="prodCode" type="text" class="ui-input mt-1" value="${p ? escapeProductSpecHtml(p.code) : ''}" ${p ? 'disabled' : ''}>
                         </label>
                         <label class="text-xs font-bold text-slate-600 block">
                             ชื่อสินค้า (Product Name) *
-                            <input id="prodName" type="text" class="ui-input mt-1" value="${p ? p.name : ''}">
+                            <input id="prodName" type="text" class="ui-input mt-1" value="${p ? escapeProductSpecHtml(p.name) : ''}">
                         </label>
                     </div>
 
                     <div class="grid grid-cols-2 gap-4">
                         <label class="text-xs font-bold text-slate-600 block">
                             ชื่อย่อ/แท็ก (Short Name) *
-                            <input id="prodShortName" type="text" class="ui-input mt-1" value="${p ? p.shortName : ''}">
+                            <input id="prodShortName" type="text" class="ui-input mt-1" value="${p ? escapeProductSpecHtml(p.shortName) : ''}">
                         </label>
                         <label class="text-xs font-bold text-slate-600 block">
                             พิกัดศุลกากร (HS Code)
-                            <input id="prodHsCode" type="text" class="ui-input mt-1" value="${p ? p.hsCode || '' : ''}">
+                            <input id="prodHsCode" type="text" class="ui-input mt-1" value="${p ? escapeProductSpecHtml(p.hsCode || '') : ''}">
                         </label>
                     </div>
 
@@ -8315,12 +8797,12 @@
                     <div class="grid grid-cols-2 gap-4">
                         <label class="text-xs font-bold text-slate-600 block">
                             หน่วยเริ่มต้น (Default Unit) *
-                            <input id="prodDefaultUnit" type="text" class="ui-input mt-1" value="${p ? p.defaultUnit || 'MT' : 'MT'}">
+                            <input id="prodDefaultUnit" type="text" class="ui-input mt-1" value="${p ? escapeProductSpecHtml(p.defaultUnit || 'MT') : 'MT'}">
                         </label>
                         <label class="text-xs font-bold text-slate-600 block">
                             สถานะ (Status) *
                             <select id="prodStatus" class="ui-input mt-1">
-                                <option value="ACTIVE" ${p && p.status === 'ACTIVE' ? 'selected' : ''}>ACTIVE</option>
+                                <option value="ACTIVE" ${!p || p.status === 'ACTIVE' ? 'selected' : ''}>ACTIVE</option>
                                 <option value="INACTIVE" ${p && p.status === 'INACTIVE' ? 'selected' : ''}>INACTIVE</option>
                             </select>
                         </label>
@@ -8330,55 +8812,122 @@
                         <div class="text-xs font-bold text-slate-600">เกรดการใช้งานที่อนุญาต (Applications) *</div>
                         <div class="flex gap-4">
                             <label class="inline-flex items-center space-x-2 text-xs text-slate-700">
-                                <input type="checkbox" id="prodAppFeed" value="FEED_GRADE" ${appFeedChecked}>
+                                <input type="checkbox" id="prodAppFeed" value="FEED_GRADE" onchange="syncProductModalAppScopes()" ${appFeedChecked}>
                                 <span>FEED_GRADE</span>
                             </label>
                             <label class="inline-flex items-center space-x-2 text-xs text-slate-700">
-                                <input type="checkbox" id="prodAppPet" value="PET_GRADE" ${appPetChecked}>
+                                <input type="checkbox" id="prodAppPet" value="PET_GRADE" onchange="syncProductModalAppScopes()" ${appPetChecked}>
                                 <span>PET_GRADE</span>
                             </label>
                         </div>
                     </div>
 
+                    <div class="pt-3 border-t border-slate-200 space-y-3">
+                        <div class="flex flex-wrap items-center justify-between gap-2">
+                            <div>
+                                <div class="text-xs font-bold text-slate-800">ข้อกำหนดสเปกมาตรฐาน (Standard Spec Parameters)</div>
+                                <div class="text-[11px] text-slate-500">เลือกพารามิเตอร์จาก Spec Parameter Master เพื่อบันทึกเป็นสเปกมาตรฐานของสินค้า</div>
+                            </div>
+                            <div class="flex items-center gap-2">
+                                <select id="prodSpecAppScope" onchange="onProductSpecAppScopeChange()" class="ui-input text-xs py-1 px-2" style="width:auto; min-width:130px;">
+                                    ${scopeOptionsHtml}
+                                </select>
+                                <button type="button" id="addProductSpecRowBtn" onclick="addProductSpecRow()" class="ui-btn ui-btn-secondary text-xs py-1.5 px-2.5 whitespace-nowrap">
+                                    + เพิ่มเกณฑ์สเปก
+                                </button>
+                            </div>
+                        </div>
+
+                        <div id="productSpecLoadingHint" class="hidden text-[11px] text-blue-600 font-semibold">กำลังโหลดเกณฑ์สเปกมาตรฐาน...</div>
+
+                        <div id="productSpecRows" class="space-y-2">
+                            ${initialRows.map(row => buildProductSpecRowHtml(row)).join('')}
+                        </div>
+
+                        <div id="productSpecEmptyHint" class="${initialRows.length > 0 ? 'hidden' : ''} rounded-lg border border-dashed border-slate-300 bg-slate-50 px-3 py-3 text-center text-xs text-slate-400">
+                            ${activeParamCount > 0 ? 'ยังไม่ได้กำหนดเกณฑ์สเปกมาตรฐาน กดปุ่ม "+ เพิ่มเกณฑ์สเปก" เพื่อเพิ่มพารามิเตอร์' : 'ยังไม่มีพารามิเตอร์ที่เปิดใช้งานใน Spec Parameter Master'}
+                        </div>
+                    </div>
+
                     <div id="productFormError" class="hidden rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-bold text-rose-700"></div>
 
-                    <div class="flex justify-end gap-2">
-                        <button onclick="closeModal()" class="ui-btn ui-btn-secondary">Cancel</button>
-                        <button onclick="saveProduct(${p ? `'${p.id}'` : 'null'})" class="ui-btn ui-btn-primary">Save Product</button>
+                    <div class="flex justify-end gap-2 pt-2 border-t border-slate-100">
+                        <button type="button" onclick="closeModal()" class="ui-btn ui-btn-secondary">Cancel</button>
+                        <button type="button" id="saveProductSubmitBtn" onclick="saveProduct(${p ? `'${p.id}'` : 'null'})" class="ui-btn ui-btn-primary">Save Product</button>
                     </div>
                 </div>
             `);
+
+            if (p) {
+                loadProductModalStandardSpecs(p.id, initialApps);
+            }
         }
 
         async function saveProduct(productId = null) {
             const errDiv = document.getElementById('productFormError');
+            const showErr = (msg) => {
+                if (errDiv) {
+                    errDiv.innerText = msg;
+                    errDiv.classList.remove('hidden');
+                }
+            };
             if (errDiv) errDiv.classList.add('hidden');
 
-            const code = document.getElementById('prodCode')?.value || '';
-            const name = document.getElementById('prodName')?.value || '';
-            const shortName = document.getElementById('prodShortName')?.value || '';
-            const hsCode = document.getElementById('prodHsCode')?.value || '';
+            const modalState = state.productModalSpecState || null;
+            const effectiveProductId = productId || modalState?.productId || null;
+
+            const code = (document.getElementById('prodCode')?.value || '').trim();
+            const name = (document.getElementById('prodName')?.value || '').trim();
+            const shortName = (document.getElementById('prodShortName')?.value || '').trim();
+            const hsCode = (document.getElementById('prodHsCode')?.value || '').trim();
             const categoryId = document.getElementById('prodCategoryId')?.value || '';
             const formId = document.getElementById('prodFormId')?.value || '';
-            const defaultUnit = document.getElementById('prodDefaultUnit')?.value || 'MT';
+            const defaultUnit = (document.getElementById('prodDefaultUnit')?.value || 'MT').trim() || 'MT';
             const status = document.getElementById('prodStatus')?.value || 'ACTIVE';
 
             const apps = [];
             if (document.getElementById('prodAppFeed')?.checked) apps.push('FEED_GRADE');
             if (document.getElementById('prodAppPet')?.checked) apps.push('PET_GRADE');
 
-            if (!code || !name || !shortName || !categoryId || !formId || apps.length === 0) {
-                if (errDiv) {
-                    errDiv.innerText = 'กรุณากรอกข้อมูลที่จำเป็นทั้งหมด รวมถึงเลือกอย่างน้อย 1 Application';
-                    errDiv.classList.remove('hidden');
-                }
+            if ((!effectiveProductId && !code) || !name || !shortName || !categoryId || !formId || apps.length === 0) {
+                showErr('กรุณากรอกข้อมูลที่จำเป็นทั้งหมด รวมถึงเลือกอย่างน้อย 1 Application');
                 return;
             }
 
-            const payload = { code, name, shortName, hsCode, categoryId, formId, defaultUnit, status, applications: apps };
-            const url = productId ? `/api/products/${productId}` : '/api/products';
-            const method = productId ? 'PUT' : 'POST';
+            // Flush current DOM spec rows into modal state and validate all configured specs BEFORE persisting product
+            const domRows = readProductSpecRowsFromDom();
+            const activeScope = document.getElementById('prodSpecAppScope')?.value || modalState?.activeScope || (effectiveProductId ? apps[0] : 'ALL');
+            const rowsByApp = { ...(modalState?.rowsByApp || {}) };
+            rowsByApp[activeScope] = domRows;
 
+            const validatedItemsByApp = {};
+            for (const app of apps) {
+                let rawRows = [];
+                if (!effectiveProductId && activeScope === 'ALL') {
+                    rawRows = rowsByApp['ALL'] || [];
+                } else {
+                    rawRows = rowsByApp[app] || [];
+                }
+                const check = validateAndNormalizeProductSpecRows(rawRows, state.specParameters || []);
+                if (!check.valid) {
+                    showErr(`ข้อกำหนดสเปก (${app}): ${check.error}`);
+                    return;
+                }
+                validatedItemsByApp[app] = check.items;
+            }
+
+            const saveBtn = document.getElementById('saveProductSubmitBtn');
+            const prevBtnText = saveBtn ? saveBtn.textContent : 'Save Product';
+            if (saveBtn) {
+                saveBtn.disabled = true;
+                saveBtn.textContent = 'Saving...';
+            }
+
+            const payload = { code, name, shortName, hsCode, categoryId, formId, defaultUnit, status, applications: apps };
+            const url = effectiveProductId ? `/api/products/${effectiveProductId}` : '/api/products';
+            const method = effectiveProductId ? 'PUT' : 'POST';
+
+            let savedProductId = effectiveProductId;
             try {
                 const res = await fetch(url, {
                     method,
@@ -8386,24 +8935,137 @@
                     body: JSON.stringify(payload)
                 });
                 const body = await res.json();
-                if (body && body.status === 'SUCCESS') {
-                    closeModal();
-                    await loadProductsFromApi();
-                    if (state.currentView === 'product_dashboard' && productId) {
-                        openProductDashboard(productId);
+                if (!res.ok || !body || body.status !== 'SUCCESS') {
+                    showErr('บันทึกล้มเหลว: ' + (body?.message || `HTTP ${res.status}`));
+                    return;
+                }
+
+                savedProductId = body.data?.product?.id || effectiveProductId;
+                const isNewProduct = !effectiveProductId;
+                const effectiveDate = new Date().toISOString().slice(0, 10);
+
+                // Persist configured Standard Spec Parameters using existing Phase 5D APIs
+                for (const app of apps) {
+                    const items = validatedItemsByApp[app] || [];
+                    const loadedSpec = modalState?.loadedSpecsByApp?.[app] || null;
+                    const originalSnap = modalState?.originalSnapshotByApp?.[app] ?? serializeProductSpecItems([]);
+                    const currentSnap = serializeProductSpecItems(items);
+
+                    if (isNewProduct) {
+                        if (items.length === 0) continue;
+                        const createDraftRes = await fetch('/api/standard-specs', {
+                            method: 'POST',
+                            headers: { 'content-type': 'application/json' },
+                            body: JSON.stringify({
+                                productId: savedProductId,
+                                application: app,
+                                effectiveDate,
+                                notes: 'Configured during product creation'
+                            })
+                        });
+                        const createDraftBody = await createDraftRes.json();
+                        if (!createDraftRes.ok || !createDraftBody || createDraftBody.status !== 'SUCCESS') {
+                            throw new Error(createDraftBody?.message || `Failed to create standard spec draft for ${app}`);
+                        }
+                        const specId = createDraftBody.data.standardSpec.id;
+
+                        const putItemsRes = await fetch(`/api/standard-specs/${specId}`, {
+                            method: 'PUT',
+                            headers: { 'content-type': 'application/json' },
+                            body: JSON.stringify({ items })
+                        });
+                        const putItemsBody = await putItemsRes.json();
+                        if (!putItemsRes.ok || !putItemsBody || putItemsBody.status !== 'SUCCESS') {
+                            throw new Error(putItemsBody?.message || `Failed to save spec items for ${app}`);
+                        }
+
+                        const activateRes = await fetch(`/api/standard-specs/${specId}/activate`, { method: 'POST' });
+                        const activateBody = await activateRes.json();
+                        if (!activateRes.ok || !activateBody || activateBody.status !== 'SUCCESS') {
+                            throw new Error(activateBody?.message || `Failed to activate standard spec for ${app}`);
+                        }
                     } else {
-                        changeView('products');
-                    }
-                } else {
-                    if (errDiv) {
-                        errDiv.innerText = 'บันทึกล้มเหลว: ' + body.message;
-                        errDiv.classList.remove('hidden');
+                        if (currentSnap === originalSnap) continue;
+                        if (items.length > 0) {
+                            let targetSpecId = loadedSpec && loadedSpec.status === 'DRAFT' ? loadedSpec.id : null;
+                            if (!targetSpecId) {
+                                const createDraftRes = await fetch('/api/standard-specs', {
+                                    method: 'POST',
+                                    headers: { 'content-type': 'application/json' },
+                                    body: JSON.stringify({
+                                        productId: savedProductId,
+                                        application: app,
+                                        effectiveDate,
+                                        notes: 'Updated via Product Profile'
+                                    })
+                                });
+                                const createDraftBody = await createDraftRes.json();
+                                if (!createDraftRes.ok || !createDraftBody || createDraftBody.status !== 'SUCCESS') {
+                                    throw new Error(createDraftBody?.message || `Failed to create standard spec draft for ${app}`);
+                                }
+                                targetSpecId = createDraftBody.data.standardSpec.id;
+                            }
+
+                            const putItemsRes = await fetch(`/api/standard-specs/${targetSpecId}`, {
+                                method: 'PUT',
+                                headers: { 'content-type': 'application/json' },
+                                body: JSON.stringify({ items })
+                            });
+                            const putItemsBody = await putItemsRes.json();
+                            if (!putItemsRes.ok || !putItemsBody || putItemsBody.status !== 'SUCCESS') {
+                                throw new Error(putItemsBody?.message || `Failed to update spec items for ${app}`);
+                            }
+
+                            const activateRes = await fetch(`/api/standard-specs/${targetSpecId}/activate`, { method: 'POST' });
+                            const activateBody = await activateRes.json();
+                            if (!activateRes.ok || !activateBody || activateBody.status !== 'SUCCESS') {
+                                throw new Error(activateBody?.message || `Failed to activate standard spec for ${app}`);
+                            }
+                        } else if (loadedSpec && loadedSpec.status === 'ACTIVE') {
+                            const archiveRes = await fetch(`/api/standard-specs/${loadedSpec.id}/archive`, { method: 'POST' });
+                            const archiveBody = await archiveRes.json();
+                            if (!archiveRes.ok || !archiveBody || archiveBody.status !== 'SUCCESS') {
+                                throw new Error(archiveBody?.message || `Failed to archive standard spec for ${app}`);
+                            }
+                        } else if (loadedSpec && loadedSpec.status === 'DRAFT') {
+                            const putEmptyRes = await fetch(`/api/standard-specs/${loadedSpec.id}`, {
+                                method: 'PUT',
+                                headers: { 'content-type': 'application/json' },
+                                body: JSON.stringify({ items: [] })
+                            });
+                            const putEmptyBody = await putEmptyRes.json();
+                            if (!putEmptyRes.ok || !putEmptyBody || putEmptyBody.status !== 'SUCCESS') {
+                                throw new Error(putEmptyBody?.message || `Failed to clear draft spec items for ${app}`);
+                            }
+                        }
                     }
                 }
+
+                state.productModalSpecState = null;
+                closeModal();
+                await loadProductsFromApi();
+                if (state.currentView === 'product_dashboard' && savedProductId) {
+                    openProductDashboard(savedProductId, state.selectedProductApp);
+                } else {
+                    changeView('products');
+                }
             } catch (err) {
-                if (errDiv) {
-                    errDiv.innerText = 'Error: ' + err.message;
-                    errDiv.classList.remove('hidden');
+                if (!effectiveProductId && savedProductId) {
+                    if (state.productModalSpecState) {
+                        state.productModalSpecState.productId = savedProductId;
+                    }
+                    const codeEl = document.getElementById('prodCode');
+                    if (codeEl) codeEl.disabled = true;
+                    if (saveBtn) saveBtn.setAttribute('onclick', `saveProduct('${savedProductId}')`);
+                    await loadProductsFromApi();
+                    showErr(`บันทึกข้อมูลสินค้าเรียบร้อยแล้ว (${savedProductId}) แต่บันทึกสเปกไม่สำเร็จ: ${err.message}`);
+                } else {
+                    showErr('Error: ' + err.message);
+                }
+            } finally {
+                if (saveBtn) {
+                    saveBtn.disabled = false;
+                    saveBtn.textContent = prevBtnText;
                 }
             }
         }

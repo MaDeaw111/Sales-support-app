@@ -2300,3 +2300,441 @@ test('Customers table & detail resolve live D1 owner (no Sarah Jenkins mock fall
     delete globalThis.lucide;
   }
 });
+
+test('Product cards render compact Standard Spec summary badges and empty fallback', () => {
+  const renderProducts = new Function(`return (${extractFunction('renderProducts').trim()});`)();
+  const products = [
+    {
+      id: 'PRD-001',
+      code: 'THP65',
+      name: 'Tapioca Hard Pellet 65%',
+      shortName: 'THP65',
+      hsCode: '0714.10',
+      status: 'ACTIVE',
+      category: { id: 'CAT-001', name: 'Tapioca' },
+      form: { id: 'FRM-001', name: 'Pellet' },
+      applications: ['FEED_GRADE'],
+      standardSpecs: [
+        {
+          id: 'STD-001',
+          application: 'FEED_GRADE',
+          revisionNo: 0,
+          status: 'ACTIVE',
+          items: [
+            { parameterId: 'PAR-001', parameterCode: 'STARCH', parameterName: 'Starch', operator: 'MIN', numericValue: 65, unit: '%' },
+            { parameterId: 'PAR-002', parameterCode: 'MOISTURE', parameterName: 'Moisture', operator: 'MAX', numericValue: 14, unit: '%' },
+            { parameterId: 'PAR-003', parameterCode: 'PH', parameterName: 'pH', operator: 'RANGE', numericValue: 6, numericValueTo: 7.5, unit: '' },
+            { parameterId: 'PAR-004', parameterCode: 'COLOR', parameterName: 'Color', operator: 'TEXT', textValue: 'Cream', unit: '' },
+            { parameterId: 'PAR-005', parameterCode: 'ASH', parameterName: 'Ash', operator: 'MAX', numericValue: 3, unit: '%' }
+          ]
+        }
+      ]
+    },
+    {
+      id: 'PRD-002',
+      code: 'THS85',
+      name: 'Tapioca Starch 85%',
+      shortName: 'THS85',
+      status: 'ACTIVE',
+      category: { id: 'CAT-001', name: 'Tapioca' },
+      form: { id: 'FRM-002', name: 'Powder' },
+      applications: ['PET_GRADE'],
+      standardSpecs: []
+    }
+  ];
+
+  globalThis.state = {
+    currentUser: { role: 'ADMIN' },
+    products,
+    specParameters: []
+  };
+  globalThis.lucide = { createIcons() {} };
+
+  try {
+    const container = { innerHTML: '' };
+    renderProducts(container);
+    assert.match(container.innerHTML, /สเปกมาตรฐาน \(Standard Spec\)/);
+    assert.match(container.innerHTML, /Starch ≥ 65%/);
+    assert.match(container.innerHTML, /Moisture ≤ 14%/);
+    assert.match(container.innerHTML, /pH 6–7\.5/);
+    assert.match(container.innerHTML, /Color: Cream/);
+    assert.match(container.innerHTML, /\+1/);
+    assert.match(container.innerHTML, /5 เกณฑ์/);
+    assert.match(container.innerHTML, /สเปกมาตรฐาน: ยังไม่ได้กำหนด/);
+    assert.doesNotMatch(container.innerHTML, /undefined/);
+  } finally {
+    delete globalThis.state;
+    delete globalThis.lucide;
+  }
+});
+
+test('openAddProductModal renders Standard Spec Parameters section with active parameters and default_unit auto-fill', () => {
+  const helperNames = [
+    'escapeProductSpecHtml',
+    'getActiveSpecParametersForProductModal',
+    'serializeProductSpecItems',
+    'buildProductSpecOperatorOptionsHtml',
+    'buildProductSpecRowHtml',
+    'onProductSpecParameterChange',
+    'onProductSpecOperatorChange',
+    'loadProductModalStandardSpecs',
+    'openAddProductModal'
+  ];
+  for (const name of helperNames) {
+    globalThis[name] = new Function(`return (${extractFunction(name).trim()});`)();
+  }
+
+  let modalHtml = '';
+  globalThis.openModal = (markup) => { modalHtml = markup; };
+  globalThis.state = {
+    currentUser: { role: 'ADMIN' },
+    products: [],
+    productCategories: [{ id: 'CAT-001', code: 'TAP', name: 'Tapioca' }],
+    productForms: [{ id: 'FRM-001', code: 'PEL', name: 'Pellet' }],
+    specParameters: [
+      { id: 'PAR-001', code: 'STARCH', name: 'Starch', dataType: 'NUMBER', defaultUnit: '%', status: 'ACTIVE', sortOrder: 1 },
+      { id: 'PAR-002', code: 'COLOR', name: 'Color', dataType: 'TEXT', defaultUnit: '', status: 'ACTIVE', sortOrder: 2 },
+      { id: 'PAR-003', code: 'LEGACY', name: 'Legacy Ash', dataType: 'NUMBER', defaultUnit: '%', status: 'ARCHIVED', sortOrder: 3 }
+    ]
+  };
+
+  try {
+    globalThis.openAddProductModal();
+    assert.match(modalHtml, /เกรดการใช้งานที่อนุญาต \(Applications\)/);
+    assert.match(modalHtml, /ข้อกำหนดสเปกมาตรฐาน \(Standard Spec Parameters\)/);
+    assert.match(modalHtml, /\+ เพิ่มเกณฑ์สเปก/);
+    assert.ok(
+      modalHtml.indexOf('เกรดการใช้งานที่อนุญาต (Applications)') < modalHtml.indexOf('ข้อกำหนดสเปกมาตรฐาน (Standard Spec Parameters)'),
+      'Standard Spec Parameters section must appear below Applications'
+    );
+
+    const rowHtml = globalThis.buildProductSpecRowHtml({ parameterId: 'PAR-001' });
+    assert.match(rowHtml, /Starch \(STARCH\)/);
+    assert.match(rowHtml, /Color \(COLOR\)/);
+    assert.doesNotMatch(rowHtml, /Legacy Ash/);
+    assert.match(rowHtml, /value="%"/);
+
+    // Simulate parameter change from NUMBER to TEXT -> auto-fills unit and forces TEXT operator
+    const classes = {
+      num: new Set(),
+      sep: new Set(['hidden']),
+      numTo: new Set(['hidden']),
+      text: new Set(['hidden'])
+    };
+    const makeClassList = (set) => ({
+      toggle(cls, force) { if (force) set.add(cls); else set.delete(cls); }
+    });
+    const unitInput = { value: '%' };
+    const opSelect = { value: 'MIN', innerHTML: '', closest: () => fakeRow };
+    const numInput = { classList: makeClassList(classes.num), placeholder: '' };
+    const rangeSep = { classList: makeClassList(classes.sep) };
+    const numToInput = { classList: makeClassList(classes.numTo) };
+    const textInput = { classList: makeClassList(classes.text) };
+    const fakeRow = {
+      querySelector(sel) {
+        if (sel === '.prod-spec-unit') return unitInput;
+        if (sel === '.prod-spec-operator') return opSelect;
+        if (sel === '.prod-spec-num') return numInput;
+        if (sel === '.prod-spec-range-sep') return rangeSep;
+        if (sel === '.prod-spec-num-to') return numToInput;
+        if (sel === '.prod-spec-text') return textInput;
+        return null;
+      }
+    };
+    globalThis.onProductSpecParameterChange({ value: 'PAR-002', closest: () => fakeRow });
+    assert.equal(unitInput.value, '');
+    assert.equal(opSelect.value, 'TEXT');
+    assert.equal(classes.num.has('hidden'), true);
+    assert.equal(classes.text.has('hidden'), false);
+  } finally {
+    for (const name of helperNames) delete globalThis[name];
+    delete globalThis.openModal;
+    delete globalThis.state;
+  }
+});
+
+test('saveProduct (Create) validates specs first, creates product, then saves and activates Standard Spec via Phase 5D APIs', async () => {
+  const helperNames = [
+    'serializeProductSpecItems',
+    'readProductSpecRowsFromDom',
+    'validateAndNormalizeProductSpecRows',
+    'saveProduct'
+  ];
+  for (const name of helperNames) {
+    globalThis[name] = new Function(`return (${extractFunction(name).trim()});`)();
+  }
+
+  let specDomRows = [];
+  const makeRowEl = (row) => ({
+    querySelector(sel) {
+      if (sel === '.prod-spec-param') return { value: row.parameterId || '' };
+      if (sel === '.prod-spec-operator') return { value: row.operator || 'MIN' };
+      if (sel === '.prod-spec-unit') return { value: row.unit ?? '' };
+      if (sel === '.prod-spec-num') return { value: row.numericValue ?? '' };
+      if (sel === '.prod-spec-num-to') return { value: row.numericValueTo ?? '' };
+      if (sel === '.prod-spec-text') return { value: row.textValue ?? '' };
+      if (sel === '.prod-spec-notes') return { value: row.notes ?? '' };
+      return null;
+    }
+  });
+
+  const errorClasses = new Set(['hidden']);
+  const fields = {
+    prodCode: { value: 'THP75', disabled: false },
+    prodName: { value: 'Tapioca Hard Pellet 75%' },
+    prodShortName: { value: 'THP75' },
+    prodHsCode: { value: '0714.10' },
+    prodCategoryId: { value: 'CAT-001' },
+    prodFormId: { value: 'FRM-001' },
+    prodDefaultUnit: { value: 'MT' },
+    prodStatus: { value: 'ACTIVE' },
+    prodAppFeed: { checked: true },
+    prodAppPet: { checked: false },
+    prodSpecAppScope: { value: 'ALL' },
+    productSpecRows: { querySelectorAll: () => specDomRows.map(makeRowEl) },
+    productFormError: {
+      innerText: '',
+      classList: { add: (c) => errorClasses.add(c), remove: (c) => errorClasses.delete(c) }
+    },
+    saveProductSubmitBtn: { disabled: false, textContent: 'Save Product', setAttribute() {} }
+  };
+
+  const calls = [];
+  let modalClosed = 0;
+  let productsReloaded = 0;
+  let viewedPage = '';
+
+  globalThis.document = { getElementById: (id) => fields[id] || null };
+  globalThis.state = {
+    currentUser: { role: 'ADMIN' },
+    currentView: 'products',
+    specParameters: [
+      { id: 'PAR-001', code: 'STARCH', name: 'Starch', dataType: 'NUMBER', defaultUnit: '%', status: 'ACTIVE' },
+      { id: 'PAR-002', code: 'PH', name: 'pH', dataType: 'NUMBER', defaultUnit: '', status: 'ACTIVE' }
+    ],
+    productModalSpecState: {
+      productId: null,
+      activeScope: 'ALL',
+      rowsByApp: {},
+      loadedSpecsByApp: {},
+      originalSnapshotByApp: {},
+      userModified: true
+    }
+  };
+  globalThis.closeModal = () => { modalClosed += 1; };
+  globalThis.loadProductsFromApi = async () => { productsReloaded += 1; };
+  globalThis.changeView = (v) => { viewedPage = v; };
+  globalThis.fetch = async (url, options = {}) => {
+    const body = options.body ? JSON.parse(options.body) : null;
+    calls.push({ url, method: options.method || 'GET', body });
+    if (url === '/api/products' && options.method === 'POST') {
+      return { ok: true, status: 200, async json() { return { status: 'SUCCESS', data: { product: { id: 'PRD-099', code: 'THP75' } } }; } };
+    }
+    if (url === '/api/standard-specs' && options.method === 'POST') {
+      return { ok: true, status: 200, async json() { return { status: 'SUCCESS', data: { standardSpec: { id: 'STD-099', status: 'DRAFT' } } }; } };
+    }
+    if (url === '/api/standard-specs/STD-099' && options.method === 'PUT') {
+      return { ok: true, status: 200, async json() { return { status: 'SUCCESS', data: { standardSpec: { id: 'STD-099', items: body.items } } }; } };
+    }
+    if (url === '/api/standard-specs/STD-099/activate' && options.method === 'POST') {
+      return { ok: true, status: 200, async json() { return { status: 'SUCCESS', data: { standardSpec: { id: 'STD-099', status: 'ACTIVE' } } }; } };
+    }
+    throw new Error(`Unexpected fetch: ${options.method} ${url}`);
+  };
+
+  try {
+    // 1. Invalid RANGE (max <= min) must fail BEFORE POST /api/products
+    specDomRows = [{ parameterId: 'PAR-002', operator: 'RANGE', numericValue: '8', numericValueTo: '6', unit: '' }];
+    await globalThis.saveProduct(null);
+    assert.equal(calls.length, 0, 'Must not create product when spec validation fails');
+    assert.equal(errorClasses.has('hidden'), false);
+    assert.match(fields.productFormError.innerText, /ค่าสูงสุด/);
+
+    // 2. Valid spec rows -> POST /api/products -> POST /api/standard-specs -> PUT /api/standard-specs/:id -> POST activate
+    specDomRows = [
+      { parameterId: 'PAR-001', operator: 'MIN', numericValue: '75', unit: '%', notes: 'Min starch' },
+      { parameterId: 'PAR-002', operator: 'RANGE', numericValue: '6', numericValueTo: '7.5', unit: '' }
+    ];
+    await globalThis.saveProduct(null);
+    assert.equal(calls.length, 4);
+    assert.equal(calls[0].method, 'POST');
+    assert.equal(calls[0].url, '/api/products');
+    assert.equal(calls[1].method, 'POST');
+    assert.equal(calls[1].url, '/api/standard-specs');
+    assert.equal(calls[1].body.productId, 'PRD-099');
+    assert.equal(calls[1].body.application, 'FEED_GRADE');
+    assert.equal(calls[2].method, 'PUT');
+    assert.equal(calls[2].url, '/api/standard-specs/STD-099');
+    assert.equal(calls[2].body.items.length, 2);
+    assert.equal(calls[2].body.items[0].numericValue, 75);
+    assert.equal(calls[2].body.items[1].numericValue, 6);
+    assert.equal(calls[2].body.items[1].numericValueTo, 7.5);
+    assert.equal(calls[3].method, 'POST');
+    assert.equal(calls[3].url, '/api/standard-specs/STD-099/activate');
+    assert.equal(modalClosed, 1);
+    assert.equal(productsReloaded, 1);
+    assert.equal(viewedPage, 'products');
+  } finally {
+    for (const name of helperNames) delete globalThis[name];
+    delete globalThis.document;
+    delete globalThis.state;
+    delete globalThis.closeModal;
+    delete globalThis.loadProductsFromApi;
+    delete globalThis.changeView;
+    delete globalThis.fetch;
+  }
+});
+
+test('Edit Product pre-loads standard specs, skips redundant spec revisions when unchanged, and updates/activates when modified', async () => {
+  const helperNames = [
+    'escapeProductSpecHtml',
+    'getActiveSpecParametersForProductModal',
+    'serializeProductSpecItems',
+    'buildProductSpecOperatorOptionsHtml',
+    'buildProductSpecRowHtml',
+    'readProductSpecRowsFromDom',
+    'renderProductSpecRowsIntoDom',
+    'validateAndNormalizeProductSpecRows',
+    'loadProductModalStandardSpecs',
+    'saveProduct'
+  ];
+  for (const name of helperNames) {
+    globalThis[name] = new Function(`return (${extractFunction(name).trim()});`)();
+  }
+
+  let specDomRows = [];
+  const makeRowEl = (row) => ({
+    querySelector(sel) {
+      if (sel === '.prod-spec-param') return { value: row.parameterId || '' };
+      if (sel === '.prod-spec-operator') return { value: row.operator || 'MIN' };
+      if (sel === '.prod-spec-unit') return { value: row.unit ?? '' };
+      if (sel === '.prod-spec-num') return { value: row.numericValue ?? '' };
+      if (sel === '.prod-spec-num-to') return { value: row.numericValueTo ?? '' };
+      if (sel === '.prod-spec-text') return { value: row.textValue ?? '' };
+      if (sel === '.prod-spec-notes') return { value: row.notes ?? '' };
+      return null;
+    }
+  });
+
+  const fields = {
+    prodCode: { value: 'THP65', disabled: true },
+    prodName: { value: 'Tapioca Hard Pellet 65% Updated' },
+    prodShortName: { value: 'THP65' },
+    prodHsCode: { value: '0714.10.90' },
+    prodCategoryId: { value: 'CAT-001' },
+    prodFormId: { value: 'FRM-001' },
+    prodDefaultUnit: { value: 'MT' },
+    prodStatus: { value: 'ACTIVE' },
+    prodAppFeed: { checked: true },
+    prodAppPet: { checked: false },
+    prodSpecAppScope: { value: 'FEED_GRADE' },
+    productSpecRows: { innerHTML: '', querySelectorAll: () => specDomRows.map(makeRowEl) },
+    productSpecEmptyHint: { classList: { add() {}, remove() {} } },
+    productSpecLoadingHint: { classList: { add() {}, remove() {} } },
+    productFormError: { innerText: '', classList: { add() {}, remove() {} } },
+    saveProductSubmitBtn: { disabled: false, textContent: 'Save Product', setAttribute() {} }
+  };
+
+  const calls = [];
+  globalThis.document = { getElementById: (id) => fields[id] || null };
+  globalThis.state = {
+    currentUser: { role: 'ADMIN' },
+    currentView: 'products',
+    specParameters: [
+      { id: 'PAR-001', code: 'STARCH', name: 'Starch', dataType: 'NUMBER', defaultUnit: '%', status: 'ACTIVE' }
+    ],
+    productModalSpecState: {
+      productId: 'PRD-001',
+      activeScope: 'FEED_GRADE',
+      rowsByApp: {},
+      loadedSpecsByApp: {},
+      originalSnapshotByApp: {},
+      userModified: false
+    }
+  };
+  globalThis.closeModal = () => {};
+  globalThis.loadProductsFromApi = async () => {};
+  globalThis.changeView = () => {};
+  globalThis.fetch = async (url, options = {}) => {
+    const body = options.body ? JSON.parse(options.body) : null;
+    calls.push({ url, method: options.method || 'GET', body });
+    if (url === '/api/products/PRD-001/standard-specs?application=FEED_GRADE') {
+      return {
+        ok: true,
+        status: 200,
+        async json() {
+          return {
+            status: 'SUCCESS',
+            data: {
+              standardSpecs: [
+                {
+                  id: 'STD-001',
+                  application: 'FEED_GRADE',
+                  status: 'ACTIVE',
+                  items: [{ parameterId: 'PAR-001', operator: 'MIN', numericValue: 65, numericValueTo: null, textValue: null, unit: '%', notes: '' }]
+                }
+              ]
+            }
+          };
+        }
+      };
+    }
+    if (url === '/api/products/PRD-001' && options.method === 'PUT') {
+      return { ok: true, status: 200, async json() { return { status: 'SUCCESS', data: { product: { id: 'PRD-001' } } }; } };
+    }
+    if (url === '/api/standard-specs' && options.method === 'POST') {
+      return { ok: true, status: 200, async json() { return { status: 'SUCCESS', data: { standardSpec: { id: 'STD-002', status: 'DRAFT' } } }; } };
+    }
+    if (url === '/api/standard-specs/STD-002' && options.method === 'PUT') {
+      return { ok: true, status: 200, async json() { return { status: 'SUCCESS', data: { standardSpec: { id: 'STD-002', items: body.items } } }; } };
+    }
+    if (url === '/api/standard-specs/STD-002/activate' && options.method === 'POST') {
+      return { ok: true, status: 200, async json() { return { status: 'SUCCESS', data: { standardSpec: { id: 'STD-002', status: 'ACTIVE' } } }; } };
+    }
+    throw new Error(`Unexpected fetch: ${options.method} ${url}`);
+  };
+
+  try {
+    // 1. Pre-load active spec for PRD-001
+    await globalThis.loadProductModalStandardSpecs('PRD-001', ['FEED_GRADE']);
+    assert.equal(globalThis.state.productModalSpecState.rowsByApp.FEED_GRADE.length, 1);
+    assert.equal(globalThis.state.productModalSpecState.rowsByApp.FEED_GRADE[0].numericValue, 65);
+    assert.match(fields.productSpecRows.innerHTML, /value="65"/);
+
+    // 2. Save without changing spec items -> only PUT /api/products/PRD-001 (no redundant standard-spec revision)
+    calls.length = 0;
+    specDomRows = [{ parameterId: 'PAR-001', operator: 'MIN', numericValue: '65', unit: '%', notes: '' }];
+    await globalThis.saveProduct('PRD-001');
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0].method, 'PUT');
+    assert.equal(calls[0].url, '/api/products/PRD-001');
+
+    // 3. Re-open state and modify spec from 65 -> 68 -> PUT product + POST draft + PUT items + POST activate
+    globalThis.state.productModalSpecState = {
+      productId: 'PRD-001',
+      activeScope: 'FEED_GRADE',
+      rowsByApp: {},
+      loadedSpecsByApp: {},
+      originalSnapshotByApp: {},
+      userModified: false
+    };
+    await globalThis.loadProductModalStandardSpecs('PRD-001', ['FEED_GRADE']);
+    calls.length = 0;
+    specDomRows = [{ parameterId: 'PAR-001', operator: 'MIN', numericValue: '68', unit: '%', notes: 'Upgraded grade' }];
+    await globalThis.saveProduct('PRD-001');
+    assert.equal(calls.length, 4);
+    assert.equal(calls[0].url, '/api/products/PRD-001');
+    assert.equal(calls[1].url, '/api/standard-specs');
+    assert.equal(calls[2].url, '/api/standard-specs/STD-002');
+    assert.equal(calls[2].body.items[0].numericValue, 68);
+    assert.equal(calls[3].url, '/api/standard-specs/STD-002/activate');
+  } finally {
+    for (const name of helperNames) delete globalThis[name];
+    delete globalThis.document;
+    delete globalThis.state;
+    delete globalThis.closeModal;
+    delete globalThis.loadProductsFromApi;
+    delete globalThis.changeView;
+    delete globalThis.fetch;
+  }
+});

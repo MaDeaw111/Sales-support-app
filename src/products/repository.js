@@ -17,6 +17,64 @@ function wrapUniqueError(err, msg) {
   throw err;
 }
 
+async function fetchActiveStandardSpecsMap(db, productId = null) {
+  const sql = `
+    SELECT s.standard_spec_id, s.product_id, s.application, s.revision_no, s.status, s.effective_date, s.notes AS spec_notes,
+           i.standard_spec_item_id, i.parameter_id, p.parameter_code, p.parameter_name, p.data_type,
+           i.operator, i.numeric_value, i.numeric_value_to, i.text_value, i.unit, i.sort_order, i.notes AS item_notes
+    FROM standard_specs s
+    LEFT JOIN standard_spec_items i ON i.standard_spec_id = s.standard_spec_id
+    LEFT JOIN spec_parameters p ON i.parameter_id = p.parameter_id
+    WHERE s.status = 'ACTIVE' ${productId ? 'AND s.product_id = ?' : ''}
+    ORDER BY s.product_id ASC, s.application ASC, i.sort_order ASC, p.parameter_name ASC
+  `;
+  const stmt = productId ? db.prepare(sql).bind(productId) : db.prepare(sql);
+  const { results } = await stmt.all();
+
+  const byProduct = new Map();
+  const bySpecId = new Map();
+
+  for (const row of (results || [])) {
+    let spec = bySpecId.get(row.standard_spec_id);
+    if (!spec) {
+      spec = {
+        id: row.standard_spec_id,
+        productId: row.product_id,
+        application: row.application,
+        revisionNo: Number(row.revision_no),
+        status: row.status,
+        effectiveDate: row.effective_date,
+        notes: row.spec_notes || '',
+        items: []
+      };
+      bySpecId.set(row.standard_spec_id, spec);
+      if (!byProduct.has(row.product_id)) {
+        byProduct.set(row.product_id, []);
+      }
+      byProduct.get(row.product_id).push(spec);
+    }
+
+    if (row.standard_spec_item_id && row.parameter_id) {
+      spec.items.push({
+        itemId: row.standard_spec_item_id,
+        parameterId: row.parameter_id,
+        parameterCode: row.parameter_code,
+        parameterName: row.parameter_name,
+        dataType: row.data_type,
+        operator: row.operator,
+        numericValue: row.numeric_value,
+        numericValueTo: row.numeric_value_to,
+        textValue: row.text_value,
+        unit: row.unit,
+        sortOrder: Number(row.sort_order),
+        notes: row.item_notes || ''
+      });
+    }
+  }
+
+  return byProduct;
+}
+
 export function createProductRepository(db) {
   if (!db) throw new Error('D1 DB binding is required.');
 
@@ -166,6 +224,8 @@ export function createProductRepository(db) {
         ORDER BY p.product_name COLLATE NOCASE ASC
       `).all();
 
+      const activeSpecsByProduct = await fetchActiveStandardSpecsMap(db);
+
       const productsList = [];
       for (const r of (results || [])) {
         // Fetch applications
@@ -191,7 +251,8 @@ export function createProductRepository(db) {
             code: r.form_code,
             name: r.form_name
           },
-          applications: (apps || []).map(a => a.application)
+          applications: (apps || []).map(a => a.application),
+          standardSpecs: activeSpecsByProduct.get(r.product_id) || []
         });
       }
       return productsList;
@@ -216,6 +277,8 @@ export function createProductRepository(db) {
         SELECT application FROM product_applications WHERE product_id = ?
       `).bind(id).all();
 
+      const activeSpecsByProduct = await fetchActiveStandardSpecsMap(db, id);
+
       return {
         id: r.product_id,
         code: r.product_code,
@@ -234,7 +297,8 @@ export function createProductRepository(db) {
           code: r.form_code,
           name: r.form_name
         },
-        applications: (apps || []).map(a => a.application)
+        applications: (apps || []).map(a => a.application),
+        standardSpecs: activeSpecsByProduct.get(r.product_id) || []
       };
     },
 
@@ -461,7 +525,7 @@ export function createProductRepository(db) {
       if (!r) return null;
 
       const { results: itemRows } = await db.prepare(`
-        SELECT i.standard_spec_item_id, i.parameter_id, p.parameter_code, p.parameter_name, i.operator, i.numeric_value, i.numeric_value_to, i.text_value, i.unit, i.sort_order, i.notes
+        SELECT i.standard_spec_item_id, i.parameter_id, p.parameter_code, p.parameter_name, p.data_type, i.operator, i.numeric_value, i.numeric_value_to, i.text_value, i.unit, i.sort_order, i.notes
         FROM standard_spec_items i
         JOIN spec_parameters p ON i.parameter_id = p.parameter_id
         WHERE i.standard_spec_id = ?
@@ -485,6 +549,7 @@ export function createProductRepository(db) {
           parameterId: i.parameter_id,
           parameterCode: i.parameter_code,
           parameterName: i.parameter_name,
+          dataType: i.data_type,
           operator: i.operator,
           numericValue: i.numeric_value,
           numericValueTo: i.numeric_value_to,
