@@ -1091,4 +1091,169 @@ test('Product list and detail render nested category and form DTO values', () =>
   }
 });
 
+test('Phase 7 Operations Calendar fetches /api/operations-calendar and never reads mock calendar prototype arrays', () => {
+  const calendarStart = html.indexOf('// --- CALENDAR ---');
+  const calendarEnd = html.indexOf('// --- UTILS & MODAL ---', calendarStart);
+  assert.ok(calendarStart >= 0 && calendarEnd > calendarStart, 'calendar section must exist');
+  const calendarSection = html.slice(calendarStart, calendarEnd);
+
+  assert.match(calendarSection, /\/api\/operations-calendar/);
+  assert.match(calendarSection, /\/api\/shipments-v2\/\$\{encodeURIComponent\(/);
+  assert.doesNotMatch(calendarSection, /state\.loadingEvents/);
+  assert.doesNotMatch(calendarSection, /state\.diRecords/);
+  assert.doesNotMatch(calendarSection, /state\.truckBookings/);
+  assert.doesNotMatch(calendarSection, /state\.surveyAssignments/);
+  assert.doesNotMatch(calendarSection, /state\.paymentRecords/);
+  assert.doesNotMatch(calendarSection, /CALENDAR_DAILY_MAX_CONTAINERS/);
+  assert.doesNotMatch(calendarSection, /PO_VALID_UNTIL/);
+});
+
+test('loadOperationsCalendarFromApi sends role-safe query params and updates state.operationsCalendar', async () => {
+  const loaderCode = extractFunction('loadOperationsCalendarFromApi');
+  const rangeCode = extractFunction('calendarVisibleRange');
+  const isoCode = extractFunction('calendarIso');
+  const capturedUrls = [];
+
+  globalThis.state = {
+    currentView: 'calendar',
+    currentUser: { id: 'U_WAREHOUSE', role: 'PRODUCTION_WAREHOUSE' },
+    calendarYear: 2026,
+    calendarMonth: 11,
+    calendarView: 'MONTH',
+    calendarAnchorDate: '2026-11-19',
+    calendarFilters: { customerId: 'C1', salesOwnerId: 'U1', productId: 'P1', eventType: 'LOADING_PLANNED', status: 'BOOKED' },
+    operationsCalendar: { range: null, events: [], dailyLoadingSummary: [], loading: false, error: null, lastRequestKey: '' }
+  };
+  globalThis.calendarIso = new Function(`return (${isoCode.trim()});`)();
+  globalThis.calendarVisibleRange = new Function(`return (${rangeCode.trim()});`)();
+  globalThis.renderView = () => {};
+  globalThis.fetch = async (url) => {
+    capturedUrls.push(url);
+    return {
+      ok: true,
+      async json() {
+        return {
+          status: 'SUCCESS',
+          data: {
+            range: { from: '2026-11-01', to: '2026-11-30' },
+            events: [{ event_id: 'e1', event_type: 'LOADING_PLANNED', event_date: '2026-11-12' }],
+            dailyLoadingSummary: [{ date: '2026-11-12', shipment_count: 1, actual_container_count: 0, planned_qty_mt: 20 }]
+          }
+        };
+      }
+    };
+  };
+
+  try {
+    const load = new Function(`return (${loaderCode.trim()});`)();
+    await load({ force: true });
+    assert.equal(capturedUrls.length, 1);
+    assert.match(capturedUrls[0], /^\/api\/operations-calendar\?/);
+    assert.match(capturedUrls[0], /from=2026-11-01/);
+    assert.match(capturedUrls[0], /to=2026-11-30/);
+    assert.match(capturedUrls[0], /productId=P1/);
+    assert.match(capturedUrls[0], /eventType=LOADING_PLANNED/);
+    // Warehouse must NOT send hidden filter params
+    assert.doesNotMatch(capturedUrls[0], /customerId=/);
+    assert.doesNotMatch(capturedUrls[0], /salesOwnerId=/);
+    assert.doesNotMatch(capturedUrls[0], /status=/);
+    assert.equal(globalThis.state.operationsCalendar.events.length, 1);
+    assert.equal(globalThis.state.operationsCalendar.dailyLoadingSummary.length, 1);
+  } finally {
+    delete globalThis.state;
+    delete globalThis.calendarIso;
+    delete globalThis.calendarVisibleRange;
+    delete globalThis.renderView;
+    delete globalThis.fetch;
+  }
+});
+
+test('Phase 7 renderCalendarFilters mirrors server RBAC for PRODUCTION_WAREHOUSE and EXTERNAL_SALES', () => {
+  const renderFilters = new Function(
+    'CALENDAR_EVENT_TYPES',
+    'CALENDAR_WAREHOUSE_TYPES',
+    'calendarEventAllowedForRole',
+    'escapeCalendarHtml',
+    `return (${extractFunction('renderCalendarFilters').trim()});`
+  )(
+    {
+      LOADING_PLANNED: { label: 'Planned Loading' },
+      LOADING_ACTUAL: { label: 'Actual Loading' },
+      ETD: { label: 'ETD (Vessel)' },
+      ETA: { label: 'ETA (Arrival)' },
+      PO_DELIVERY_START: { label: 'PO Delivery Start' },
+      PO_DELIVERY_END: { label: 'PO Delivery End' }
+    },
+    ['LOADING_PLANNED', 'LOADING_ACTUAL'],
+    (type, role = globalThis.state.currentUser.role) => (role === 'PRODUCTION_WAREHOUSE' ? ['LOADING_PLANNED', 'LOADING_ACTUAL'].includes(type) : true),
+    (v) => String(v ?? '')
+  );
+
+  globalThis.getScopedCustomers = () => [{ id: 'C1', name: 'Cust 1' }];
+  try {
+    globalThis.state = {
+      currentUser: { role: 'PRODUCTION_WAREHOUSE' },
+      calendarFilters: { customerId: 'ALL', salesOwnerId: 'ALL', productId: 'ALL', eventType: 'ALL', status: 'ALL' },
+      customerOwners: [{ user_id: 'U1', full_name: 'Owner 1', status: 'ACTIVE' }],
+      products: [{ id: 'P1', shortName: 'THP65' }]
+    };
+    const whHtml = renderFilters();
+    assert.doesNotMatch(whHtml, />Customer</);
+    assert.doesNotMatch(whHtml, />Sales Owner</);
+    assert.doesNotMatch(whHtml, />Status</);
+    assert.match(whHtml, /Planned Loading/);
+    assert.doesNotMatch(whHtml, /ETD \(Vessel\)/);
+
+    globalThis.state.currentUser = { role: 'EXTERNAL_SALES' };
+    const salesHtml = renderFilters();
+    assert.doesNotMatch(salesHtml, />Customer</);
+    assert.doesNotMatch(salesHtml, />Sales Owner</);
+    assert.doesNotMatch(salesHtml, />Product</);
+    assert.match(salesHtml, />Status</);
+    assert.match(salesHtml, /ETD \(Vessel\)/);
+  } finally {
+    delete globalThis.state;
+    delete globalThis.getScopedCustomers;
+  }
+});
+
+test('saveCalendarPlannedLoadingDate submits to Phase 6 PUT /api/shipments-v2/:id/schedule and reloads calendar', async () => {
+  const saveFn = new Function(`return (${extractFunction('saveCalendarPlannedLoadingDate').trim()});`)();
+  const calls = [];
+  let reloaded = false;
+  let closed = false;
+  globalThis.state = { calendarYear: 2026, calendarMonth: 11, calendarAnchorDate: '2026-11-12' };
+  globalThis.document = {
+    getElementById(id) {
+      if (id === 'calendarRescheduleDate') return { value: '2026-11-19' };
+      if (id === 'calendarRescheduleError') return { textContent: '', classList: { remove() {} } };
+      return null;
+    }
+  };
+  globalThis.fetch = async (url, init) => {
+    calls.push({ url, method: init.method, body: JSON.parse(init.body) });
+    return { ok: true, async json() { return { status: 'SUCCESS', data: { shipment: { shipment_id: 'S1' } } }; } };
+  };
+  globalThis.closeModal = () => { closed = true; };
+  globalThis.loadOperationsCalendarFromApi = async (opts) => { reloaded = !!opts?.force; };
+
+  try {
+    await saveFn('S1');
+    assert.deepEqual(calls, [{
+      url: '/api/shipments-v2/S1/schedule',
+      method: 'PUT',
+      body: { plannedLoadingDate: '2026-11-19' }
+    }]);
+    assert.equal(closed, true);
+    assert.equal(reloaded, true);
+    assert.equal(globalThis.state.calendarAnchorDate, '2026-11-19');
+  } finally {
+    delete globalThis.state;
+    delete globalThis.document;
+    delete globalThis.fetch;
+    delete globalThis.closeModal;
+    delete globalThis.loadOperationsCalendarFromApi;
+  }
+});
+
 

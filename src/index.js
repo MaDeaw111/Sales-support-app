@@ -93,6 +93,12 @@ export default {
       return createProductHandlerFromEnv(env)(request);
     }
 
+    if (url.pathname === '/api/operations-calendar') {
+      if (!env.DB) return jsonResponse({ status: 'ERROR', message: 'D1 DB binding is not configured.' }, 503);
+      const { createCalendarHandlerFromEnv } = await import('./calendar/routes.js');
+      return createCalendarHandlerFromEnv(env)(request);
+    }
+
     if (url.pathname === '/api/gateway') {
       return jsonResponse({
         status: 'ERROR',
