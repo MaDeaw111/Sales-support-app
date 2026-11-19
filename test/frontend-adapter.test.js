@@ -2077,3 +2077,153 @@ test('renderCommissions hides settle controls and recipient strip for EXTERNAL_S
     delete globalThis.lucide;
   }
 });
+
+test('loadDashboardSummaryFromApi fetches /api/dashboard and updates state.dashboardSummary', async () => {
+  const code = extractFunction('loadDashboardSummaryFromApi');
+  const capturedUrls = [];
+  let rendered = 0;
+
+  globalThis.state = {
+    currentUser: { id: 'U_MGR', role: 'MANAGER' },
+    dashboardSummary: { data: null, loading: false, error: null, loadedRole: '' }
+  };
+  globalThis.renderView = () => { rendered++; };
+  globalThis.fetch = async (url) => {
+    capturedUrls.push(url);
+    return {
+      ok: true,
+      async json() {
+        return {
+          status: 'SUCCESS',
+          data: {
+            role: 'MANAGER',
+            as_of_date: '2026-11-19',
+            kpis: { active_customers_count: 5, open_pos_count: 3, active_contract_mt: 250, active_shipments_count: 4, completed_shipments_count: 2 }
+          }
+        };
+      }
+    };
+  };
+
+  try {
+    const load = new Function(`return (${code.trim()});`)();
+    await load();
+    assert.deepEqual(capturedUrls, ['/api/dashboard']);
+    assert.equal(globalThis.state.dashboardSummary.loadedRole, 'MANAGER');
+    assert.equal(globalThis.state.dashboardSummary.data.kpis.open_pos_count, 3);
+    assert.ok(rendered >= 1);
+  } finally {
+    delete globalThis.state;
+    delete globalThis.renderView;
+    delete globalThis.fetch;
+  }
+});
+
+test('renderDashboard uses live D1 dashboardSummary across all 6 roles with zero mock array reads', () => {
+  const dashCode = extractFunction('renderDashboard(container)');
+  const bootstrapCode = functionBlock('startAuthenticatedApp()', 'openChangePasswordModal');
+
+  assert.match(bootstrapCode, /loadDashboardSummaryFromApi\(/);
+  assert.doesNotMatch(dashCode, /state\.loadingEvents/);
+  assert.doesNotMatch(dashCode, /state\.surveyAssignments/);
+  assert.doesNotMatch(dashCode, /state\.paymentRecords/);
+  assert.doesNotMatch(dashCode, /2026-08-21/);
+  assert.doesNotMatch(dashCode, /2026-08-22/);
+  assert.doesNotMatch(dashCode, /getProductionOrderRows/);
+  assert.match(dashCode, /state\.dashboardSummary/);
+
+  const escapeFn = new Function(`return (${extractFunction('escapeDashboardHtml').trim()});`)();
+  const renderCardFn = new Function(`return (${extractFunction('renderDashboardCard').trim()});`)();
+  const renderActionFn = new Function(`return (${extractFunction('renderDashboardAction').trim()});`)();
+  const renderHeaderFn = new Function(`return (${extractFunction('renderDashboardHeader').trim()});`)();
+  const formatMoneyFn = new Function(`return (${extractFunction('formatMoney').trim()});`)();
+  const paymentBadgeFn = new Function(`return (${extractFunction('paymentStatusBadge').trim()});`)();
+  const renderDashboardFn = new Function('container', `return (${dashCode.trim()})(container);`);
+
+  globalThis.escapeDashboardHtml = escapeFn;
+  globalThis.renderDashboardCard = renderCardFn;
+  globalThis.renderDashboardAction = renderActionFn;
+  globalThis.renderDashboardHeader = renderHeaderFn;
+  globalThis.formatMoney = formatMoneyFn;
+  globalThis.paymentStatusBadge = paymentBadgeFn;
+  globalThis.loadDashboardSummaryFromApi = async () => {};
+  globalThis.getScopedCustomers = () => [];
+  globalThis.lucide = { createIcons() {} };
+
+  const payloads = {
+    ADMIN: {
+      role: 'ADMIN',
+      as_of_date: '2026-11-19',
+      kpis: { active_users: 7, inactive_users: 1, customers_count: 4, active_customers_count: 4, total_products: 5, active_products: 5, total_logistics_partners: 3, active_logistics_partners: 3, open_pos: 2, payable_commissions_count: 1 },
+      role_breakdown: [{ role: 'ADMIN', total_count: 1, active_count: 1 }],
+      health: [{ key: 'PARTNER_CONTACT', label: 'Active Logistics Partners without Contact Info', count: 1, view: 'logistics_partners' }]
+    },
+    MANAGER: {
+      role: 'MANAGER',
+      as_of_date: '2026-11-19',
+      kpis: { active_customers_count: 4, total_customers_count: 4, open_pos_count: 2, active_contract_mt: 150, active_shipments_count: 3, completed_shipments_count: 1 },
+      payments_summary: { paid_count: 1, partial_count: 1, unpaid_count: 1, totals_by_currency: [{ currency: 'USD', final_invoice_total: 10000, payment_total: 6000, outstanding_total: 4000 }] },
+      commissions_summary: { pending_usd: 100, payable_usd: 200, paid_usd: 50, payable_count: 1 },
+      outstanding_payments: [{ shipment_id: 'SHP-1', di_id: 'DI-1', di_no: 'DI-001', customer_name: 'Meelunie', currency: 'USD', final_invoice_total: 10000, payment_total: 6000, outstanding_balance: 4000, payment_status: 'PARTIAL' }],
+      upcoming_milestones: []
+    },
+    SALES_SUPPORT: {
+      role: 'SALES_SUPPORT',
+      as_of_date: '2026-11-19',
+      kpis: { active_customers_count: 4, open_pos_count: 2, draft_pos_count: 1, active_dis_count: 2, booking_pending_count: 1, payment_followup_count: 2 },
+      payments_summary: { paid_count: 1, partial_count: 1, unpaid_count: 1, totals_by_currency: [] },
+      upcoming_milestones: []
+    },
+    EXTERNAL_SALES: {
+      role: 'EXTERNAL_SALES',
+      as_of_date: '2026-11-19',
+      kpis: { my_customers_count: 2, my_active_customers_count: 2, my_open_pos_count: 1, my_active_shipments_count: 1, my_unpaid_shipments_count: 0, my_commission_pending_usd: 0, my_commission_payable_usd: 200, my_commission_paid_usd: 50 },
+      recent_shipments: [{ di_no: 'DI-001', customer_name: 'Meelunie', customer_po_no: 'CPO-1', currency: 'USD', shipment_status: 'COMPLETED', etd: '2026-11-25', final_invoice_total: 10000, payment_total: 10000, outstanding_balance: 0, payment_status: 'PAID', commission_ready: true }],
+      upcoming_milestones: []
+    },
+    EXPORT: {
+      role: 'EXPORT',
+      as_of_date: '2026-11-19',
+      kpis: { loading_today_count: 1, booking_pending_count: 1, awaiting_loading_count: 1, docs_pending_count: 1, awaiting_final_invoice_count: 1, payment_followup_count: 2, active_logistics_partners_count: 3 },
+      upcoming_milestones: [],
+      readiness_queue: [{ shipment_id: 'SHP-2', di_id: 'DI-2', di_no: 'DI-002', customer_name: 'EuroStarch', booking_no: 'BK-002', etd: '2026-11-25', planned_loading_date: '2026-11-21', shipment_status: 'BOOKED', invoice_readiness: 'NO_INVOICE', payment_status: 'UNPAID' }]
+    },
+    PRODUCTION_WAREHOUSE: {
+      role: 'PRODUCTION_WAREHOUSE',
+      as_of_date: '2026-11-19',
+      kpis: { loading_today_count: 1, due_next_7_days_count: 1, planned_shipments_count: 1, loaded_this_month_count: 2, upcoming_planned_mt: 15 },
+      upcoming_loadings: [{ planned_loading_date: '2026-11-21', actual_loading_date: null, container_plan: '1 x 20GP', planned_qty_mt: 15, actual_container_count: 0, products: [{ product_code: 'THS-85', product_name: 'Tapioca Starch 85%', planned_qty_mt: 15, packing_snapshot: 'Jumbo Bag' }] }]
+    }
+  };
+
+  try {
+    for (const [role, data] of Object.entries(payloads)) {
+      globalThis.state = {
+        currentUser: { role },
+        dashboardSummary: { data, loading: false, error: null, loadedRole: role }
+      };
+      const container = { innerHTML: '' };
+      renderDashboardFn(container);
+      assert.ok(container.innerHTML.length > 100, `${role} dashboard should render live D1 content`);
+      if (role === 'PRODUCTION_WAREHOUSE') {
+        assert.match(container.innerHTML, /THS-85/);
+        assert.doesNotMatch(container.innerHTML, /Meelunie|EuroStarch|Commission|Outstanding/);
+      }
+      if (role === 'EXTERNAL_SALES') {
+        assert.match(container.innerHTML, /DI-001/);
+        assert.match(container.innerHTML, /200\.00/);
+      }
+    }
+  } finally {
+    delete globalThis.state;
+    delete globalThis.escapeDashboardHtml;
+    delete globalThis.renderDashboardCard;
+    delete globalThis.renderDashboardAction;
+    delete globalThis.renderDashboardHeader;
+    delete globalThis.formatMoney;
+    delete globalThis.paymentStatusBadge;
+    delete globalThis.loadDashboardSummaryFromApi;
+    delete globalThis.getScopedCustomers;
+    delete globalThis.lucide;
+  }
+});

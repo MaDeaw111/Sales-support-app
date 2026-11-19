@@ -704,6 +704,7 @@
             loadProductFormsFromApi();
             loadSpecParametersFromApi();
             loadProductsFromApi();
+            loadDashboardSummaryFromApi({ force: true });
         }
 
         function openChangePasswordModal(forced = false) {
@@ -750,6 +751,7 @@
                 state.logisticsPartners = { items: [], detail: null, loading: false, detailLoading: false, error: null, loaded: false, statusFilter: 'ALL', search: '' };
                 state.paymentsDashboard = { summary: null, items: [], customerCredits: [], detail: null, loading: false, detailLoading: false, error: null, loaded: false, activeTab: 'SHIPMENTS', filters: { paymentStatus: 'ALL', invoiceReadiness: 'ALL', shipmentStatus: 'ALL', currency: 'ALL', customerId: 'ALL', search: '' } };
                 state.commissionsDashboard = { summary: null, items: [], recipients: [], detail: null, loading: false, error: null, loaded: false, filters: { status: 'ALL', recipientUserId: 'ALL', customerId: 'ALL', paidDateFrom: '', paidDateTo: '', search: '' } };
+                state.dashboardSummary = { data: null, loading: false, error: null, loadedRole: '' };
                 showLoginScreen('Signed out successfully.');
                 const email = document.getElementById('loginEmail');
                 if (email) email.focus();
@@ -808,6 +810,7 @@
             logisticsPartners: { items: [], detail: null, loading: false, detailLoading: false, error: null, loaded: false, statusFilter: 'ALL', search: '' },
             paymentsDashboard: { summary: null, items: [], customerCredits: [], detail: null, loading: false, detailLoading: false, error: null, loaded: false, activeTab: 'SHIPMENTS', filters: { paymentStatus: 'ALL', invoiceReadiness: 'ALL', shipmentStatus: 'ALL', currency: 'ALL', customerId: 'ALL', search: '' } },
             commissionsDashboard: { summary: null, items: [], recipients: [], detail: null, loading: false, error: null, loaded: false, filters: { status: 'ALL', recipientUserId: 'ALL', customerId: 'ALL', paidDateFrom: '', paidDateTo: '', search: '' } },
+            dashboardSummary: { data: null, loading: false, error: null, loadedRole: '' },
             shippingFilter: 'ALL',
             poFilters: { search: '', customerId: 'ALL', productId: 'ALL', status: 'ALL', year: 'ALL' },
             poDocuments: {},
@@ -2688,60 +2691,276 @@
             return `<div class="space-y-5">${renderDashboardHeader('System Administration','System health · Master data · Access control · Approval overview',actions)}<div class="grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-3">${renderDashboardCard('Active Users',d.activeUsers.length,'user-check','emerald')}${renderDashboardCard('Inactive Users',d.inactiveUsers.length,'user-x','slate')}${renderDashboardCard('Customers',d.customers.length,'users','blue')}${renderDashboardCard('Active Products',d.activeProducts.length,'package','blue')}${renderDashboardCard('Logistics Partners',d.activeProviders.length,'building-2','amber')}${renderDashboardCard('Open Approval Items',d.openApprovalItems,'circle-check-big','fuchsia')}</div>${renderAdminDataHealth(d)}${renderAdminMasterDataOverview(d)}<div class="grid xl:grid-cols-2 gap-4">${renderAdminRoleOverview(d)}${renderAdminNeedsAttention(d)}</div>${renderAdminRecentActivity()}<div class="bg-slate-50 rounded-xl border border-slate-200 p-4 text-xs text-slate-600"><strong>Admin focus:</strong> Keep access, master data and workflow references healthy. Business performance stays on the Manager Dashboard.</div></div>`;
         }
 
+        function escapeDashboardHtml(value) {
+            return String(value ?? '')
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;')
+                .replace(/'/g, '&#39;');
+        }
+
+        async function loadDashboardSummaryFromApi(options) {
+            const opts = options || {};
+            if (!state.dashboardSummary) {
+                state.dashboardSummary = { data: null, loading: false, error: null, loadedRole: '' };
+            }
+            const ds = state.dashboardSummary;
+            const role = state.currentUser?.role || '';
+            if (ds.loading && !opts.force) return ds.data;
+            ds.loading = true;
+            ds.error = null;
+            try {
+                const res = await fetch('/api/dashboard');
+                const body = await res.json().catch(() => null);
+                if (!res.ok || body?.status !== 'SUCCESS' || !body.data) {
+                    ds.error = body?.message || 'Failed to load dashboard summary.';
+                    return ds.data;
+                }
+                ds.data = body.data;
+                ds.loadedRole = body.data.role || role;
+                ds.error = null;
+                return ds.data;
+            } catch (err) {
+                ds.error = err?.message || 'Failed to load dashboard summary.';
+                return ds.data;
+            } finally {
+                ds.loading = false;
+                if (typeof renderView === 'function') renderView();
+            }
+        }
+
         function renderDashboard(container) {
-            const role = state.currentUser.role;
-            const scopedCustomers = getScopedCustomers(), scopedPOs = getScopedPOs(), scopedDIs = getScopedDIRecords();
-            const activeDI = scopedDIs.filter(d => d.status !== 'CANCELLED' && deriveDIStage(d) !== 'COMPLETED').length;
-            const payments = getDashboardPaymentRecords();
-            const unpaidPayments = payments.filter(p => p.status !== 'PAID').length;
-            const today = '2026-08-21';
+            const role = state.currentUser?.role || '';
+            const ds = state.dashboardSummary || { data: null, loading: false, error: null, loadedRole: '' };
+            const hasLive = Boolean(ds.data && ds.data.role === role);
+
+            if (!hasLive && !ds.loading && !ds.error && typeof loadDashboardSummaryFromApi === 'function') {
+                loadDashboardSummaryFromApi();
+            }
+
+            const refreshBtn = renderDashboardAction('Refresh', 'refresh-cw', 'loadDashboardSummaryFromApi({ force: true })');
+            const errBanner = ds.error ? `<div class="bg-rose-50 border border-rose-200 text-rose-700 rounded-xl px-4 py-3 text-xs font-bold">${escapeDashboardHtml(ds.error)}</div>` : '';
+            const loadingBanner = (!hasLive && ds.loading) ? `<div class="bg-white border border-slate-200 rounded-xl p-6 text-center text-xs text-slate-400">Loading live D1 dashboard...</div>` : '';
+
+            const renderMilestonesTable = (rows, allowJump) => `<div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+                <div class="px-4 py-3 border-b border-slate-100 flex items-center justify-between">
+                    <div><h3 class="text-sm font-black text-slate-900">Upcoming Loading &amp; ETD (Next 14 Days)</h3><p class="text-[10px] text-slate-400 mt-0.5">Live schedule from Phase 6 Shipments</p></div>
+                    <button onclick="changeView('calendar')" class="text-[11px] font-bold text-blue-600 hover:underline">Open Calendar</button>
+                </div>
+                <div class="overflow-x-auto"><table class="ui-table w-full text-left text-xs"><thead class="bg-slate-50 text-[10px] uppercase text-slate-500"><tr><th class="p-3">DI No.</th><th class="p-3">Customer</th><th class="p-3">Planned Loading</th><th class="p-3">ETD</th><th class="p-3 text-center">Status</th>${allowJump ? '<th class="p-3 text-right">Action</th>' : ''}</tr></thead><tbody class="divide-y divide-slate-100">${(rows || []).length ? rows.map(m => `<tr><td class="p-3 font-bold text-slate-900">${escapeDashboardHtml(m.di_no)}</td><td class="p-3">${escapeDashboardHtml(m.customer_name || '-')}</td><td class="p-3 font-mono">${escapeDashboardHtml(m.planned_loading_date || '-')}</td><td class="p-3 font-mono">${escapeDashboardHtml(m.etd || '-')}</td><td class="p-3 text-center"><span class="px-2 py-0.5 rounded bg-slate-100 text-slate-700 text-[10px] font-bold">${escapeDashboardHtml(m.shipment_status || '-')}</span></td>${allowJump ? `<td class="p-3 text-right">${m.di_id ? `<button onclick="openPhase6ShipmentFromCalendar('${escapeDashboardHtml(m.di_id)}')" class="px-2 py-1 rounded border text-blue-700 text-[10px] font-bold hover:bg-blue-50">Open Shipment</button>` : '-'}</td>` : ''}</tr>`).join('') : `<tr><td colspan="${allowJump ? 6 : 5}" class="p-6 text-center text-slate-400">No upcoming milestones in the next 14 days.</td></tr>`}</tbody></table></div>
+            </div>`;
 
             if (role === 'ADMIN') {
-                container.innerHTML = renderAdminDashboard();
-                if (window.lucide?.createIcons) lucide.createIcons();
+                const d = hasLive ? ds.data : null;
+                const k = d?.kpis || {};
+                const actions = [
+                    renderDashboardAction('Add User', 'user-plus', 'openUserModal()', true),
+                    renderDashboardAction('Add Customer', 'user-plus', 'openAddCustomerModal()'),
+                    renderDashboardAction('Products', 'package-plus', "changeView('products')"),
+                    renderDashboardAction('Add Logistics Partner', 'building-2', 'openLogisticsPartnerModal()'),
+                    refreshBtn
+                ].join('');
+                const healthRows = (d?.health || []).map(h => `<button onclick="changeView('${escapeDashboardHtml(h.view)}')" class="w-full p-3 text-left hover:bg-slate-50 flex items-center justify-between gap-3"><span class="text-xs font-bold text-slate-700">${escapeDashboardHtml(h.label)}</span><span class="px-2 py-0.5 rounded-full text-[10px] font-black ${Number(h.count || 0) > 0 ? 'bg-amber-100 text-amber-800' : 'bg-emerald-100 text-emerald-700'}">${Number(h.count || 0)}</span></button>`).join('');
+                const roleRows = (d?.role_breakdown || []).map(r => `<div class="p-3 flex items-center justify-between text-xs"><span class="font-bold text-slate-800">${escapeDashboardHtml(String(r.role || '').replaceAll('_', ' '))}</span><span class="font-mono text-slate-500"><strong class="text-slate-900">${Number(r.active_count || 0)}</strong> active / ${Number(r.total_count || 0)} total</span></div>`).join('');
+                container.innerHTML = `<div class="space-y-5">
+                    ${renderDashboardHeader('System Administration', 'Live D1 health · Master data · Access control · Operational overview', actions)}
+                    ${errBanner}${loadingBanner}
+                    <div class="grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-3">
+                        ${renderDashboardCard('Active Users', Number(k.active_users || 0), 'user-check', 'emerald')}
+                        ${renderDashboardCard('Inactive Users', Number(k.inactive_users || 0), 'user-x', 'slate')}
+                        ${renderDashboardCard('Customers', Number(k.customers_count || 0), 'users', 'blue')}
+                        ${renderDashboardCard('Active Products', Number(k.active_products || 0), 'package', 'blue')}
+                        ${renderDashboardCard('Logistics Partners', Number(k.active_logistics_partners || 0), 'building-2', 'amber')}
+                        ${renderDashboardCard('Payable Commissions', Number(k.payable_commissions_count || 0), 'coins', 'fuchsia')}
+                    </div>
+                    <div class="grid xl:grid-cols-2 gap-4">
+                        <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden"><div class="px-4 py-3 border-b border-slate-100"><h3 class="text-sm font-black text-slate-900">D1 Data Health &amp; Follow-up</h3><p class="text-[10px] text-slate-400 mt-0.5">Live counts directly from production D1</p></div><div class="divide-y divide-slate-100">${healthRows || '<div class="p-6 text-center text-xs text-slate-400">Loading health checks...</div>'}</div></div>
+                        <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden"><div class="px-4 py-3 border-b border-slate-100 flex items-center justify-between"><div><h3 class="text-sm font-black text-slate-900">User Roles</h3><p class="text-[10px] text-slate-400 mt-0.5">Active accounts by RBAC role</p></div><button onclick="changeView('users')" class="text-[11px] font-bold text-blue-600 hover:underline">Manage Users</button></div><div class="divide-y divide-slate-100">${roleRows || '<div class="p-6 text-center text-xs text-slate-400">Loading roles...</div>'}</div></div>
+                    </div>
+                </div>`;
+                if (typeof lucide !== 'undefined' && lucide.createIcons) lucide.createIcons();
                 return;
             }
 
             if (role === 'MANAGER') {
-                container.innerHTML = renderManagerDashboard();
-                if (window.lucide?.createIcons) lucide.createIcons();
+                const d = hasLive ? ds.data : null;
+                const k = d?.kpis || {};
+                const pay = d?.payments_summary || { paid_count: 0, partial_count: 0, unpaid_count: 0, totals_by_currency: [] };
+                const com = d?.commissions_summary || { pending_usd: 0, payable_usd: 0, paid_usd: 0, payable_count: 0 };
+                const actions = [
+                    renderDashboardAction('Payment Status', 'wallet', "changeView('payments')", true),
+                    renderDashboardAction('Commission Settlement', 'coins', "changeView('commissions')"),
+                    renderDashboardAction('PO Management', 'file-text', "changeView('po_engine')"),
+                    renderDashboardAction('Operations Calendar', 'calendar-days', "changeView('calendar')"),
+                    refreshBtn
+                ].join('');
+                const curCards = (pay.totals_by_currency || []).map(t => `<div class="bg-slate-900 text-white rounded-xl p-4 space-y-1"><div class="text-[10px] font-black uppercase text-blue-300">${escapeDashboardHtml(t.currency)} Receivables</div><div class="text-lg font-black text-rose-300">${escapeDashboardHtml(formatMoney(t.outstanding_total, t.currency))} <span class="text-[10px] font-normal text-slate-300">outstanding</span></div><div class="text-[11px] text-slate-300">Invoiced ${escapeDashboardHtml(formatMoney(t.final_invoice_total, t.currency))} · Received ${escapeDashboardHtml(formatMoney(t.payment_total, t.currency))}</div></div>`).join('');
+                const outRows = (d?.outstanding_payments || []).map(p => `<tr><td class="p-3 font-bold">${escapeDashboardHtml(p.di_no)}</td><td class="p-3">${escapeDashboardHtml(p.customer_name)}</td><td class="p-3 text-right font-bold text-rose-700">${escapeDashboardHtml(formatMoney(p.outstanding_balance, p.currency))}</td><td class="p-3 text-center">${paymentStatusBadge(p.payment_status)}</td></tr>`).join('');
+                container.innerHTML = `<div class="space-y-5">
+                    ${renderDashboardHeader('Executive & Commercial Overview', 'Live D1 POs · Shipments · Multi-currency Receivables · Commission Settlement', actions)}
+                    ${errBanner}${loadingBanner}
+                    <div class="grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-3">
+                        ${renderDashboardCard('Active Customers', Number(k.active_customers_count || 0), 'users', 'blue')}
+                        ${renderDashboardCard('Open POs', Number(k.open_pos_count || 0), 'file-text', 'slate')}
+                        ${renderDashboardCard('Contract Qty (MT)', Number(k.active_contract_mt || 0).toFixed(1), 'scale', 'blue')}
+                        ${renderDashboardCard('Active Shipments', Number(k.active_shipments_count || 0), 'truck', 'amber')}
+                        ${renderDashboardCard('Payable Commission', formatMoney(com.payable_usd, 'USD'), 'coins', 'fuchsia')}
+                        ${renderDashboardCard('Paid Commission', formatMoney(com.paid_usd, 'USD'), 'check-circle', 'emerald')}
+                    </div>
+                    ${curCards ? `<div class="grid md:grid-cols-3 gap-3">${curCards}</div>` : ''}
+                    <div class="grid xl:grid-cols-2 gap-4">
+                        <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden"><div class="px-4 py-3 border-b border-slate-100 flex items-center justify-between"><div><h3 class="text-sm font-black text-slate-900">Outstanding Final Invoices</h3><p class="text-[10px] text-slate-400 mt-0.5">Live from Phase 6 / Phase 9</p></div><button onclick="changeView('payments')" class="text-[11px] font-bold text-blue-600 hover:underline">Open Payments</button></div><div class="overflow-x-auto"><table class="ui-table w-full text-left text-xs"><thead class="bg-slate-50 text-[10px] uppercase text-slate-500"><tr><th class="p-3">DI</th><th class="p-3">Customer</th><th class="p-3 text-right">Outstanding</th><th class="p-3 text-center">Status</th></tr></thead><tbody class="divide-y divide-slate-100">${outRows || '<tr><td colspan="4" class="p-6 text-center text-slate-400">No outstanding finalized invoices.</td></tr>'}</tbody></table></div></div>
+                        ${renderMilestonesTable(d?.upcoming_milestones || [], true)}
+                    </div>
+                </div>`;
+                if (typeof lucide !== 'undefined' && lucide.createIcons) lucide.createIcons();
                 return;
             }
 
             if (role === 'SALES_SUPPORT') {
-                const draftPO = scopedPOs.filter(p=>['DRAFT','OPEN'].includes(p.poStatus||'OPEN')).length;
-                const diPending = scopedDIs.filter(d=>d.status!=='CANCELLED' && calculateDIActualQty(d)<=0).length;
-                const bookingPending = scopedDIs.filter(d=>d.status!=='CANCELLED' && !d.booking).length;
-                const actions = [renderDashboardAction('New Customer','user-plus','openAddCustomerModal()',true),renderDashboardAction('Create PO','file-plus-2','openNewPOModal()'),renderDashboardAction('Create DI','truck','openCreateDIPrototype()'),renderDashboardAction('Request Special Price','badge-percent','openRequestSpecialPrice()')].join('');
-                container.innerHTML = `<div class="space-y-5">${renderDashboardHeader('Sales Operations','Customer · Pricing · PO · DI · Booking · Payment follow-up',actions)}<div class="grid grid-cols-2 lg:grid-cols-5 gap-3">${renderDashboardCard('Active Customers',scopedCustomers.filter(c => c.status === 'ACTIVE_CUSTOMER').length,'users','blue')}${renderDashboardCard('Open PO',draftPO,'file-text','slate')}${renderDashboardCard('DI Pending',diPending,'truck','amber')}${renderDashboardCard('Booking Pending',bookingPending,'ship','fuchsia')}${renderDashboardCard('Payment Follow-up',unpaidPayments,'wallet','rose')}</div>${renderSalesSupportWorkQueue()}<div class="grid xl:grid-cols-3 gap-4"><div class="xl:col-span-2">${renderSalesSupportCustomerFollowUp()}</div>${renderSalesSupportUpcoming()}</div>${renderSalesSupportPOProgress()}<div class="grid xl:grid-cols-2 gap-4">${renderSalesSupportTrend()}${renderRecentActivity()}</div><div class="bg-slate-50 rounded-xl border border-slate-200 p-4 text-xs text-slate-600"><strong>Sales workflow:</strong> Customer → Pricing → PO → DI → Booking → Shipment → Payment</div></div>`;
+                const d = hasLive ? ds.data : null;
+                const k = d?.kpis || {};
+                const activeCustomers = d
+                    ? Number(k.active_customers_count || 0)
+                    : (typeof getScopedCustomers === 'function' ? getScopedCustomers().filter(c => c.status === 'ACTIVE_CUSTOMER').length : 0);
+                const actions = [
+                    renderDashboardAction('New Customer', 'user-plus', 'openAddCustomerModal()', true),
+                    renderDashboardAction('PO Management', 'file-text', "changeView('po_engine')"),
+                    renderDashboardAction('Shipping / DI', 'truck', "changeView('shipping')"),
+                    renderDashboardAction('Payment Status', 'wallet', "changeView('payments')"),
+                    refreshBtn
+                ].join('');
+                container.innerHTML = `<div class="space-y-5">
+                    ${renderDashboardHeader('Sales Operations', 'Live D1 Customer · PO · DI · Booking · Payment follow-up', actions)}
+                    ${errBanner}${loadingBanner}
+                    <div class="grid grid-cols-2 lg:grid-cols-5 gap-3">
+                        ${renderDashboardCard('Active Customers', activeCustomers, 'users', 'blue')}
+                        ${renderDashboardCard('Open POs', Number(k.open_pos_count || 0), 'file-text', 'slate')}
+                        ${renderDashboardCard('Active DIs', Number(k.active_dis_count || 0), 'truck', 'amber')}
+                        ${renderDashboardCard('Booking Pending', Number(k.booking_pending_count || 0), 'ship', 'fuchsia')}
+                        ${renderDashboardCard('Payment Follow-up', Number(k.payment_followup_count || 0), 'wallet', 'rose')}
+                    </div>
+                    ${renderMilestonesTable(d?.upcoming_milestones || [], true)}
+                </div>`;
+                if (typeof lucide !== 'undefined' && lucide.createIcons) lucide.createIcons();
                 return;
             }
 
             if (role === 'EXTERNAL_SALES') {
-                container.innerHTML = renderExternalSalesDashboard();
-                if (window.lucide?.createIcons) lucide.createIcons();
+                const d = hasLive ? ds.data : null;
+                const k = d?.kpis || {};
+                const actions = [
+                    renderDashboardAction('My Customers', 'users', "changeView('customers')", true),
+                    renderDashboardAction('My POs', 'file-text', "changeView('po_engine')"),
+                    renderDashboardAction('My Payments', 'wallet', "changeView('payments')"),
+                    renderDashboardAction('My Commission', 'coins', "changeView('commissions')"),
+                    refreshBtn
+                ].join('');
+                const shipRows = (d?.recent_shipments || []).map(r => `<tr>
+                    <td class="p-3 font-bold text-slate-900">${escapeDashboardHtml(r.di_no)}</td>
+                    <td class="p-3">${escapeDashboardHtml(r.customer_name)}</td>
+                    <td class="p-3 font-mono">${escapeDashboardHtml(r.etd || '-')}</td>
+                    <td class="p-3 text-right font-bold">${escapeDashboardHtml(formatMoney(r.final_invoice_total, r.currency || 'USD'))}</td>
+                    <td class="p-3 text-right font-bold text-emerald-700">${escapeDashboardHtml(formatMoney(r.payment_total, r.currency || 'USD'))}</td>
+                    <td class="p-3 text-center">${paymentStatusBadge(r.payment_status)}</td>
+                </tr>`).join('');
+                container.innerHTML = `<div class="space-y-5">
+                    ${renderDashboardHeader('My Sales Overview', 'Assigned customers · Active POs · Payment status · Own commissions', actions)}
+                    ${errBanner}${loadingBanner}
+                    <div class="grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-3">
+                        ${renderDashboardCard('My Customers', Number(k.my_customers_count || 0), 'users', 'blue')}
+                        ${renderDashboardCard('My Open POs', Number(k.my_open_pos_count || 0), 'file-text', 'slate')}
+                        ${renderDashboardCard('My Shipments', Number(k.my_active_shipments_count || 0), 'truck', 'amber')}
+                        ${renderDashboardCard('Unpaid Shipments', Number(k.my_unpaid_shipments_count || 0), 'wallet', 'rose')}
+                        ${renderDashboardCard('Payable Commission', formatMoney(k.my_commission_payable_usd || 0, 'USD'), 'coins', 'blue')}
+                        ${renderDashboardCard('Paid Commission', formatMoney(k.my_commission_paid_usd || 0, 'USD'), 'check-circle', 'emerald')}
+                    </div>
+                    <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+                        <div class="px-4 py-3 border-b border-slate-100 flex items-center justify-between"><div><h3 class="text-sm font-black text-slate-900">My Shipments &amp; Payment Status</h3><p class="text-[10px] text-slate-400 mt-0.5">Assigned customers only</p></div><button onclick="changeView('payments')" class="text-[11px] font-bold text-blue-600 hover:underline">View All</button></div>
+                        <div class="overflow-x-auto"><table class="ui-table w-full text-left text-xs"><thead class="bg-slate-50 text-[10px] uppercase text-slate-500"><tr><th class="p-3">DI No.</th><th class="p-3">Customer</th><th class="p-3">ETD</th><th class="p-3 text-right">Final Invoice</th><th class="p-3 text-right">Received</th><th class="p-3 text-center">Payment</th></tr></thead><tbody class="divide-y divide-slate-100">${shipRows || '<tr><td colspan="6" class="p-6 text-center text-slate-400">No shipments for your assigned customers yet.</td></tr>'}</tbody></table></div>
+                    </div>
+                    ${renderMilestonesTable(d?.upcoming_milestones || [], false)}
+                </div>`;
+                if (typeof lucide !== 'undefined' && lucide.createIcons) lucide.createIcons();
                 return;
             }
 
             if (role === 'EXPORT') {
-                const waitingWcat = scopedDIs.filter(d => d.status !== 'CANCELLED' && !d.wcatNo).length;
-                const docsPending = scopedDIs.filter(d => calculateDIActualQty(d) > 0 && !getDocumentProgress(d).complete).length;
-                const loadingToday = (state.loadingEvents||[]).filter(e=>e.loadingDate===today&&e.status!=='CANCELLED').length;
-                const truckPending = getTruckPendingLoadingEvents().length;
-                const forwarderMissing = scopedDIs.filter(d=>d.booking && d.booking.status!=='CANCELLED' && !getDIForwarderAssignment(d.id)).length;
-                const surveyPending = (state.surveyAssignments||[]).filter(x=>x.status==='PENDING'||x.status==='BOOKED').length;
-                const actions = [renderDashboardAction('Update Booking','ship',"changeView('shipping')",true),renderDashboardAction('Truck Allocation','truck',"changeView('shipping')"),renderDashboardAction('Forwarder / Survey','briefcase-business',"changeView('shipping')"),renderDashboardAction('Add Loading Event','calendar-days',"changeView('shipping')"),renderDashboardAction('Update Payment','wallet',"changeView('payments')")].join('');
-                container.innerHTML = `<div class="space-y-5">${renderDashboardHeader('Export Workspace','Export control tower — วันนี้ต้องทำอะไรต่อ',actions)}<div class="grid grid-cols-2 lg:grid-cols-4 xl:grid-cols-8 gap-3">${renderDashboardCard('Loading Today',loadingToday,'calendar-days','emerald')}${renderDashboardCard('Waiting WCAT',waitingWcat,'file-text','amber')}${renderDashboardCard('Booking Pending',scopedDIs.filter(d=>!d.booking&&d.status!=='CANCELLED').length,'ship','blue')}${renderDashboardCard('Truck Allocation Incomplete',truckPending,'truck','amber')}${renderDashboardCard('Forwarder Missing',forwarderMissing,'briefcase-business','fuchsia')}${renderDashboardCard('Survey Pending',surveyPending,'clipboard-check','blue')}${renderDashboardCard('Documents Pending',docsPending,'file-text','slate')}${renderDashboardCard('Payment Follow-up',unpaidPayments,'wallet','rose')}</div>${renderExportUpcomingTable()}${renderExportReadinessPanel()}<div class="grid xl:grid-cols-3 gap-4">${renderExportAttentionPanel()}${renderRecentActivity()}${renderExportPartnerSnapshot()}</div><div class="bg-slate-50 rounded-xl border border-slate-200 p-4 text-xs text-slate-600"><strong>Control flow:</strong> DI → WCAT → Booking → Forwarder → Loading Event → Truck Allocation → Survey → Loading → Documents → Payment</div></div>`;
+                const d = hasLive ? ds.data : null;
+                const k = d?.kpis || {};
+                const actions = [
+                    renderDashboardAction('Shipping / DI', 'truck', "changeView('shipping')", true),
+                    renderDashboardAction('Operations Calendar', 'calendar-days', "changeView('calendar')"),
+                    renderDashboardAction('Logistics Partners', 'building-2', "changeView('logistics_partners')"),
+                    renderDashboardAction('Payment Status', 'wallet', "changeView('payments')"),
+                    refreshBtn
+                ].join('');
+                const queueRows = (d?.readiness_queue || []).map(q => `<tr>
+                    <td class="p-3 font-bold text-slate-900">${escapeDashboardHtml(q.di_no)}</td>
+                    <td class="p-3">${escapeDashboardHtml(q.customer_name)}</td>
+                    <td class="p-3 font-mono">${escapeDashboardHtml(q.booking_no || '-')}</td>
+                    <td class="p-3 font-mono">${escapeDashboardHtml(q.planned_loading_date || '-')}</td>
+                    <td class="p-3 text-center"><span class="px-2 py-0.5 rounded bg-slate-100 text-slate-700 text-[10px] font-bold">${escapeDashboardHtml(q.shipment_status)}</span></td>
+                    <td class="p-3 text-center">${paymentStatusBadge(q.payment_status)}</td>
+                    <td class="p-3 text-right">${q.di_id ? `<button onclick="openPhase6ShipmentFromCalendar('${escapeDashboardHtml(q.di_id)}')" class="px-2 py-1 rounded border text-blue-700 text-[10px] font-bold hover:bg-blue-50">Open Shipment</button>` : '-'}</td>
+                </tr>`).join('');
+                container.innerHTML = `<div class="space-y-5">
+                    ${renderDashboardHeader('Export Workspace', 'Live D1 Export Control Tower — Bookings, Loading, Docs, Final Invoices & Payments', actions)}
+                    ${errBanner}${loadingBanner}
+                    <div class="grid grid-cols-2 lg:grid-cols-4 xl:grid-cols-7 gap-3">
+                        ${renderDashboardCard('Loading Today', Number(k.loading_today_count || 0), 'calendar-days', 'emerald')}
+                        ${renderDashboardCard('Booking Pending', Number(k.booking_pending_count || 0), 'ship', 'blue')}
+                        ${renderDashboardCard('Awaiting Loading', Number(k.awaiting_loading_count || 0), 'truck', 'amber')}
+                        ${renderDashboardCard('Docs Pending', Number(k.docs_pending_count || 0), 'file-text', 'slate')}
+                        ${renderDashboardCard('Awaiting Final Inv.', Number(k.awaiting_final_invoice_count || 0), 'receipt', 'fuchsia')}
+                        ${renderDashboardCard('Payment Follow-up', Number(k.payment_followup_count || 0), 'wallet', 'rose')}
+                        ${renderDashboardCard('Active Partners', Number(k.active_logistics_partners_count || 0), 'building-2', 'blue')}
+                    </div>
+                    <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+                        <div class="px-4 py-3 border-b border-slate-100"><h3 class="text-sm font-black text-slate-900">Active Export Readiness Queue</h3><p class="text-[10px] text-slate-400 mt-0.5">Non-completed shipments requiring operational follow-up</p></div>
+                        <div class="overflow-x-auto"><table class="ui-table w-full text-left text-xs"><thead class="bg-slate-50 text-[10px] uppercase text-slate-500"><tr><th class="p-3">DI</th><th class="p-3">Customer</th><th class="p-3">Booking</th><th class="p-3">Planned Loading</th><th class="p-3 text-center">Shipment</th><th class="p-3 text-center">Payment</th><th class="p-3 text-right">Action</th></tr></thead><tbody class="divide-y divide-slate-100">${queueRows || '<tr><td colspan="7" class="p-6 text-center text-slate-400">All active shipments are completed.</td></tr>'}</tbody></table></div>
+                    </div>
+                    ${renderMilestonesTable(d?.upcoming_milestones || [], true)}
+                </div>`;
+                if (typeof lucide !== 'undefined' && lucide.createIcons) lucide.createIcons();
                 return;
             }
 
             if (role === 'PRODUCTION_WAREHOUSE') {
-                const rows=getProductionOrderRows();
-                const count=st=>rows.filter(r=>r.status===st).length;
-                const due=rows.filter(r=>r.targetLoadingDate!=='-'&&r.targetLoadingDate>='2026-08-22'&&r.targetLoadingDate<='2026-08-29'&&r.status!=='WAREHOUSE_READY').length;
-                const actions=[renderDashboardAction('Open Production Orders','clipboard-list',"changeView('shipping')",true),renderDashboardAction('Loading Calendar','calendar-days',"changeView('calendar')")].join('');
-                container.innerHTML=`<div class="space-y-5">${renderDashboardHeader('Production Order Execution','DI-based order plan → Production → Packing → Warehouse Ready',actions)}<div class="grid grid-cols-2 lg:grid-cols-5 gap-3">${renderDashboardCard('Orders Waiting',count('WAITING_PLAN'),'clock','slate')}${renderDashboardCard('In Production',count('PRODUCTION'),'factory','blue')}${renderDashboardCard('Packing',count('PACKING'),'package-check','amber')}${renderDashboardCard('Warehouse Ready',count('WAREHOUSE_READY'),'warehouse','emerald')}${renderDashboardCard('Due within 7 Days',due,'calendar-clock','rose')}</div><div class="bg-white rounded-xl border border-slate-200 overflow-hidden"><div class="p-4 border-b"><div class="font-black">Order Plan</div><div class="text-xs text-slate-500">Prepared by Export from DI — update execution status only</div></div><div class="overflow-x-auto"><table class="ui-table min-w-full text-xs"><thead class="bg-slate-50 text-slate-500"><tr><th class="p-3 text-left">DI</th><th class="p-3 text-left">Product</th><th class="p-3 text-right">Qty</th><th class="p-3 text-left">Target Loading</th><th class="p-3 text-center">Status</th><th class="p-3 text-right">Action</th></tr></thead><tbody>${rows.map(r=>`<tr class="border-t"><td class="p-3 font-black">${r.di.diNo}</td><td class="p-3">${r.product.shortName||r.product.name||'-'}</td><td class="p-3 text-right font-black">${r.qtyMt.toFixed(1)} MT</td><td class="p-3">${r.targetLoadingDate}</td><td class="p-3 text-center">${productionStatusBadge(r.status)}</td><td class="p-3 text-right">${renderProductionOrderAction(r.di)}</td></tr>`).join('')}</tbody></table></div></div><div class="bg-slate-50 rounded-xl border border-slate-200 p-4 text-xs text-slate-600"><strong>Production scope:</strong> View DI plan and update status only. No DI editing, Booking, Truck, Forwarder, Survey, Container/Seal, Payment, Pricing or Commission actions.</div></div>`;
-                lucide.createIcons();
+                const d = hasLive ? ds.data : null;
+                const k = d?.kpis || {};
+                const actions = [
+                    renderDashboardAction('Open Loading Calendar', 'calendar-days', "changeView('calendar')", true),
+                    renderDashboardAction('Production Orders', 'clipboard-list', "changeView('shipping')"),
+                    refreshBtn
+                ].join('');
+                const loadRows = (d?.upcoming_loadings || []).map(row => {
+                    const prodSummary = (row.products || []).map(p => `${escapeDashboardHtml(p.product_code)} (${Number(p.planned_qty_mt || 0).toFixed(1)} MT · ${escapeDashboardHtml(p.packing_snapshot || '-')})`).join('<br>');
+                    return `<tr>
+                        <td class="p-3 font-mono font-bold text-slate-900">${escapeDashboardHtml(row.planned_loading_date || 'TBD')}</td>
+                        <td class="p-3 font-bold">${escapeDashboardHtml(row.container_plan || '-')}</td>
+                        <td class="p-3">${prodSummary || '-'}</td>
+                        <td class="p-3 text-right font-black">${Number(row.planned_qty_mt || 0).toFixed(1)} MT</td>
+                        <td class="p-3 text-center font-mono">${Number(row.actual_container_count || 0)}</td>
+                    </tr>`;
+                }).join('');
+                container.innerHTML = `<div class="space-y-5">
+                    ${renderDashboardHeader('Production & Loading Plan', 'Live D1 Loading Schedule — Container Plan, Products & Planned MT', actions)}
+                    ${errBanner}${loadingBanner}
+                    <div class="grid grid-cols-2 lg:grid-cols-5 gap-3">
+                        ${renderDashboardCard('Loading Today', Number(k.loading_today_count || 0), 'calendar-days', 'emerald')}
+                        ${renderDashboardCard('Due Next 7 Days', Number(k.due_next_7_days_count || 0), 'calendar-clock', 'rose')}
+                        ${renderDashboardCard('Planned Shipments', Number(k.planned_shipments_count || 0), 'clock', 'blue')}
+                        ${renderDashboardCard('Loaded This Month', Number(k.loaded_this_month_count || 0), 'package-check', 'amber')}
+                        ${renderDashboardCard('Upcoming MT', Number(k.upcoming_planned_mt || 0).toFixed(1), 'scale', 'slate')}
+                    </div>
+                    <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+                        <div class="px-4 py-3 border-b border-slate-100"><h3 class="text-sm font-black text-slate-900">Upcoming Loading Schedule</h3><p class="text-[10px] text-slate-400 mt-0.5">Warehouse-scoped loading plan directly from D1</p></div>
+                        <div class="overflow-x-auto"><table class="ui-table w-full text-left text-xs"><thead class="bg-slate-50 text-[10px] uppercase text-slate-500"><tr><th class="p-3">Planned Loading</th><th class="p-3">Container Plan</th><th class="p-3">Products &amp; Packing</th><th class="p-3 text-right">Planned Qty</th><th class="p-3 text-center">Actual Containers</th></tr></thead><tbody class="divide-y divide-slate-100">${loadRows || '<tr><td colspan="5" class="p-6 text-center text-slate-400">No upcoming planned loadings.</td></tr>'}</tbody></table></div>
+                    </div>
+                </div>`;
+                if (typeof lucide !== 'undefined' && lucide.createIcons) lucide.createIcons();
                 return;
             }
         }
