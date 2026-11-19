@@ -99,6 +99,12 @@ export default {
       return createCalendarHandlerFromEnv(env)(request);
     }
 
+    if (url.pathname === '/api/logistics-partners' || url.pathname.startsWith('/api/logistics-partners/')) {
+      if (!env.DB) return jsonResponse({ status: 'ERROR', message: 'D1 DB binding is not configured.' }, 503);
+      const { createLogisticsPartnersHandlerFromEnv } = await import('./logistics-partners/routes.js');
+      return createLogisticsPartnersHandlerFromEnv(env)(request);
+    }
+
     if (url.pathname === '/api/gateway') {
       return jsonResponse({
         status: 'ERROR',

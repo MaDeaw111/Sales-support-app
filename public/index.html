@@ -746,6 +746,8 @@
         async function signOut() {
             const finish = () => {
                 state.currentUser = { id:'', name:'', role:'', email:'', customerScope:'' };
+                state.selectedLogisticsProviderId = null;
+                state.logisticsPartners = { items: [], detail: null, loading: false, detailLoading: false, error: null, loaded: false, statusFilter: 'ALL', search: '' };
                 showLoginScreen('Signed out successfully.');
                 const email = document.getElementById('loginEmail');
                 if (email) email.focus();
@@ -801,6 +803,7 @@
             selectedLogisticsProviderId: null,
             providerDetailTab: 'PROFILE',
             providerTypeFilter: 'ALL',
+            logisticsPartners: { items: [], detail: null, loading: false, detailLoading: false, error: null, loaded: false, statusFilter: 'ALL', search: '' },
             shippingFilter: 'ALL',
             poFilters: { search: '', customerId: 'ALL', productId: 'ALL', status: 'ALL', year: 'ALL' },
             poDocuments: {},
@@ -1089,7 +1092,7 @@
         function canUpdateProductionStatus() { return ['ADMIN','PRODUCTION_WAREHOUSE'].includes(state.currentUser.role); }
         function canEditPayment() { return ['ADMIN','MANAGER','EXPORT'].includes(state.currentUser.role); }
         function canManageTruckAllocation() { return ['ADMIN','EXPORT'].includes(state.currentUser.role); }
-        function canManageLogisticsPartners() { return ['ADMIN','EXPORT'].includes(state.currentUser.role); }
+        function canManageLogisticsPartners() { return ['ADMIN','MANAGER','EXPORT'].includes(state.currentUser?.role); }
         function canManageShipmentPartners() { return ['ADMIN','EXPORT'].includes(state.currentUser.role); }
         function canDeletePayment() { return ['ADMIN','MANAGER'].includes(state.currentUser.role); }
         function canViewPaymentDetail() { return ['ADMIN','MANAGER','SALES_SUPPORT','EXPORT','EXTERNAL_SALES'].includes(state.currentUser.role); }
@@ -1135,6 +1138,7 @@
             state.selectedPoId = null;
             state.selectedShipmentId = null;
             state.selectedDiId = null;
+            state.selectedLogisticsProviderId = null;
             renderSidebar(); 
             renderView(); 
         }
@@ -4379,65 +4383,635 @@
             return [...manual, ...truck, ...forwarder, ...survey].sort((a,b) => String(b.usageDate || '').localeCompare(String(a.usageDate || '')));
         }
 
-        function setProviderTypeFilter(type) { state.providerTypeFilter = type; state.selectedLogisticsProviderId = null; renderView(); }
-        function openLogisticsProvider(providerId) { state.selectedLogisticsProviderId = providerId; state.providerDetailTab = 'PROFILE'; renderView(); }
-        function backToLogisticsProviders() { state.selectedLogisticsProviderId = null; renderView(); }
-        function setProviderDetailTab(tab) { state.providerDetailTab = tab; renderView(); }
+        const LOGISTICS_PARTNER_TYPE_LABELS = {
+            FORWARDER: 'Forwarder',
+            SHIPPING_LINE: 'Shipping Line',
+            TRUCKING: 'Trucking',
+            SURVEYOR: 'Surveyor'
+        };
+        const LOGISTICS_PARTNER_CURRENCIES = ['THB', 'USD', 'EUR'];
+        const LOGISTICS_PARTNER_CONTAINER_SIZES = ['-', '20GP', '40GP', '40HC', 'BULK', 'OTHER'];
+
+        function escapeLogisticsPartnerHtml(value) {
+            return String(value ?? '')
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;')
+                .replace(/'/g, '&#39;');
+        }
+
+        async function loadLogisticsPartnersFromApi(options) {
+            const opts = options || {};
+            if (!state.logisticsPartners) {
+                state.logisticsPartners = { items: [], detail: null, loading: false, detailLoading: false, error: null, loaded: false, statusFilter: 'ALL', search: '' };
+            }
+            const lp = state.logisticsPartners;
+            if (lp.loading && !opts.force) return lp.items;
+            lp.loading = true;
+            lp.error = null;
+
+            const params = new URLSearchParams();
+            const typeFilter = state.providerTypeFilter || 'ALL';
+            const statusFilter = lp.statusFilter || 'ALL';
+            const search = String(lp.search || '').trim();
+            if (typeFilter && typeFilter !== 'ALL') params.set('partnerType', typeFilter);
+            if (statusFilter && statusFilter !== 'ALL') params.set('status', statusFilter);
+            if (search) params.set('search', search);
+
+            const qs = params.toString();
+            const url = qs ? `/api/logistics-partners?${qs}` : '/api/logistics-partners';
+
+            try {
+                const res = await fetch(url);
+                const body = await res.json().catch(() => null);
+                if (!res.ok || body?.status !== 'SUCCESS' || !Array.isArray(body.data?.partners)) {
+                    lp.error = body?.message || 'Failed to load logistics partners.';
+                    return lp.items;
+                }
+                lp.items = body.data.partners;
+                lp.loaded = true;
+                lp.error = null;
+                return lp.items;
+            } catch (err) {
+                lp.error = err?.message || 'Failed to load logistics partners.';
+                return lp.items;
+            } finally {
+                lp.loading = false;
+                if (typeof renderView === 'function') renderView();
+            }
+        }
+
+        async function loadLogisticsPartnerDetailFromApi(partnerId) {
+            const id = String(partnerId || '').trim();
+            if (!id) return null;
+            if (!state.logisticsPartners) {
+                state.logisticsPartners = { items: [], detail: null, loading: false, detailLoading: false, error: null, loaded: false, statusFilter: 'ALL', search: '' };
+            }
+            const lp = state.logisticsPartners;
+            lp.detailLoading = true;
+            lp.error = null;
+            try {
+                const res = await fetch(`/api/logistics-partners/${encodeURIComponent(id)}`);
+                const body = await res.json().catch(() => null);
+                if (!res.ok || body?.status !== 'SUCCESS' || !body.data?.partner) {
+                    lp.error = body?.message || 'Failed to load logistics partner detail.';
+                    return null;
+                }
+                lp.detail = body.data;
+                lp.error = null;
+                return lp.detail;
+            } catch (err) {
+                lp.error = err?.message || 'Failed to load logistics partner detail.';
+                return null;
+            } finally {
+                lp.detailLoading = false;
+                if (typeof renderView === 'function') renderView();
+            }
+        }
+
+        function setProviderTypeFilter(type) {
+            state.providerTypeFilter = type;
+            state.selectedLogisticsProviderId = null;
+            loadLogisticsPartnersFromApi({ force: true });
+            renderView();
+        }
+
+        function setLogisticsPartnerStatusFilter(status) {
+            if (!state.logisticsPartners) {
+                state.logisticsPartners = { items: [], detail: null, loading: false, detailLoading: false, error: null, loaded: false, statusFilter: 'ALL', search: '' };
+            }
+            state.logisticsPartners.statusFilter = status || 'ALL';
+            state.selectedLogisticsProviderId = null;
+            loadLogisticsPartnersFromApi({ force: true });
+            renderView();
+        }
+
+        function setLogisticsPartnerSearch(query) {
+            if (!state.logisticsPartners) {
+                state.logisticsPartners = { items: [], detail: null, loading: false, detailLoading: false, error: null, loaded: false, statusFilter: 'ALL', search: '' };
+            }
+            state.logisticsPartners.search = String(query || '');
+            loadLogisticsPartnersFromApi({ force: true });
+        }
+
+        function openLogisticsProvider(partnerId) {
+            state.selectedLogisticsProviderId = partnerId;
+            state.providerDetailTab = 'PROFILE';
+            if (state.logisticsPartners && state.logisticsPartners.detail?.partner?.partner_id !== partnerId) {
+                state.logisticsPartners.detail = null;
+            }
+            renderView();
+            loadLogisticsPartnerDetailFromApi(partnerId);
+        }
+
+        function backToLogisticsProviders() {
+            state.selectedLogisticsProviderId = null;
+            renderView();
+        }
+
+        function setProviderDetailTab(tab) {
+            state.providerDetailTab = tab;
+            renderView();
+        }
 
         function renderLogisticsPartners(container) {
-            const selected = getProviderById(state.selectedLogisticsProviderId);
-            if (selected) return renderLogisticsProviderDetail(container, selected);
+            if (!state.logisticsPartners) {
+                state.logisticsPartners = { items: [], detail: null, loading: false, detailLoading: false, error: null, loaded: false, statusFilter: 'ALL', search: '' };
+            }
+            if (state.selectedLogisticsProviderId) {
+                return renderLogisticsPartnerDetail(container);
+            }
+            const lp = state.logisticsPartners;
+            if (!lp.loaded && !lp.loading && !lp.error) {
+                loadLogisticsPartnersFromApi();
+            }
+
+            const typeLabel = { FORWARDER: 'Forwarder', SHIPPING_LINE: 'Shipping Line', TRUCKING: 'Trucking', SURVEYOR: 'Surveyor' };
             const filter = state.providerTypeFilter || 'ALL';
-            const providers = (state.logisticsProviders || []).filter(p => filter === 'ALL' || p.providerType === filter);
-            const typeLabel = { TRUCKING:'Trucking', FREIGHT_FORWARDER:'Freight Forwarder', SURVEY:'Survey' };
+            const statusFilter = lp.statusFilter || 'ALL';
+            const search = String(lp.search || '');
+            const searchLower = search.trim().toLowerCase();
+            const partners = (lp.items || []).filter(p => {
+                if (filter !== 'ALL' && p.partner_type !== filter) return false;
+                if (statusFilter !== 'ALL' && p.status !== statusFilter) return false;
+                if (searchLower) {
+                    const hay = `${p.partner_id || ''} ${p.partner_name || ''} ${p.contact_name || ''}`.toLowerCase();
+                    if (!hay.includes(searchLower)) return false;
+                }
+                return true;
+            });
+
+            const typePills = ['ALL', 'FORWARDER', 'SHIPPING_LINE', 'TRUCKING', 'SURVEYOR'].map(x => `
+                <button onclick="setProviderTypeFilter('${x}')" class="px-3 py-1.5 rounded-full border text-[10px] font-bold ${filter === x ? 'bg-slate-900 text-white border-slate-900' : 'bg-white text-slate-600 hover:bg-slate-50'}">
+                    ${x === 'ALL' ? 'All' : typeLabel[x]}
+                </button>
+            `).join('');
+
+            const cardsHtml = lp.loading && !lp.loaded
+                ? `<div class="col-span-full bg-white border rounded-xl p-8 text-center text-xs text-slate-400">Loading logistics partners...</div>`
+                : partners.length
+                    ? partners.map(p => `
+                        <button onclick="openLogisticsProvider('${escapeLogisticsPartnerHtml(p.partner_id)}')" class="text-left bg-white border rounded-xl p-5 hover:border-blue-300 hover:shadow-sm transition-all">
+                            <div class="flex items-start justify-between gap-3">
+                                <div class="min-w-0">
+                                    <div class="text-[10px] font-bold text-blue-600 uppercase">${escapeLogisticsPartnerHtml(typeLabel[p.partner_type] || p.partner_type)} · ${escapeLogisticsPartnerHtml(p.partner_id)}</div>
+                                    <div class="font-black text-slate-900 mt-1 truncate">${escapeLogisticsPartnerHtml(p.partner_name)}</div>
+                                    <div class="text-xs text-slate-500 mt-1 truncate">${escapeLogisticsPartnerHtml(p.contact_name || '-')} · ${escapeLogisticsPartnerHtml(p.contact_phone || '-')}</div>
+                                </div>
+                                <span class="px-2 py-1 rounded text-[9px] font-bold shrink-0 ${p.status === 'ACTIVE' ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-500'}">${escapeLogisticsPartnerHtml(p.status)}</span>
+                            </div>
+                            <div class="grid grid-cols-2 gap-2 mt-4 text-[10px]">
+                                <div class="bg-slate-50 rounded-lg p-2">
+                                    <div class="text-slate-400">Active Rates</div>
+                                    <div class="font-black text-slate-800 mt-1">${Number(p.active_rate_count || 0)}</div>
+                                </div>
+                                <div class="bg-slate-50 rounded-lg p-2">
+                                    <div class="text-slate-400">Usage Records</div>
+                                    <div class="font-black text-slate-800 mt-1">${Number(p.usage_count || 0)}</div>
+                                </div>
+                            </div>
+                        </button>
+                    `).join('')
+                    : `<div class="col-span-full bg-white border rounded-xl p-8 text-center text-xs text-slate-400">No logistics partners found.</div>`;
+
             container.innerHTML = `<div class="space-y-5">
-                <div class="flex flex-col md:flex-row md:items-center justify-between gap-3"><div><h2 class="text-xl font-black text-slate-900">Logistics Partners</h2><p class="text-xs text-slate-500 mt-1">ข้อมูลผู้ให้บริการ Logistics, ราคาอ้างอิง และประวัติการใช้งาน</p></div>${canManageLogisticsPartners()?`<button onclick="openProviderEditor()" class="px-4 py-2 rounded-lg bg-blue-600 text-white text-xs font-bold">+ Add Partner</button>`:''}</div>
-                <div class="flex gap-2 flex-wrap">${['ALL','TRUCKING','FREIGHT_FORWARDER','SURVEY'].map(x=>`<button onclick="setProviderTypeFilter('${x}')" class="px-3 py-1.5 rounded-full border text-[10px] font-bold ${filter===x?'bg-slate-900 text-white border-slate-900':'bg-white text-slate-600'}">${x==='ALL'?'All':typeLabel[x]}</button>`).join('')}</div>
-                <div class="grid md:grid-cols-2 xl:grid-cols-3 gap-4">${providers.map(p=>{ const prices=(state.providerPrices||[]).filter(x=>x.providerId===p.id&&x.status==='ACTIVE'); const usage=getProviderUsage(p.id); return `<button onclick="openLogisticsProvider('${p.id}')" class="text-left bg-white border rounded-xl p-5 hover:border-blue-300 hover:shadow-sm"><div class="flex items-start justify-between gap-3"><div><div class="text-[10px] font-bold text-blue-600 uppercase">${typeLabel[p.providerType]||p.providerType}</div><div class="font-black text-slate-900 mt-1">${p.companyName}</div><div class="text-xs text-slate-500 mt-1">${p.contactPerson||'-'} · ${p.phone||'-'}</div></div><span class="px-2 py-1 rounded text-[9px] font-bold ${p.status==='ACTIVE'?'bg-emerald-100 text-emerald-700':'bg-slate-100 text-slate-500'}">${p.status}</span></div><div class="grid grid-cols-2 gap-2 mt-4 text-[10px]"><div class="bg-slate-50 rounded-lg p-2"><div class="text-slate-400">Active Prices</div><div class="font-black text-slate-800 mt-1">${prices.length}</div></div><div class="bg-slate-50 rounded-lg p-2"><div class="text-slate-400">Usage Records</div><div class="font-black text-slate-800 mt-1">${usage.length}</div></div></div></button>`;}).join('')}</div>
+                <div class="flex flex-col md:flex-row md:items-center justify-between gap-3">
+                    <div>
+                        <h2 class="text-xl font-black text-slate-900">Logistics Partners</h2>
+                        <p class="text-xs text-slate-500 mt-1">ข้อมูลผู้ให้บริการ Logistics (Forwarder / Shipping Line / Trucking / Surveyor), ราคาอ้างอิง และประวัติการใช้งานจริงจาก Shipping/DI</p>
+                    </div>
+                    <div class="flex items-center gap-2">
+                        <button onclick="loadLogisticsPartnersFromApi({ force: true })" class="px-3 py-2 rounded-lg border bg-white text-slate-600 text-xs font-bold hover:bg-slate-50">Refresh</button>
+                        ${canManageLogisticsPartners() ? `<button onclick="openProviderEditor()" class="px-4 py-2 rounded-lg bg-blue-600 text-white text-xs font-bold hover:bg-blue-700">+ Add Partner</button>` : ''}
+                    </div>
+                </div>
+                ${lp.error ? `<div class="bg-rose-50 border border-rose-200 text-rose-700 rounded-xl px-4 py-3 text-xs font-bold">${escapeLogisticsPartnerHtml(lp.error)}</div>` : ''}
+                <div class="flex flex-col md:flex-row md:items-center justify-between gap-3">
+                    <div class="flex gap-2 flex-wrap">${typePills}</div>
+                    <div class="flex items-center gap-2">
+                        <select onchange="setLogisticsPartnerStatusFilter(this.value)" class="border rounded-lg px-3 py-1.5 bg-white text-xs font-bold text-slate-700">
+                            <option value="ALL" ${statusFilter === 'ALL' ? 'selected' : ''}>All Status</option>
+                            <option value="ACTIVE" ${statusFilter === 'ACTIVE' ? 'selected' : ''}>ACTIVE</option>
+                            <option value="INACTIVE" ${statusFilter === 'INACTIVE' ? 'selected' : ''}>INACTIVE</option>
+                        </select>
+                        <input type="search" value="${escapeLogisticsPartnerHtml(search)}" onchange="setLogisticsPartnerSearch(this.value)" placeholder="Search name, ID, contact..." class="border rounded-lg px-3 py-1.5 bg-white text-xs w-52">
+                    </div>
+                </div>
+                <div class="grid md:grid-cols-2 xl:grid-cols-3 gap-4">${cardsHtml}</div>
             </div>`;
         }
 
-        function renderLogisticsProviderDetail(container, provider) {
+        function renderLogisticsPartnerDetail(container) {
+            const lp = state.logisticsPartners || { items: [], detail: null, detailLoading: false, error: null };
+            const selectedId = state.selectedLogisticsProviderId;
+            const detail = lp.detail && (!selectedId || lp.detail.partner?.partner_id === selectedId) ? lp.detail : null;
+
+            if (!detail) {
+                if (selectedId && !lp.detailLoading) {
+                    loadLogisticsPartnerDetailFromApi(selectedId);
+                }
+                container.innerHTML = `<div class="space-y-4">
+                    <button onclick="backToLogisticsProviders()" class="text-xs font-bold text-slate-500 hover:text-slate-800">← Back to Logistics Partners</button>
+                    ${lp.error
+                        ? `<div class="bg-rose-50 border border-rose-200 text-rose-700 rounded-xl p-6 text-xs font-bold">${escapeLogisticsPartnerHtml(lp.error)}</div>`
+                        : `<div class="bg-white border rounded-xl p-8 text-center text-xs text-slate-400">Loading partner detail...</div>`}
+                </div>`;
+                return;
+            }
+
+            const partner = detail.partner;
+            const rates = Array.isArray(detail.rates) ? detail.rates : [];
+            const usage = Array.isArray(detail.usage) ? detail.usage : [];
             const tab = state.providerDetailTab || 'PROFILE';
-            const prices = (state.providerPrices || []).filter(x => x.providerId === provider.id).sort((a,b)=>String(b.effectiveDate||'').localeCompare(String(a.effectiveDate||'')));
-            const usage = getProviderUsage(provider.id);
-            const tabBtn = (id,label)=>`<button onclick="setProviderDetailTab('${id}')" class="px-3 py-2 text-xs font-bold border-b-2 ${tab===id?'border-blue-600 text-blue-600':'border-transparent text-slate-500'}">${label}</button>`;
+            const today = getTodayIso();
+            const canWrite = canManageLogisticsPartners();
+            const typeLabel = { FORWARDER: 'Forwarder', SHIPPING_LINE: 'Shipping Line', TRUCKING: 'Trucking', SURVEYOR: 'Surveyor' };
+            const tabBtn = (id, label) => `<button onclick="setProviderDetailTab('${id}')" class="px-3 py-2 text-xs font-bold border-b-2 ${tab === id ? 'border-blue-600 text-blue-600' : 'border-transparent text-slate-500 hover:text-slate-700'}">${label}</button>`;
+
             let body = '';
-            if (tab === 'PROFILE') body = `<div class="grid md:grid-cols-2 gap-4 text-xs"><div><div class="text-slate-400">Company Name</div><div class="font-bold mt-1">${provider.companyName}</div></div><div><div class="text-slate-400">Provider Type</div><div class="font-bold mt-1">${provider.providerType}</div></div><div><div class="text-slate-400">Contact</div><div class="font-bold mt-1">${provider.contactPerson||'-'} · ${provider.phone||'-'}</div></div><div><div class="text-slate-400">Email</div><div class="font-bold mt-1">${provider.email||'-'}</div></div><div><div class="text-slate-400">Tax ID</div><div class="font-bold mt-1">${provider.taxId||'-'}</div></div><div><div class="text-slate-400">Status</div><div class="font-bold mt-1">${provider.status}</div></div><div class="md:col-span-2"><div class="text-slate-400">Address</div><div class="font-bold mt-1">${provider.address||'-'}</div></div><div class="md:col-span-2"><div class="text-slate-400">Note</div><div class="font-bold mt-1">${provider.note||'-'}</div></div></div>`;
-            if (tab === 'PRICE') body = `<div class="space-y-3">${canManageLogisticsPartners()?`<div class="flex justify-end"><button onclick="openProviderPriceEditor('${provider.id}')" class="px-3 py-2 rounded-lg bg-blue-600 text-white text-xs font-bold">+ Add Price</button></div>`:''}<div class="overflow-x-auto border rounded-xl"><table class="ui-table w-full text-xs"><thead class="bg-slate-50 text-slate-500"><tr><th class="p-3 text-left">Service</th><th class="p-3 text-left">Route / Scope</th><th class="p-3">Container</th><th class="p-3 text-right">Price</th><th class="p-3">Effective</th><th class="p-3">Valid Until</th></tr></thead><tbody class="divide-y">${prices.map(x=>`<tr><td class="p-3 font-bold">${x.serviceType}</td><td class="p-3">${x.routeScope||'-'}</td><td class="p-3 text-center">${x.containerSize||'-'}</td><td class="p-3 text-right font-black">${x.currency} ${Number(x.price||0).toLocaleString()}<div class="text-[9px] text-slate-400">${x.unit}</div></td><td class="p-3 text-center">${x.effectiveDate||'-'}</td><td class="p-3 text-center">${x.validUntil||'-'}</td></tr>`).join('') || `<tr><td colspan="6" class="p-6 text-center text-slate-400">No price history</td></tr>`}</tbody></table></div></div>`;
-            if (tab === 'USAGE') body = `<div class="overflow-x-auto border rounded-xl"><table class="ui-table w-full text-xs"><thead class="bg-slate-50 text-slate-500"><tr><th class="p-3 text-left">Date</th><th class="p-3 text-left">Reference</th><th class="p-3 text-left">Service</th><th class="p-3 text-right">Qty</th><th class="p-3 text-right">Price Snapshot</th><th class="p-3 text-left">Note</th></tr></thead><tbody class="divide-y">${usage.map(x=>`<tr><td class="p-3">${x.usageDate||'-'}</td><td class="p-3 font-bold">${x.reference||'-'}</td><td class="p-3">${x.serviceType||'-'}</td><td class="p-3 text-right">${x.qty||'-'} ${x.unit||''}</td><td class="p-3 text-right font-bold">${x.priceSnapshot?`${x.currency||''} ${Number(x.priceSnapshot).toLocaleString()}`:'-'}</td><td class="p-3">${x.note||'-'}</td></tr>`).join('') || `<tr><td colspan="6" class="p-6 text-center text-slate-400">No usage history</td></tr>`}</tbody></table></div>`;
-            container.innerHTML = `<div class="space-y-5"><div class="flex items-start justify-between gap-4"><div><button onclick="backToLogisticsProviders()" class="text-xs font-bold text-slate-500">← Back</button><h2 class="text-xl font-black text-slate-900 mt-2">${provider.companyName}</h2><p class="text-xs text-slate-500 mt-1">${provider.code} · ${provider.providerType}</p></div>${canManageLogisticsPartners()?`<button onclick="openProviderEditor('${provider.id}')" class="px-3 py-2 rounded-lg border text-xs font-bold">Edit Profile</button>`:''}</div><div class="bg-white border rounded-xl"><div class="px-5 pt-2 border-b flex gap-2">${tabBtn('PROFILE','Profile')}${tabBtn('PRICE','Price History')}${tabBtn('USAGE','Usage History')}</div><div class="p-5">${body}</div></div></div>`;
+            if (tab === 'PROFILE') {
+                body = `<div class="grid md:grid-cols-2 gap-4 text-xs">
+                    <div><div class="text-slate-400">Partner Name</div><div class="font-bold text-slate-900 mt-1">${escapeLogisticsPartnerHtml(partner.partner_name)}</div></div>
+                    <div><div class="text-slate-400">Partner Type</div><div class="font-bold text-slate-900 mt-1">${escapeLogisticsPartnerHtml(typeLabel[partner.partner_type] || partner.partner_type)}</div></div>
+                    <div><div class="text-slate-400">Contact Person</div><div class="font-bold text-slate-900 mt-1">${escapeLogisticsPartnerHtml(partner.contact_name || '-')}</div></div>
+                    <div><div class="text-slate-400">Phone</div><div class="font-bold text-slate-900 mt-1">${escapeLogisticsPartnerHtml(partner.contact_phone || '-')}</div></div>
+                    <div><div class="text-slate-400">Email</div><div class="font-bold text-slate-900 mt-1">${escapeLogisticsPartnerHtml(partner.contact_email || '-')}</div></div>
+                    <div><div class="text-slate-400">Tax ID</div><div class="font-bold text-slate-900 mt-1">${escapeLogisticsPartnerHtml(partner.tax_id || '-')}</div></div>
+                    <div><div class="text-slate-400">Status</div><div class="mt-1"><span class="px-2 py-0.5 rounded text-[10px] font-bold ${partner.status === 'ACTIVE' ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-500'}">${escapeLogisticsPartnerHtml(partner.status)}</span></div></div>
+                    <div><div class="text-slate-400">Partner ID</div><div class="font-mono font-bold text-slate-700 mt-1">${escapeLogisticsPartnerHtml(partner.partner_id)}</div></div>
+                    <div class="md:col-span-2"><div class="text-slate-400">Address</div><div class="font-bold text-slate-900 mt-1">${escapeLogisticsPartnerHtml(partner.address || '-')}</div></div>
+                    <div class="md:col-span-2"><div class="text-slate-400">Note</div><div class="font-bold text-slate-900 mt-1 whitespace-pre-line">${escapeLogisticsPartnerHtml(partner.note || '-')}</div></div>
+                </div>`;
+            } else if (tab === 'PRICE') {
+                const rateRows = rates.map(r => {
+                    const isExpired = Boolean(r.valid_until && r.valid_until < today);
+                    const nextStatus = r.status === 'ACTIVE' ? 'INACTIVE' : 'ACTIVE';
+                    return `<tr>
+                        <td class="p-3 font-bold text-slate-900">${escapeLogisticsPartnerHtml(r.service_type)}${r.note ? `<div class="text-[10px] font-normal text-slate-400 mt-0.5">${escapeLogisticsPartnerHtml(r.note)}</div>` : ''}</td>
+                        <td class="p-3 text-slate-600">${escapeLogisticsPartnerHtml(r.route_scope || '-')}</td>
+                        <td class="p-3 text-center font-mono">${escapeLogisticsPartnerHtml(r.container_size || '-')}</td>
+                        <td class="p-3 text-right font-black text-slate-900">${escapeLogisticsPartnerHtml(r.currency)} ${Number(r.price || 0).toLocaleString()}<div class="text-[9px] font-normal text-slate-400">${escapeLogisticsPartnerHtml(r.unit)}</div></td>
+                        <td class="p-3 text-center font-mono">${escapeLogisticsPartnerHtml(r.effective_date || '-')}</td>
+                        <td class="p-3 text-center font-mono">${escapeLogisticsPartnerHtml(r.valid_until || '-')}${isExpired ? `<div><span class="inline-block mt-1 px-1.5 py-0.5 rounded bg-amber-100 text-amber-800 text-[9px] font-black">Expired</span></div>` : ''}</td>
+                        <td class="p-3 text-center"><span class="px-2 py-0.5 rounded text-[9px] font-bold ${r.status === 'ACTIVE' ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-500'}">${escapeLogisticsPartnerHtml(r.status)}</span></td>
+                        ${canWrite ? `<td class="p-3 text-right whitespace-nowrap space-x-1">
+                            <button onclick="openProviderPriceEditor('${escapeLogisticsPartnerHtml(partner.partner_id)}','${escapeLogisticsPartnerHtml(r.rate_id)}')" class="px-2 py-1 rounded border text-[10px] font-bold hover:bg-slate-50">Edit</button>
+                            <button onclick="toggleLogisticsPartnerRateStatus('${escapeLogisticsPartnerHtml(partner.partner_id)}','${escapeLogisticsPartnerHtml(r.rate_id)}','${nextStatus}')" class="px-2 py-1 rounded border text-[10px] font-bold ${r.status === 'ACTIVE' ? 'text-rose-600 hover:bg-rose-50' : 'text-emerald-700 hover:bg-emerald-50'}">${r.status === 'ACTIVE' ? 'Deactivate' : 'Activate'}</button>
+                        </td>` : ''}
+                    </tr>`;
+                }).join('');
+                body = `<div class="space-y-3">
+                    ${canWrite ? `<div class="flex justify-end"><button onclick="openProviderPriceEditor('${escapeLogisticsPartnerHtml(partner.partner_id)}')" class="px-3 py-2 rounded-lg bg-blue-600 text-white text-xs font-bold hover:bg-blue-700">+ Add Rate</button></div>` : ''}
+                    <div class="overflow-x-auto border rounded-xl">
+                        <table class="ui-table w-full text-xs">
+                            <thead class="bg-slate-50 text-slate-500">
+                                <tr>
+                                    <th class="p-3 text-left">Service</th>
+                                    <th class="p-3 text-left">Route / Scope</th>
+                                    <th class="p-3">Container</th>
+                                    <th class="p-3 text-right">Price</th>
+                                    <th class="p-3">Effective</th>
+                                    <th class="p-3">Valid Until</th>
+                                    <th class="p-3">Status</th>
+                                    ${canWrite ? `<th class="p-3 text-right">Actions</th>` : ''}
+                                </tr>
+                            </thead>
+                            <tbody class="divide-y">${rateRows || `<tr><td colspan="${canWrite ? 8 : 7}" class="p-6 text-center text-slate-400">No reference rates recorded yet.</td></tr>`}</tbody>
+                        </table>
+                    </div>
+                </div>`;
+            } else if (tab === 'USAGE') {
+                const usageRows = usage.map(u => `<tr>
+                    <td class="p-3 font-mono">${escapeLogisticsPartnerHtml(u.usage_date || '-')}</td>
+                    <td class="p-3 font-bold text-slate-900">${escapeLogisticsPartnerHtml(u.di_no || u.di_id)}</td>
+                    <td class="p-3">${escapeLogisticsPartnerHtml(u.customer_name || '-')}</td>
+                    <td class="p-3"><span class="px-2 py-0.5 rounded bg-blue-50 text-blue-700 text-[10px] font-bold">${escapeLogisticsPartnerHtml(typeLabel[u.partner_role] || u.partner_role)}</span></td>
+                    <td class="p-3 font-mono">${escapeLogisticsPartnerHtml(u.booking_no || '-')}</td>
+                    <td class="p-3">${escapeLogisticsPartnerHtml(u.vessel || '-')}</td>
+                    <td class="p-3">${escapeLogisticsPartnerHtml(u.container_plan || '-')} <span class="text-[10px] text-slate-400">(${Number(u.actual_container_count || 0)} actual)</span></td>
+                    <td class="p-3 text-center"><span class="px-2 py-0.5 rounded bg-slate-100 text-slate-700 text-[10px] font-bold">${escapeLogisticsPartnerHtml(u.shipment_status || u.di_status || '-')}</span></td>
+                    <td class="p-3 text-right">${u.di_id ? `<button onclick="openPhase6ShipmentFromCalendar('${escapeLogisticsPartnerHtml(u.di_id)}')" class="px-2.5 py-1 rounded-lg bg-blue-600 text-white text-[10px] font-bold hover:bg-blue-700">Open Shipment</button>` : '-'}</td>
+                </tr>`).join('');
+                body = `<div class="overflow-x-auto border rounded-xl">
+                    <table class="ui-table w-full text-xs">
+                        <thead class="bg-slate-50 text-slate-500">
+                            <tr>
+                                <th class="p-3 text-left">Date</th>
+                                <th class="p-3 text-left">DI No.</th>
+                                <th class="p-3 text-left">Customer</th>
+                                <th class="p-3 text-left">Role</th>
+                                <th class="p-3 text-left">Booking</th>
+                                <th class="p-3 text-left">Vessel</th>
+                                <th class="p-3 text-left">Container Plan</th>
+                                <th class="p-3">Status</th>
+                                <th class="p-3 text-right">Shipment</th>
+                            </tr>
+                        </thead>
+                        <tbody class="divide-y">${usageRows || `<tr><td colspan="9" class="p-6 text-center text-slate-400">No live Phase 6 shipment usage recorded yet.</td></tr>`}</tbody>
+                    </table>
+                </div>`;
+            }
+
+            container.innerHTML = `<div class="space-y-5">
+                <div class="flex items-start justify-between gap-4">
+                    <div>
+                        <button onclick="backToLogisticsProviders()" class="text-xs font-bold text-slate-500 hover:text-slate-800">← Back to Logistics Partners</button>
+                        <div class="flex items-center gap-2 mt-2">
+                            <h2 class="text-xl font-black text-slate-900">${escapeLogisticsPartnerHtml(partner.partner_name)}</h2>
+                            <span class="px-2 py-0.5 rounded text-[10px] font-bold ${partner.status === 'ACTIVE' ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-500'}">${escapeLogisticsPartnerHtml(partner.status)}</span>
+                        </div>
+                        <p class="text-xs text-slate-500 mt-1">${escapeLogisticsPartnerHtml(partner.partner_id)} · ${escapeLogisticsPartnerHtml(typeLabel[partner.partner_type] || partner.partner_type)}</p>
+                    </div>
+                    ${canWrite ? `<button onclick="openProviderEditor('${escapeLogisticsPartnerHtml(partner.partner_id)}')" class="px-3 py-2 rounded-lg border bg-white text-xs font-bold hover:bg-slate-50">Edit Profile</button>` : ''}
+                </div>
+                <div class="bg-white border rounded-xl">
+                    <div class="px-5 pt-2 border-b flex gap-2">
+                        ${tabBtn('PROFILE', 'Profile')}
+                        ${tabBtn('PRICE', `Rate History (${rates.length})`)}
+                        ${tabBtn('USAGE', `Usage History (${usage.length})`)}
+                    </div>
+                    <div class="p-5">${body}</div>
+                </div>
+            </div>`;
         }
 
-        function openProviderEditor(providerId='') {
-            if (!canManageLogisticsPartners()) return alert('เฉพาะ Export หรือ Admin สามารถแก้ไข Logistics Partner ได้');
-            const cur = getProviderById(providerId) || {};
-            openModal(`<div class="p-6 max-w-2xl"><div class="flex justify-between gap-4"><div><h3 class="font-black">${providerId?'Edit':'Add'} Logistics Partner</h3><p class="text-xs text-slate-500 mt-1">Truck / Freight Forwarder / Survey master</p></div><button onclick="closeModal()">✕</button></div><input id="lgpId" type="hidden" value="${cur.id||''}"><div class="grid md:grid-cols-2 gap-4 mt-5 text-xs"><label class="md:col-span-2">Company Name<input id="lgpName" class="mt-1 w-full border rounded-lg px-3 py-2" value="${cur.companyName||''}"></label><label>Provider Type<select id="lgpType" class="mt-1 w-full border rounded-lg px-3 py-2">${['TRUCKING','FREIGHT_FORWARDER','SURVEY'].map(x=>`<option ${cur.providerType===x?'selected':''}>${x}</option>`).join('')}</select></label><label>Status<select id="lgpStatus" class="mt-1 w-full border rounded-lg px-3 py-2">${['ACTIVE','INACTIVE'].map(x=>`<option ${cur.status===x?'selected':''}>${x}</option>`).join('')}</select></label><label>Contact Person<input id="lgpContact" class="mt-1 w-full border rounded-lg px-3 py-2" value="${cur.contactPerson||''}"></label><label>Phone<input id="lgpPhone" class="mt-1 w-full border rounded-lg px-3 py-2" value="${cur.phone||''}"></label><label>Email<input id="lgpEmail" class="mt-1 w-full border rounded-lg px-3 py-2" value="${cur.email||''}"></label><label>Tax ID<input id="lgpTax" class="mt-1 w-full border rounded-lg px-3 py-2" value="${cur.taxId||''}"></label><label class="md:col-span-2">Address<input id="lgpAddress" class="mt-1 w-full border rounded-lg px-3 py-2" value="${cur.address||''}"></label><label class="md:col-span-2">Note<textarea id="lgpNote" class="mt-1 w-full border rounded-lg px-3 py-2" rows="2">${cur.note||''}</textarea></label></div><div class="mt-5 flex justify-end gap-2"><button onclick="closeModal()" class="px-4 py-2 border rounded-lg text-xs font-bold">Cancel</button><button onclick="saveProviderPrototype()" class="px-4 py-2 bg-blue-600 text-white rounded-lg text-xs font-bold">Save Partner</button></div></div>`);
+        function openLogisticsPartnerModal(partnerId = '') {
+            return openProviderEditor(partnerId);
         }
 
-        function saveProviderPrototype() {
+        function openProviderEditor(partnerId = '') {
+            if (!canManageLogisticsPartners()) return alert('Only Admin, Manager, or Export can create or edit Logistics Partners.');
+            const detailPartner = state.logisticsPartners?.detail?.partner;
+            const listPartner = (state.logisticsPartners?.items || []).find(p => p.partner_id === partnerId);
+            const cur = partnerId ? (detailPartner?.partner_id === partnerId ? detailPartner : listPartner) || {} : {};
+            const isEdit = Boolean(partnerId);
+            const typeOptions = [
+                ['FORWARDER', 'Forwarder'],
+                ['SHIPPING_LINE', 'Shipping Line'],
+                ['TRUCKING', 'Trucking'],
+                ['SURVEYOR', 'Surveyor']
+            ].map(([val, label]) => `<option value="${val}" ${(cur.partner_type || 'FORWARDER') === val ? 'selected' : ''}>${label}</option>`).join('');
+
+            openModal(`<div class="p-2 max-w-2xl">
+                <div class="flex justify-between gap-4">
+                    <div>
+                        <h3 class="font-black text-slate-900">${isEdit ? 'Edit' : 'Add'} Logistics Partner</h3>
+                        <p class="text-xs text-slate-500 mt-1">Shared partner master for Logistics Partners &amp; Shipping / DI</p>
+                    </div>
+                    <button onclick="closeModal()" class="text-slate-400 hover:text-slate-700 font-bold">✕</button>
+                </div>
+                <div class="grid md:grid-cols-2 gap-4 mt-5 text-xs">
+                    <label class="md:col-span-2 font-bold text-slate-700">Partner Name *
+                        <input id="lgpName" class="mt-1 w-full border rounded-lg px-3 py-2 font-normal" value="${escapeLogisticsPartnerHtml(cur.partner_name || '')}">
+                    </label>
+                    <label class="font-bold text-slate-700">Partner Type *
+                        <select id="lgpType" ${isEdit ? 'disabled' : ''} class="mt-1 w-full border rounded-lg px-3 py-2 font-normal ${isEdit ? 'bg-slate-100 text-slate-500 cursor-not-allowed' : 'bg-white'}">${typeOptions}</select>
+                        ${isEdit ? `<span class="block text-[10px] font-normal text-slate-400 mt-1">Partner type is immutable after creation.</span>` : ''}
+                    </label>
+                    <label class="font-bold text-slate-700">Status
+                        <select id="lgpStatus" class="mt-1 w-full border rounded-lg px-3 py-2 font-normal bg-white">
+                            <option value="ACTIVE" ${(cur.status || 'ACTIVE') === 'ACTIVE' ? 'selected' : ''}>ACTIVE</option>
+                            <option value="INACTIVE" ${cur.status === 'INACTIVE' ? 'selected' : ''}>INACTIVE</option>
+                        </select>
+                    </label>
+                    <label class="font-bold text-slate-700">Contact Person
+                        <input id="lgpContact" class="mt-1 w-full border rounded-lg px-3 py-2 font-normal" value="${escapeLogisticsPartnerHtml(cur.contact_name || '')}">
+                    </label>
+                    <label class="font-bold text-slate-700">Phone
+                        <input id="lgpPhone" class="mt-1 w-full border rounded-lg px-3 py-2 font-normal" value="${escapeLogisticsPartnerHtml(cur.contact_phone || '')}">
+                    </label>
+                    <label class="font-bold text-slate-700">Email
+                        <input id="lgpEmail" type="email" class="mt-1 w-full border rounded-lg px-3 py-2 font-normal" value="${escapeLogisticsPartnerHtml(cur.contact_email || '')}">
+                    </label>
+                    <label class="font-bold text-slate-700">Tax ID
+                        <input id="lgpTax" class="mt-1 w-full border rounded-lg px-3 py-2 font-normal" value="${escapeLogisticsPartnerHtml(cur.tax_id || '')}">
+                    </label>
+                    <label class="md:col-span-2 font-bold text-slate-700">Address
+                        <input id="lgpAddress" class="mt-1 w-full border rounded-lg px-3 py-2 font-normal" value="${escapeLogisticsPartnerHtml(cur.address || '')}">
+                    </label>
+                    <label class="md:col-span-2 font-bold text-slate-700">Note
+                        <textarea id="lgpNote" class="mt-1 w-full border rounded-lg px-3 py-2 font-normal" rows="2">${escapeLogisticsPartnerHtml(cur.note || '')}</textarea>
+                    </label>
+                </div>
+                <div id="lgpFormError" class="hidden mt-4 text-xs font-bold text-rose-700 bg-rose-50 border border-rose-200 rounded-lg px-3 py-2"></div>
+                <div class="mt-5 flex justify-end gap-2">
+                    <button onclick="closeModal()" class="px-4 py-2 border rounded-lg text-xs font-bold">Cancel</button>
+                    <button onclick="saveLogisticsPartnerToApi('${escapeLogisticsPartnerHtml(partnerId)}')" class="px-4 py-2 bg-blue-600 text-white rounded-lg text-xs font-bold hover:bg-blue-700">Save Partner</button>
+                </div>
+            </div>`);
+        }
+
+        async function saveLogisticsPartnerToApi(partnerId = '') {
             if (!canManageLogisticsPartners()) return;
-            const id = document.getElementById('lgpId')?.value || '';
-            const name = (document.getElementById('lgpName')?.value || '').trim();
-            if (!name) return alert('กรุณาระบุ Company Name');
-            const row = { id: id || `LGP-${String((state.logisticsProviders||[]).length+1).padStart(3,'0')}`, code: getProviderById(id)?.code || `LGP-${String((state.logisticsProviders||[]).length+1).padStart(3,'0')}`, companyName:name, providerType:document.getElementById('lgpType')?.value||'TRUCKING', contactPerson:document.getElementById('lgpContact')?.value||'', phone:document.getElementById('lgpPhone')?.value||'', email:document.getElementById('lgpEmail')?.value||'', address:document.getElementById('lgpAddress')?.value||'', taxId:document.getElementById('lgpTax')?.value||'', status:document.getElementById('lgpStatus')?.value||'ACTIVE', note:document.getElementById('lgpNote')?.value||'' };
-            state.logisticsProviders = state.logisticsProviders || [];
-            const idx = state.logisticsProviders.findIndex(x=>x.id===row.id); if(idx>=0) state.logisticsProviders[idx]=row; else state.logisticsProviders.push(row);
-            state.selectedLogisticsProviderId = row.id; closeModal(); renderView();
+            const errorEl = document.getElementById('lgpFormError');
+            const showErr = (msg) => {
+                if (!errorEl) return;
+                errorEl.textContent = msg || '';
+                if (msg) errorEl.classList.remove('hidden');
+                else errorEl.classList.add('hidden');
+            };
+            showErr('');
+
+            const partnerName = String(document.getElementById('lgpName')?.value || '').trim();
+            if (!partnerName) return showErr('Partner Name is required.');
+
+            const payload = {
+                partnerName,
+                status: document.getElementById('lgpStatus')?.value || 'ACTIVE',
+                contactName: document.getElementById('lgpContact')?.value || '',
+                contactPhone: document.getElementById('lgpPhone')?.value || '',
+                contactEmail: document.getElementById('lgpEmail')?.value || '',
+                taxId: document.getElementById('lgpTax')?.value || '',
+                address: document.getElementById('lgpAddress')?.value || '',
+                note: document.getElementById('lgpNote')?.value || ''
+            };
+            if (!partnerId) {
+                payload.partnerType = document.getElementById('lgpType')?.value || 'FORWARDER';
+            }
+
+            const url = partnerId
+                ? `/api/logistics-partners/${encodeURIComponent(partnerId)}`
+                : '/api/logistics-partners';
+            const method = partnerId ? 'PUT' : 'POST';
+
+            try {
+                const res = await fetch(url, {
+                    method,
+                    headers: { 'content-type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+                const body = await res.json().catch(() => null);
+                if (!res.ok || body?.status !== 'SUCCESS' || !body.data?.partner) {
+                    return showErr(body?.message || 'Failed to save logistics partner.');
+                }
+                const savedId = body.data.partner.partner_id;
+                state.selectedLogisticsProviderId = savedId;
+                closeModal();
+                await Promise.all([
+                    loadLogisticsPartnersFromApi({ force: true }),
+                    loadLogisticsPartnerDetailFromApi(savedId),
+                    typeof loadPhase6ServicePartnersFromApi === 'function' ? loadPhase6ServicePartnersFromApi() : Promise.resolve()
+                ]);
+            } catch (err) {
+                showErr(err?.message || 'Failed to save logistics partner.');
+            }
         }
 
-        function openProviderPriceEditor(providerId) {
+        function openProviderPriceEditor(partnerId, rateId = '') {
             if (!canManageLogisticsPartners()) return;
-            const provider = getProviderById(providerId); if (!provider) return;
-            openModal(`<div class="p-6 max-w-2xl"><div class="flex justify-between"><div><h3 class="font-black">Add Price</h3><p class="text-xs text-slate-500 mt-1">${provider.companyName}</p></div><button onclick="closeModal()">✕</button></div><div class="grid md:grid-cols-2 gap-4 mt-5 text-xs"><label>Service Type<input id="lgpPriceService" class="mt-1 w-full border rounded-lg px-3 py-2" value="${provider.providerType==='TRUCKING'?'Container Trucking':provider.providerType==='SURVEY'?'Stuffing Survey':'Ocean Freight'}"></label><label>Route / Scope<input id="lgpPriceRoute" class="mt-1 w-full border rounded-lg px-3 py-2"></label><label>Container Size<input id="lgpPriceContainer" class="mt-1 w-full border rounded-lg px-3 py-2" value="-"></label><label>Unit<input id="lgpPriceUnit" class="mt-1 w-full border rounded-lg px-3 py-2" value="THB / Container"></label><label>Price<input id="lgpPriceValue" type="number" step="0.01" class="mt-1 w-full border rounded-lg px-3 py-2"></label><label>Currency<select id="lgpPriceCurrency" class="mt-1 w-full border rounded-lg px-3 py-2"><option>THB</option><option>USD</option><option>EUR</option></select></label><label>Effective Date<input id="lgpPriceEffective" type="date" class="mt-1 w-full border rounded-lg px-3 py-2" value="${getTodayIso()}"></label><label>Valid Until<input id="lgpPriceValid" type="date" class="mt-1 w-full border rounded-lg px-3 py-2"></label></div><div class="mt-5 flex justify-end gap-2"><button onclick="closeModal()" class="px-4 py-2 border rounded-lg text-xs font-bold">Cancel</button><button onclick="saveProviderPricePrototype('${providerId}')" class="px-4 py-2 bg-blue-600 text-white rounded-lg text-xs font-bold">Save Price</button></div></div>`);
+            const detail = state.logisticsPartners?.detail;
+            const partner = detail?.partner?.partner_id === partnerId
+                ? detail.partner
+                : (state.logisticsPartners?.items || []).find(p => p.partner_id === partnerId);
+            if (!partner) return;
+            const cur = rateId ? (detail?.rates || []).find(r => r.rate_id === rateId) || {} : {};
+            const defaultService = partner.partner_type === 'TRUCKING'
+                ? 'Container Trucking'
+                : partner.partner_type === 'SURVEYOR'
+                    ? 'Stuffing Survey'
+                    : partner.partner_type === 'SHIPPING_LINE'
+                        ? 'Ocean Freight'
+                        : 'Export Clearance';
+
+            const sizeOptions = ['-', '20GP', '40GP', '40HC', 'BULK', 'OTHER']
+                .map(s => `<option value="${s}" ${(cur.container_size || '-') === s ? 'selected' : ''}>${s}</option>`).join('');
+            const currencyOptions = ['THB', 'USD', 'EUR']
+                .map(c => `<option value="${c}" ${(cur.currency || 'THB') === c ? 'selected' : ''}>${c}</option>`).join('');
+
+            openModal(`<div class="p-2 max-w-2xl">
+                <div class="flex justify-between gap-4">
+                    <div>
+                        <h3 class="font-black text-slate-900">${rateId ? 'Edit' : 'Add'} Reference Rate</h3>
+                        <p class="text-xs text-slate-500 mt-1">${escapeLogisticsPartnerHtml(partner.partner_name)} (${escapeLogisticsPartnerHtml(partner.partner_id)})</p>
+                    </div>
+                    <button onclick="closeModal()" class="text-slate-400 hover:text-slate-700 font-bold">✕</button>
+                </div>
+                <div class="grid md:grid-cols-2 gap-4 mt-5 text-xs">
+                    <label class="font-bold text-slate-700">Service Type *
+                        <input id="lgpRateService" class="mt-1 w-full border rounded-lg px-3 py-2 font-normal" value="${escapeLogisticsPartnerHtml(cur.service_type || defaultService)}">
+                    </label>
+                    <label class="font-bold text-slate-700">Route / Scope
+                        <input id="lgpRateRoute" class="mt-1 w-full border rounded-lg px-3 py-2 font-normal" value="${escapeLogisticsPartnerHtml(cur.route_scope || '')}">
+                    </label>
+                    <label class="font-bold text-slate-700">Container Size
+                        <select id="lgpRateContainer" class="mt-1 w-full border rounded-lg px-3 py-2 font-normal bg-white">${sizeOptions}</select>
+                    </label>
+                    <label class="font-bold text-slate-700">Unit *
+                        <input id="lgpRateUnit" class="mt-1 w-full border rounded-lg px-3 py-2 font-normal" value="${escapeLogisticsPartnerHtml(cur.unit || 'THB / Container')}">
+                    </label>
+                    <label class="font-bold text-slate-700">Price *
+                        <input id="lgpRatePrice" type="number" step="0.01" min="0.01" class="mt-1 w-full border rounded-lg px-3 py-2 font-normal" value="${cur.price !== undefined && cur.price !== null ? escapeLogisticsPartnerHtml(cur.price) : ''}">
+                    </label>
+                    <label class="font-bold text-slate-700">Currency *
+                        <select id="lgpRateCurrency" class="mt-1 w-full border rounded-lg px-3 py-2 font-normal bg-white">${currencyOptions}</select>
+                    </label>
+                    <label class="font-bold text-slate-700">Effective Date *
+                        <input id="lgpRateEffective" type="date" class="mt-1 w-full border rounded-lg px-3 py-2 font-normal" value="${escapeLogisticsPartnerHtml(cur.effective_date || getTodayIso())}">
+                    </label>
+                    <label class="font-bold text-slate-700">Valid Until
+                        <input id="lgpRateValidUntil" type="date" class="mt-1 w-full border rounded-lg px-3 py-2 font-normal" value="${escapeLogisticsPartnerHtml(cur.valid_until || '')}">
+                    </label>
+                    <label class="font-bold text-slate-700">Status
+                        <select id="lgpRateStatus" class="mt-1 w-full border rounded-lg px-3 py-2 font-normal bg-white">
+                            <option value="ACTIVE" ${(cur.status || 'ACTIVE') === 'ACTIVE' ? 'selected' : ''}>ACTIVE</option>
+                            <option value="INACTIVE" ${cur.status === 'INACTIVE' ? 'selected' : ''}>INACTIVE</option>
+                        </select>
+                    </label>
+                    <label class="font-bold text-slate-700">Note
+                        <input id="lgpRateNote" class="mt-1 w-full border rounded-lg px-3 py-2 font-normal" value="${escapeLogisticsPartnerHtml(cur.note || '')}">
+                    </label>
+                </div>
+                <div id="lgpRateFormError" class="hidden mt-4 text-xs font-bold text-rose-700 bg-rose-50 border border-rose-200 rounded-lg px-3 py-2"></div>
+                <div class="mt-5 flex justify-end gap-2">
+                    <button onclick="closeModal()" class="px-4 py-2 border rounded-lg text-xs font-bold">Cancel</button>
+                    <button onclick="saveLogisticsPartnerRateToApi('${escapeLogisticsPartnerHtml(partnerId)}','${escapeLogisticsPartnerHtml(rateId)}')" class="px-4 py-2 bg-blue-600 text-white rounded-lg text-xs font-bold hover:bg-blue-700">Save Rate</button>
+                </div>
+            </div>`);
         }
 
-        function saveProviderPricePrototype(providerId) {
+        async function saveLogisticsPartnerRateToApi(partnerId, rateId = '') {
             if (!canManageLogisticsPartners()) return;
-            const price = Number(document.getElementById('lgpPriceValue')?.value || 0); if (price <= 0) return alert('กรุณาระบุราคา');
-            state.providerPrices = state.providerPrices || [];
-            state.providerPrices.push({ id:`LGPPR-${String(state.providerPrices.length+1).padStart(3,'0')}`, providerId, serviceType:document.getElementById('lgpPriceService')?.value||'', routeScope:document.getElementById('lgpPriceRoute')?.value||'', containerSize:document.getElementById('lgpPriceContainer')?.value||'-', unit:document.getElementById('lgpPriceUnit')?.value||'', price, currency:document.getElementById('lgpPriceCurrency')?.value||'THB', effectiveDate:document.getElementById('lgpPriceEffective')?.value||getTodayIso(), validUntil:document.getElementById('lgpPriceValid')?.value||'', status:'ACTIVE', note:'' });
-            closeModal(); state.providerDetailTab='PRICE'; renderView();
+            const errorEl = document.getElementById('lgpRateFormError');
+            const showErr = (msg) => {
+                if (!errorEl) return;
+                errorEl.textContent = msg || '';
+                if (msg) errorEl.classList.remove('hidden');
+                else errorEl.classList.add('hidden');
+            };
+            showErr('');
+
+            const serviceType = String(document.getElementById('lgpRateService')?.value || '').trim();
+            const unit = String(document.getElementById('lgpRateUnit')?.value || '').trim();
+            const price = Number(document.getElementById('lgpRatePrice')?.value || 0);
+            const effectiveDate = String(document.getElementById('lgpRateEffective')?.value || '').trim();
+            const validUntil = String(document.getElementById('lgpRateValidUntil')?.value || '').trim();
+
+            if (!serviceType) return showErr('Service Type is required.');
+            if (!unit) return showErr('Unit is required.');
+            if (!Number.isFinite(price) || price <= 0) return showErr('Price must be greater than 0.');
+            if (!effectiveDate) return showErr('Effective Date is required.');
+            if (validUntil && validUntil < effectiveDate) return showErr('Valid Until must be on or after Effective Date.');
+
+            const payload = {
+                serviceType,
+                routeScope: document.getElementById('lgpRateRoute')?.value || '',
+                containerSize: document.getElementById('lgpRateContainer')?.value || '-',
+                unit,
+                price,
+                currency: document.getElementById('lgpRateCurrency')?.value || 'THB',
+                effectiveDate,
+                validUntil: validUntil || null,
+                status: document.getElementById('lgpRateStatus')?.value || 'ACTIVE',
+                note: document.getElementById('lgpRateNote')?.value || ''
+            };
+
+            const url = rateId
+                ? `/api/logistics-partners/${encodeURIComponent(partnerId)}/rates/${encodeURIComponent(rateId)}`
+                : `/api/logistics-partners/${encodeURIComponent(partnerId)}/rates`;
+            const method = rateId ? 'PATCH' : 'POST';
+
+            try {
+                const res = await fetch(url, {
+                    method,
+                    headers: { 'content-type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+                const body = await res.json().catch(() => null);
+                if (!res.ok || body?.status !== 'SUCCESS' || !body.data?.rate) {
+                    return showErr(body?.message || 'Failed to save reference rate.');
+                }
+                state.providerDetailTab = 'PRICE';
+                closeModal();
+                await Promise.all([
+                    loadLogisticsPartnerDetailFromApi(partnerId),
+                    loadLogisticsPartnersFromApi({ force: true })
+                ]);
+            } catch (err) {
+                showErr(err?.message || 'Failed to save reference rate.');
+            }
+        }
+
+        async function toggleLogisticsPartnerRateStatus(partnerId, rateId, nextStatus) {
+            if (!canManageLogisticsPartners()) return;
+            try {
+                const res = await fetch(`/api/logistics-partners/${encodeURIComponent(partnerId)}/rates/${encodeURIComponent(rateId)}`, {
+                    method: 'PATCH',
+                    headers: { 'content-type': 'application/json' },
+                    body: JSON.stringify({ status: nextStatus })
+                });
+                const body = await res.json().catch(() => null);
+                if (!res.ok || body?.status !== 'SUCCESS') {
+                    alert(body?.message || 'Failed to update rate status.');
+                    return;
+                }
+                await Promise.all([
+                    loadLogisticsPartnerDetailFromApi(partnerId),
+                    loadLogisticsPartnersFromApi({ force: true })
+                ]);
+            } catch (err) {
+                alert(err?.message || 'Failed to update rate status.');
+            }
         }
 
         function getTruckAllocationSummary(loadingEventId) {
@@ -8718,6 +9292,8 @@
             renderView();
             if (typeof loadPhase6DeliveryInstructionsFromApi === 'function') {
                 await loadPhase6DeliveryInstructionsFromApi();
+            } else if (typeof loadDeliveryInstructionsFromApi === 'function') {
+                await loadDeliveryInstructionsFromApi();
             }
             if (typeof selectPhase6DeliveryInstruction === 'function' && diId) {
                 await selectPhase6DeliveryInstruction(diId);
