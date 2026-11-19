@@ -493,21 +493,59 @@ Implementation plan: docs/superpowers/plans/2026-11-19-phase7-operations-calenda
 
 ---
 
+### Phase 8 — Logistics Partners
+
+**Status:** COMPLETE / MERGED / DEPLOYED / PRODUCTION VERIFIED
+
+Implemented backend:
+- Additive D1 migration (`migrations/0008_logistics_partners.sql`) creating `service_partner_rates` (FK to `service_partners(partner_id)`, `price > 0`, `currency IN ('THB','USD','EUR')`, `container_size IN ('20GP','40GP','40HC','BULK','OTHER','-')`, `status IN ('ACTIVE','INACTIVE')`, `valid_until IS NULL OR valid_until >= effective_date`) plus lookup indexes `idx_service_partner_rates_partner_status` and `idx_service_partners_type_status`. Existing migrations `0001`–`0007` and `service_partners` remain unaltered.
+- Dedicated module (`src/logistics-partners/validation.js`, `src/logistics-partners/repository.js`, `src/logistics-partners/routes.js`) wired to `/api/logistics-partners` in `src/index.js`:
+  - `GET /api/logistics-partners` (filter by `partnerType`, `status`, `search`; returns live `active_rate_count` and `usage_count`)
+  - `GET /api/logistics-partners/:id` (returns `{ partner, rates, usage }`, with live deduplicated usage queried directly from Phase 6 `delivery_instructions`, `phase6_shipments`, and non-cancelled `shipment_containers`)
+  - `POST /api/logistics-partners` and `PUT /api/logistics-partners/:id` (shared `SP-XXX` sequence compatible with Phase 6; immutable `partnerType`; full profile fields)
+  - `POST /api/logistics-partners/:id/rates` and `PATCH /api/logistics-partners/:id/rates/:rateId` (`SPR-XXXX` rate IDs; soft deactivation via `status = 'INACTIVE'`)
+- Strict RBAC: `ADMIN`, `MANAGER`, and `EXPORT` have full read/write access; `SALES_SUPPORT` is read-only (`403` on writes); `EXTERNAL_SALES` and `PRODUCTION_WAREHOUSE` receive `403` on all endpoints; unauthenticated requests receive `401`.
+- Phase 6 `/api/service-partners` routes and contract remain 100% untouched.
+
+Implemented frontend:
+- Replaced prototype `logisticsProviders` / `providerPrices` / `providerUsageRecords` Logistics Partners UI in `public/index.html` with D1-backed `state.logisticsPartners`, `loadLogisticsPartnersFromApi()`, `loadLogisticsPartnerDetailFromApi()`, `saveLogisticsPartnerToApi()`, `saveLogisticsPartnerRateToApi()`, and `toggleLogisticsPartnerRateStatus()`.
+- Supports all 4 canonical partner types (`FORWARDER`, `SHIPPING_LINE`, `TRUCKING`, `SURVEYOR`), read-only `partner_type` on edit, expired rate badges (`valid_until < today`), live Phase 6 Usage History with **Open Shipment** jump, role-aware write controls (`ADMIN`, `MANAGER`, `EXPORT` only), and automatic Phase 6 `loadPhase6ServicePartnersFromApi()` refresh after partner saves.
+
+Release details:
+```text
+PR #11 merge commit: fd00a80a0fcfc67b43ceb930a3ef0aeb1cc5c4de
+Feature commit:      9c3336d (branch: feature/phase8-logistics-partners — deleted after merge)
+Migration applied:   0008_logistics_partners.sql (remote wcat-sales-db)
+Verified D1 objects: service_partner_rates, idx_service_partner_rates_partner_status, idx_service_partners_type_status
+Worker version:      379c39b7-1cb0-489c-946a-224edd1d002f (2026-11-19T10:52:18.967Z)
+Workers URL:         https://wcat-sales-support.deono111.workers.dev
+Automated tests:     354 passed, 0 failed
+Design spec:         docs/superpowers/specs/2026-11-19-phase8-logistics-partners-design.md
+Implementation plan: docs/superpowers/plans/2026-11-19-phase8-logistics-partners-implementation-plan.md
+```
+
+Production Verification:
+```text
+SUCCESS (354 automated tests passed; remote D1 migration 0008 applied and service_partner_rates + indexes verified; live Worker /api/health 200, /api/logistics-partners 401 unauthenticated, and live frontend serves loadLogisticsPartnersFromApi. Limitation: authenticated multi-role browser smoke was not exercised in this automated check.)
+```
+
+---
+
 # 3. CURRENT CHECKPOINT
 
 ## STOPPED HERE — 2026-11-19
 
-Phase 7 (Operations Calendar) is merged via PR #10 (`3309ba4`) and released to `main`.
+Phase 8 (Logistics Partners) is merged via PR #11 (`fd00a80`), remote D1 migration `0008_logistics_partners.sql` is applied and verified in production `wcat-sales-db`, and the production Worker (`379c39b7-1cb0-489c-946a-224edd1d002f`) is live and verified.
 Next Action:
-- Select and scope Phase 8 from the remaining backlog (Logistics Partners, Payment Status, or Commission Settlement).
+- Select and scope Phase 9 from the remaining backlog (**Payment Status** or **Commission Settlement**).
 - Draft bounded design spec and implementation plan before coding.
 
 ---
 
-# 4. NEXT STEP — Phase 8 (Next Backlog Module)
+# 4. NEXT STEP — Phase 9 (Payment Status or Commission Settlement)
 
 Next Action:
-- Confirm priority order between **Logistics Partners**, **Payment Status**, and **Commission Settlement**, then draft the bounded Phase 8 design spec and implementation plan.
+- Confirm priority order between **Payment Status** and **Commission Settlement**, then draft the bounded Phase 9 design spec and implementation plan.
 
 ---
 
@@ -552,6 +590,10 @@ Next Action:
 - [x] Phase 7 Operations Calendar — COMPLETE / MERGED / RELEASED
   - PR #10 merge commit: `3309ba4e79ccd91d556e54bc0a15c85eb53d76ad`
   - No D1 migration required (`0001`–`0007` preserved); automated verification: 334 passed, 0 failed.
+- [x] Phase 8 Logistics Partners — COMPLETE / MERGED / DEPLOYED / PRODUCTION VERIFIED
+  - PR #11 merge commit: `fd00a80a0fcfc67b43ceb930a3ef0aeb1cc5c4de`
+  - Migration `0008_logistics_partners.sql` applied to production `wcat-sales-db`; `service_partner_rates` table and indexes verified.
+  - Worker version `379c39b7-1cb0-489c-946a-224edd1d002f`; `/api/health` (200), `/api/logistics-partners` (401 unauthenticated), and live frontend (`loadLogisticsPartnersFromApi`) verified; automated verification: 354 passed, 0 failed.
 
 ---
 
@@ -571,6 +613,7 @@ Commercial & Shipment Control (Price Notes / Freight Quotes)
 PO Management
 Shipping / DI Integration
 Operations Calendar
+Logistics Partners
 ```
 
 Production truth must come from:
@@ -593,12 +636,11 @@ must not appear to save unless persistence is actually implemented.
 
 # 7. Recommended Next Development Order
 
-After Phase 7 (Operations Calendar) release:
+After Phase 8 (Logistics Partners) release:
 
 ```text
-1. Logistics Partners
-2. Payment Status
-3. Commission Settlement
+1. Payment Status
+2. Commission Settlement
 ```
 
 Continue using:
