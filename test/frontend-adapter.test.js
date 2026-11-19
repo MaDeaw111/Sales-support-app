@@ -2738,3 +2738,193 @@ test('Edit Product pre-loads standard specs, skips redundant spec revisions when
     delete globalThis.fetch;
   }
 });
+
+test('Product and Spec Master shows Category & Form maintenance only to ADMIN and MANAGER', () => {
+  const renderProducts = new Function(`return (${extractFunction('renderProducts').trim()});`)();
+  const renderFor = (role) => {
+    globalThis.state = {
+      currentUser: { role },
+      products: [],
+      productCategories: [{ id: 'CAT-001', code: 'TAPIOCA', name: 'Tapioca', status: 'ACTIVE' }],
+      productForms: [{ id: 'FRM-001', code: 'PELLET', name: 'Pellet', status: 'ACTIVE' }],
+      specParameters: []
+    };
+    globalThis.lucide = { createIcons() {} };
+    const container = { innerHTML: '' };
+    renderProducts(container);
+    return container.innerHTML;
+  };
+
+  try {
+    for (const role of ['ADMIN', 'MANAGER']) {
+      const markup = renderFor(role);
+      assert.match(markup, /หมวดสินค้า \(Product Categories\)/);
+      assert.match(markup, /รูปแบบสินค้า \(Product Forms\)/);
+      assert.match(markup, /\+ เพิ่มหมวดสินค้า/);
+      assert.match(markup, /\+ เพิ่มรูปแบบสินค้า/);
+      assert.match(markup, /TAPIOCA/);
+      assert.match(markup, /PELLET/);
+    }
+    for (const role of ['SALES_SUPPORT', 'EXTERNAL_SALES', 'EXPORT']) {
+      const markup = renderFor(role);
+      assert.doesNotMatch(markup, /\+ เพิ่มหมวดสินค้า|\+ เพิ่มรูปแบบสินค้า|openCategoryMasterModal|openFormMasterModal/);
+    }
+  } finally {
+    delete globalThis.state;
+    delete globalThis.lucide;
+  }
+});
+
+test('Product modal enables Category/Form dropdowns and supports inline quick-add with auto-select', async () => {
+  const helperNames = [
+    'escapeProductSpecHtml',
+    'getActiveSpecParametersForProductModal',
+    'serializeProductSpecItems',
+    'buildProductSpecOperatorOptionsHtml',
+    'buildProductSpecRowHtml',
+    'refreshProductModalMasterSelect',
+    'saveInlineProductCategory',
+    'saveInlineProductForm',
+    'loadProductModalStandardSpecs',
+    'openAddProductModal'
+  ];
+  for (const name of helperNames) {
+    globalThis[name] = new Function(`return (${extractFunction(name).trim()});`)();
+  }
+
+  let modalHtml = '';
+  globalThis.openModal = (markup) => { modalHtml = markup; };
+  globalThis.state = {
+    currentUser: { role: 'ADMIN' },
+    products: [],
+    productCategories: [{ id: 'CAT-001', code: 'TAPIOCA', name: 'Tapioca', status: 'ACTIVE' }],
+    productForms: [{ id: 'FRM-001', code: 'PELLET', name: 'Pellet', status: 'ACTIVE' }],
+    specParameters: []
+  };
+
+  const catSelect = { innerHTML: '', value: 'CAT-001' };
+  const formSelect = { innerHTML: '', value: 'FRM-001' };
+  const catBoxHidden = new Set();
+  const formBoxHidden = new Set();
+  const fields = {
+    prodCategoryId: catSelect,
+    prodFormId: formSelect,
+    inlineNewCategoryCode: { value: 'SWEET_POTATO' },
+    inlineNewCategoryName: { value: 'Sweet Potato' },
+    inlineNewCategoryError: { textContent: '', classList: { add() {}, remove() {} } },
+    inlineAddCategoryBox: { classList: { add: (c) => catBoxHidden.add(c), remove: (c) => catBoxHidden.delete(c) } },
+    inlineNewFormCode: { value: 'CHIP' },
+    inlineNewFormName: { value: 'Chip' },
+    inlineNewFormError: { textContent: '', classList: { add() {}, remove() {} } },
+    inlineAddFormBox: { classList: { add: (c) => formBoxHidden.add(c), remove: (c) => formBoxHidden.delete(c) } }
+  };
+
+  const calls = [];
+  let catRefreshes = 0;
+  let formRefreshes = 0;
+  globalThis.document = { getElementById: (id) => fields[id] || null };
+  globalThis.loadProductCategoriesFromApi = async () => { catRefreshes += 1; };
+  globalThis.loadProductFormsFromApi = async () => { formRefreshes += 1; };
+  globalThis.fetch = async (url, options = {}) => {
+    const body = options.body ? JSON.parse(options.body) : null;
+    calls.push({ url, method: options.method, body });
+    if (url === '/api/product-categories' && options.method === 'POST') {
+      return { ok: true, status: 200, async json() { return { status: 'SUCCESS', data: { category: { id: 'CAT-002', code: body.code, name: body.name, status: 'ACTIVE' } } }; } };
+    }
+    if (url === '/api/product-forms' && options.method === 'POST') {
+      return { ok: true, status: 200, async json() { return { status: 'SUCCESS', data: { form: { id: 'FRM-002', code: body.code, name: body.name, status: 'ACTIVE' } } }; } };
+    }
+    throw new Error(`Unexpected fetch: ${options.method} ${url}`);
+  };
+
+  try {
+    globalThis.openAddProductModal();
+    assert.match(modalHtml, /<select id="prodCategoryId" class="ui-input">/);
+    assert.match(modalHtml, /<select id="prodFormId" class="ui-input">/);
+    assert.doesNotMatch(modalHtml, /id="prodCategoryId"[^>]*disabled/);
+    assert.doesNotMatch(modalHtml, /id="prodFormId"[^>]*disabled/);
+    assert.match(modalHtml, /\+ เพิ่มหมวดใหม่/);
+    assert.match(modalHtml, /\+ เพิ่มรูปแบบใหม่/);
+
+    await globalThis.saveInlineProductCategory();
+    assert.equal(calls[0].url, '/api/product-categories');
+    assert.equal(calls[0].body.code, 'SWEET_POTATO');
+    assert.equal(catSelect.value, 'CAT-002');
+    assert.match(catSelect.innerHTML, /Sweet Potato \(SWEET_POTATO\)/);
+    assert.equal(catBoxHidden.has('hidden'), true);
+    assert.equal(catRefreshes, 1);
+
+    await globalThis.saveInlineProductForm();
+    assert.equal(calls[1].url, '/api/product-forms');
+    assert.equal(calls[1].body.code, 'CHIP');
+    assert.equal(formSelect.value, 'FRM-002');
+    assert.match(formSelect.innerHTML, /Chip \(CHIP\)/);
+    assert.equal(formBoxHidden.has('hidden'), true);
+    assert.equal(formRefreshes, 1);
+  } finally {
+    for (const name of helperNames) delete globalThis[name];
+    delete globalThis.openModal;
+    delete globalThis.state;
+    delete globalThis.document;
+    delete globalThis.loadProductCategoriesFromApi;
+    delete globalThis.loadProductFormsFromApi;
+    delete globalThis.fetch;
+  }
+});
+
+test('saveCategoryMaster and saveFormMaster use POST for create and PUT for edit', async () => {
+  const saveCategoryMaster = new Function(`return (${extractFunction('saveCategoryMaster').trim()});`)();
+  const saveFormMaster = new Function(`return (${extractFunction('saveFormMaster').trim()});`)();
+
+  const fields = {
+    productCategoryCode: { value: 'tapioca' },
+    productCategoryName: { value: 'Tapioca' },
+    productCategoryStatus: { value: 'ACTIVE' },
+    productCategoryFormError: { textContent: '', classList: { add() {}, remove() {} } },
+    productFormCode: { value: 'pellet' },
+    productFormName: { value: 'Pellet' },
+    productFormStatus: { value: 'ACTIVE' },
+    productFormMasterError: { textContent: '', classList: { add() {}, remove() {} } }
+  };
+
+  const calls = [];
+  globalThis.document = { getElementById: (id) => fields[id] || null };
+  globalThis.loadProductCategoriesFromApi = async () => {};
+  globalThis.loadProductFormsFromApi = async () => {};
+  globalThis.loadProductsFromApi = async () => {};
+  globalThis.closeModal = () => {};
+  globalThis.fetch = async (url, options = {}) => {
+    calls.push({ url, method: options.method, body: JSON.parse(options.body) });
+    return { ok: true, status: 200, async json() { return { status: 'SUCCESS', data: {} }; } };
+  };
+
+  try {
+    await saveCategoryMaster(null);
+    await saveCategoryMaster('CAT-001');
+    await saveFormMaster(null);
+    await saveFormMaster('FRM-001');
+
+    assert.equal(calls[0].url, '/api/product-categories');
+    assert.equal(calls[0].method, 'POST');
+    assert.equal(calls[0].body.code, 'TAPIOCA');
+
+    assert.equal(calls[1].url, '/api/product-categories/CAT-001');
+    assert.equal(calls[1].method, 'PUT');
+    assert.equal(calls[1].body.code, 'TAPIOCA');
+
+    assert.equal(calls[2].url, '/api/product-forms');
+    assert.equal(calls[2].method, 'POST');
+    assert.equal(calls[2].body.code, 'PELLET');
+
+    assert.equal(calls[3].url, '/api/product-forms/FRM-001');
+    assert.equal(calls[3].method, 'PUT');
+    assert.equal(calls[3].body.code, 'PELLET');
+  } finally {
+    delete globalThis.document;
+    delete globalThis.loadProductCategoriesFromApi;
+    delete globalThis.loadProductFormsFromApi;
+    delete globalThis.loadProductsFromApi;
+    delete globalThis.closeModal;
+    delete globalThis.fetch;
+  }
+});

@@ -7896,6 +7896,45 @@
         // --- PRODUCTS ---
         function renderProducts(container) {
             const isAdminOrManager = ['ADMIN', 'MANAGER'].includes(state.currentUser.role);
+            const escProd = (v) => String(v ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+            const categoryAndFormMaster = isAdminOrManager ? `
+                <section class="mt-6 grid grid-cols-1 lg:grid-cols-2 gap-4">
+                    <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+                        <div class="p-4 bg-slate-50 border-b border-slate-200 flex items-center justify-between gap-3">
+                            <div>
+                                <h3 class="text-sm font-black text-slate-900">หมวดสินค้า (Product Categories)</h3>
+                                <p class="text-xs text-slate-500 mt-1">จัดการหมวดหมู่สินค้าที่ใช้ในหน้าสร้าง/แก้ไขสินค้า</p>
+                            </div>
+                            <button onclick="openCategoryMasterModal()" class="ui-btn ui-btn-primary text-xs whitespace-nowrap">+ เพิ่มหมวดสินค้า</button>
+                        </div>
+                        <div class="overflow-x-auto">
+                            <table class="ui-table min-w-full text-xs">
+                                <thead class="bg-white text-slate-500"><tr><th class="p-3 text-left">Code</th><th class="p-3 text-left">Name</th><th class="p-3 text-left">Status</th><th class="p-3 text-right">Action</th></tr></thead>
+                                <tbody class="divide-y divide-slate-100">
+                                    ${(state.productCategories || []).map(cat => `<tr><td class="p-3 font-mono font-bold">${escProd(cat.code)}</td><td class="p-3">${escProd(cat.name)}</td><td class="p-3"><span class="${cat.status === 'ACTIVE' ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-100 text-slate-600'} text-[10px] font-bold px-1.5 py-0.5 rounded">${escProd(cat.status || 'ACTIVE')}</span></td><td class="p-3 text-right"><button onclick="openCategoryMasterModal('${escProd(cat.id)}')" class="text-blue-600 font-bold hover:underline">Edit</button></td></tr>`).join('') || '<tr><td class="p-3 text-slate-400" colspan="4">ยังไม่มีหมวดสินค้าในระบบ</td></tr>'}
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                    <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+                        <div class="p-4 bg-slate-50 border-b border-slate-200 flex items-center justify-between gap-3">
+                            <div>
+                                <h3 class="text-sm font-black text-slate-900">รูปแบบสินค้า (Product Forms)</h3>
+                                <p class="text-xs text-slate-500 mt-1">จัดการรูปแบบสินค้า เช่น Pellet, Chip, Powder, Starch</p>
+                            </div>
+                            <button onclick="openFormMasterModal()" class="ui-btn ui-btn-primary text-xs whitespace-nowrap">+ เพิ่มรูปแบบสินค้า</button>
+                        </div>
+                        <div class="overflow-x-auto">
+                            <table class="ui-table min-w-full text-xs">
+                                <thead class="bg-white text-slate-500"><tr><th class="p-3 text-left">Code</th><th class="p-3 text-left">Name</th><th class="p-3 text-left">Status</th><th class="p-3 text-right">Action</th></tr></thead>
+                                <tbody class="divide-y divide-slate-100">
+                                    ${(state.productForms || []).map(frm => `<tr><td class="p-3 font-mono font-bold">${escProd(frm.code)}</td><td class="p-3">${escProd(frm.name)}</td><td class="p-3"><span class="${frm.status === 'ACTIVE' ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-100 text-slate-600'} text-[10px] font-bold px-1.5 py-0.5 rounded">${escProd(frm.status || 'ACTIVE')}</span></td><td class="p-3 text-right"><button onclick="openFormMasterModal('${escProd(frm.id)}')" class="text-blue-600 font-bold hover:underline">Edit</button></td></tr>`).join('') || '<tr><td class="p-3 text-slate-400" colspan="4">ยังไม่มีรูปแบบสินค้าในระบบ</td></tr>'}
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </section>
+            ` : '';
             const parameterMaster = isAdminOrManager ? `
                 <section class="mt-6 bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
                     <div class="p-4 bg-slate-50 border-b border-slate-200 flex items-center justify-between gap-3">
@@ -8004,9 +8043,98 @@
                         </div>
                     `}
                 </div>
+                ${categoryAndFormMaster}
                 ${parameterMaster}
             `;
             lucide.createIcons();
+        }
+
+        function openCategoryMasterModal(categoryId = null) {
+            if (state.currentUser && !['ADMIN', 'MANAGER'].includes(state.currentUser.role)) return;
+            const category = categoryId ? (state.productCategories || []).find(item => item.id === categoryId) : null;
+            const title = category ? 'แก้ไขหมวดสินค้า (Edit Category)' : 'เพิ่มหมวดสินค้าใหม่ (Add Category)';
+            openModal(`
+                <div class="space-y-4">
+                    <div><div class="text-[10px] font-black uppercase tracking-wider text-blue-600">Product & Spec Master</div><h3 class="text-lg font-black text-slate-900">${title}</h3></div>
+                    <div class="grid grid-cols-2 gap-4">
+                        <label class="text-xs font-bold text-slate-600 block">รหัสหมวดสินค้า (Category Code) *<input id="productCategoryCode" class="ui-input mt-1" placeholder="เช่น TAPIOCA" value="${category ? escapeProductSpecHtml(category.code) : ''}"></label>
+                        <label class="text-xs font-bold text-slate-600 block">ชื่อหมวดสินค้า (Category Name) *<input id="productCategoryName" class="ui-input mt-1" placeholder="เช่น Tapioca" value="${category ? escapeProductSpecHtml(category.name) : ''}"></label>
+                        <label class="text-xs font-bold text-slate-600 block col-span-2">สถานะ (Status) *<select id="productCategoryStatus" class="ui-input mt-1">${['ACTIVE', 'INACTIVE', 'ARCHIVED'].map(status => `<option value="${status}" ${category?.status === status || (!category && status === 'ACTIVE') ? 'selected' : ''}>${status}</option>`).join('')}</select></label>
+                    </div>
+                    <div id="productCategoryFormError" class="hidden rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-bold text-rose-700"></div>
+                    <div class="flex justify-end gap-2"><button type="button" onclick="closeModal()" class="ui-btn ui-btn-secondary">Cancel</button><button type="button" onclick="saveCategoryMaster(${category ? `'${category.id}'` : 'null'})" class="ui-btn ui-btn-primary">Save Category</button></div>
+                </div>
+            `);
+        }
+
+        async function saveCategoryMaster(categoryId = null) {
+            const error = document.getElementById('productCategoryFormError');
+            if (error) error.classList.add('hidden');
+            const code = (document.getElementById('productCategoryCode')?.value || '').trim().toUpperCase();
+            const name = (document.getElementById('productCategoryName')?.value || '').trim();
+            const status = document.getElementById('productCategoryStatus')?.value || 'ACTIVE';
+            if (!code || !name || !status) {
+                if (error) { error.textContent = 'Category Code, Name, and Status are required.'; error.classList.remove('hidden'); }
+                return;
+            }
+            try {
+                const res = await fetch(categoryId ? `/api/product-categories/${categoryId}` : '/api/product-categories', {
+                    method: categoryId ? 'PUT' : 'POST',
+                    headers: { 'content-type': 'application/json' },
+                    body: JSON.stringify({ code, name, status })
+                });
+                const body = await res.json();
+                if (!res.ok || !body || body.status !== 'SUCCESS') throw new Error(body?.message || 'Unable to save Product Category.');
+                await loadProductCategoriesFromApi();
+                await loadProductsFromApi();
+                closeModal();
+            } catch (err) {
+                if (error) { error.textContent = err.message; error.classList.remove('hidden'); }
+            }
+        }
+
+        function openFormMasterModal(formId = null) {
+            if (state.currentUser && !['ADMIN', 'MANAGER'].includes(state.currentUser.role)) return;
+            const form = formId ? (state.productForms || []).find(item => item.id === formId) : null;
+            const title = form ? 'แก้ไขรูปแบบสินค้า (Edit Product Form)' : 'เพิ่มรูปแบบสินค้าใหม่ (Add Product Form)';
+            openModal(`
+                <div class="space-y-4">
+                    <div><div class="text-[10px] font-black uppercase tracking-wider text-blue-600">Product & Spec Master</div><h3 class="text-lg font-black text-slate-900">${title}</h3></div>
+                    <div class="grid grid-cols-2 gap-4">
+                        <label class="text-xs font-bold text-slate-600 block">รหัสรูปแบบ (Form Code) *<input id="productFormCode" class="ui-input mt-1" placeholder="เช่น PELLET" value="${form ? escapeProductSpecHtml(form.code) : ''}"></label>
+                        <label class="text-xs font-bold text-slate-600 block">ชื่อรูปแบบสินค้า (Form Name) *<input id="productFormName" class="ui-input mt-1" placeholder="เช่น Pellet" value="${form ? escapeProductSpecHtml(form.name) : ''}"></label>
+                        <label class="text-xs font-bold text-slate-600 block col-span-2">สถานะ (Status) *<select id="productFormStatus" class="ui-input mt-1">${['ACTIVE', 'INACTIVE', 'ARCHIVED'].map(status => `<option value="${status}" ${form?.status === status || (!form && status === 'ACTIVE') ? 'selected' : ''}>${status}</option>`).join('')}</select></label>
+                    </div>
+                    <div id="productFormMasterError" class="hidden rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-bold text-rose-700"></div>
+                    <div class="flex justify-end gap-2"><button type="button" onclick="closeModal()" class="ui-btn ui-btn-secondary">Cancel</button><button type="button" onclick="saveFormMaster(${form ? `'${form.id}'` : 'null'})" class="ui-btn ui-btn-primary">Save Form</button></div>
+                </div>
+            `);
+        }
+
+        async function saveFormMaster(formId = null) {
+            const error = document.getElementById('productFormMasterError');
+            if (error) error.classList.add('hidden');
+            const code = (document.getElementById('productFormCode')?.value || '').trim().toUpperCase();
+            const name = (document.getElementById('productFormName')?.value || '').trim();
+            const status = document.getElementById('productFormStatus')?.value || 'ACTIVE';
+            if (!code || !name || !status) {
+                if (error) { error.textContent = 'Form Code, Name, and Status are required.'; error.classList.remove('hidden'); }
+                return;
+            }
+            try {
+                const res = await fetch(formId ? `/api/product-forms/${formId}` : '/api/product-forms', {
+                    method: formId ? 'PUT' : 'POST',
+                    headers: { 'content-type': 'application/json' },
+                    body: JSON.stringify({ code, name, status })
+                });
+                const body = await res.json();
+                if (!res.ok || !body || body.status !== 'SUCCESS') throw new Error(body?.message || 'Unable to save Product Form.');
+                await loadProductFormsFromApi();
+                await loadProductsFromApi();
+                closeModal();
+            } catch (err) {
+                if (error) { error.textContent = err.message; error.classList.remove('hidden'); }
+            }
         }
 
         function openSpecParameterModal(parameterId = null) {
@@ -8697,17 +8825,151 @@
             }
         }
 
+        function toggleInlineProductMasterForm(kind) {
+            const boxId = kind === 'category' ? 'inlineAddCategoryBox' : 'inlineAddFormBox';
+            const otherBoxId = kind === 'category' ? 'inlineAddFormBox' : 'inlineAddCategoryBox';
+            const errId = kind === 'category' ? 'inlineNewCategoryError' : 'inlineNewFormError';
+            const box = document.getElementById(boxId);
+            const otherBox = document.getElementById(otherBoxId);
+            const err = document.getElementById(errId);
+            if (otherBox) otherBox.classList.add('hidden');
+            if (err) err.classList.add('hidden');
+            if (box) box.classList.toggle('hidden');
+        }
+
+        function refreshProductModalMasterSelect(kind, selectedId = null) {
+            const isCategory = kind === 'category';
+            const selectEl = document.getElementById(isCategory ? 'prodCategoryId' : 'prodFormId');
+            if (!selectEl) return;
+            const list = isCategory ? (state.productCategories || []) : (state.productForms || []);
+            const currentId = selectedId || selectEl.value || '';
+            const eligible = list.filter(item => item && (item.status === 'ACTIVE' || !item.status || item.id === currentId));
+            if (eligible.length === 0) {
+                selectEl.innerHTML = `<option value="">-- ยังไม่มีข้อมูล (กดเพิ่มใหม่) --</option>`;
+                return;
+            }
+            selectEl.innerHTML = eligible.map(item => {
+                const statusTag = item.status && item.status !== 'ACTIVE' ? ` [${item.status}]` : '';
+                return `<option value="${escapeProductSpecHtml(item.id)}" ${item.id === currentId ? 'selected' : ''}>${escapeProductSpecHtml(item.name)} (${escapeProductSpecHtml(item.code)})${statusTag}</option>`;
+            }).join('');
+            if (currentId) selectEl.value = currentId;
+        }
+
+        async function saveInlineProductCategory() {
+            const errEl = document.getElementById('inlineNewCategoryError');
+            const codeEl = document.getElementById('inlineNewCategoryCode');
+            const nameEl = document.getElementById('inlineNewCategoryName');
+            const boxEl = document.getElementById('inlineAddCategoryBox');
+            if (errEl) errEl.classList.add('hidden');
+
+            const code = (codeEl?.value || '').trim().toUpperCase();
+            const name = (nameEl?.value || '').trim();
+            if (!code || !name) {
+                if (errEl) {
+                    errEl.textContent = 'กรุณากรอกรหัสหมวด (Code) และชื่อหมวดสินค้า (Name)';
+                    errEl.classList.remove('hidden');
+                }
+                return;
+            }
+
+            try {
+                const res = await fetch('/api/product-categories', {
+                    method: 'POST',
+                    headers: { 'content-type': 'application/json' },
+                    body: JSON.stringify({ code, name, status: 'ACTIVE' })
+                });
+                const body = await res.json();
+                if (!res.ok || !body || body.status !== 'SUCCESS' || !body.data?.category) {
+                    throw new Error(body?.message || 'ไม่สามารถเพิ่มหมวดสินค้าได้');
+                }
+                const created = body.data.category;
+                const existingList = Array.isArray(state.productCategories) ? state.productCategories : [];
+                state.productCategories = [...existingList.filter(c => c.id !== created.id), created]
+                    .sort((a, b) => String(a.name || '').localeCompare(String(b.name || '')));
+                refreshProductModalMasterSelect('category', created.id);
+                if (codeEl) codeEl.value = '';
+                if (nameEl) nameEl.value = '';
+                if (boxEl) boxEl.classList.add('hidden');
+                if (typeof loadProductCategoriesFromApi === 'function') {
+                    loadProductCategoriesFromApi();
+                }
+            } catch (err) {
+                if (errEl) {
+                    errEl.textContent = err.message;
+                    errEl.classList.remove('hidden');
+                }
+            }
+        }
+
+        async function saveInlineProductForm() {
+            const errEl = document.getElementById('inlineNewFormError');
+            const codeEl = document.getElementById('inlineNewFormCode');
+            const nameEl = document.getElementById('inlineNewFormName');
+            const boxEl = document.getElementById('inlineAddFormBox');
+            if (errEl) errEl.classList.add('hidden');
+
+            const code = (codeEl?.value || '').trim().toUpperCase();
+            const name = (nameEl?.value || '').trim();
+            if (!code || !name) {
+                if (errEl) {
+                    errEl.textContent = 'กรุณากรอกรหัสรูปแบบ (Code) และชื่อรูปแบบสินค้า (Name)';
+                    errEl.classList.remove('hidden');
+                }
+                return;
+            }
+
+            try {
+                const res = await fetch('/api/product-forms', {
+                    method: 'POST',
+                    headers: { 'content-type': 'application/json' },
+                    body: JSON.stringify({ code, name, status: 'ACTIVE' })
+                });
+                const body = await res.json();
+                if (!res.ok || !body || body.status !== 'SUCCESS' || !body.data?.form) {
+                    throw new Error(body?.message || 'ไม่สามารถเพิ่มรูปแบบสินค้าได้');
+                }
+                const created = body.data.form;
+                const existingList = Array.isArray(state.productForms) ? state.productForms : [];
+                state.productForms = [...existingList.filter(f => f.id !== created.id), created]
+                    .sort((a, b) => String(a.name || '').localeCompare(String(b.name || '')));
+                refreshProductModalMasterSelect('form', created.id);
+                if (codeEl) codeEl.value = '';
+                if (nameEl) nameEl.value = '';
+                if (boxEl) boxEl.classList.add('hidden');
+                if (typeof loadProductFormsFromApi === 'function') {
+                    loadProductFormsFromApi();
+                }
+            } catch (err) {
+                if (errEl) {
+                    errEl.textContent = err.message;
+                    errEl.classList.remove('hidden');
+                }
+            }
+        }
+
         function openAddProductModal(productId = null) {
             if (state.currentUser && !['ADMIN', 'MANAGER'].includes(state.currentUser.role)) return;
             const p = productId ? (state.products || []).find(x => x.id === productId) : null;
             const title = p ? 'แก้ไขข้อมูลสินค้า' : 'เพิ่มสินค้าใหม่';
-            
-            const categoriesHtml = (state.productCategories || []).map(c => `
-                <option value="${c.id}" ${p && p.category?.id === c.id ? 'selected' : ''}>${c.name} (${c.code})</option>
-            `).join('');
-            const formsHtml = (state.productForms || []).map(f => `
-                <option value="${f.id}" ${p && p.form?.id === f.id ? 'selected' : ''}>${f.name} (${f.code})</option>
-            `).join('');
+            const currentCatId = p && p.category ? p.category.id : '';
+            const currentFormId = p && p.form ? p.form.id : '';
+
+            const eligibleCategories = (state.productCategories || []).filter(c => c && (c.status === 'ACTIVE' || !c.status || c.id === currentCatId));
+            const eligibleForms = (state.productForms || []).filter(f => f && (f.status === 'ACTIVE' || !f.status || f.id === currentFormId));
+
+            const categoriesHtml = eligibleCategories.length > 0
+                ? eligibleCategories.map(c => {
+                    const statusTag = c.status && c.status !== 'ACTIVE' ? ` [${c.status}]` : '';
+                    return `<option value="${escapeProductSpecHtml(c.id)}" ${currentCatId === c.id ? 'selected' : ''}>${escapeProductSpecHtml(c.name)} (${escapeProductSpecHtml(c.code)})${statusTag}</option>`;
+                }).join('')
+                : `<option value="">-- ยังไม่มีหมวดสินค้า (กด + เพิ่มหมวดใหม่) --</option>`;
+
+            const formsHtml = eligibleForms.length > 0
+                ? eligibleForms.map(f => {
+                    const statusTag = f.status && f.status !== 'ACTIVE' ? ` [${f.status}]` : '';
+                    return `<option value="${escapeProductSpecHtml(f.id)}" ${currentFormId === f.id ? 'selected' : ''}>${escapeProductSpecHtml(f.name)} (${escapeProductSpecHtml(f.code)})${statusTag}</option>`;
+                }).join('')
+                : `<option value="">-- ยังไม่มีรูปแบบสินค้า (กด + เพิ่มรูปแบบใหม่) --</option>`;
 
             const appFeedChecked = p && (p.applications || []).includes('FEED_GRADE') ? 'checked' : '';
             const appPetChecked = p && (p.applications || []).includes('PET_GRADE') ? 'checked' : '';
@@ -8784,14 +9046,52 @@
                     </div>
 
                     <div class="grid grid-cols-2 gap-4">
-                        <label class="text-xs font-bold text-slate-600 block">
-                            หมวดสินค้า (Category) *
-                            <select id="prodCategoryId" class="ui-input mt-1">${categoriesHtml}</select>
-                        </label>
-                        <label class="text-xs font-bold text-slate-600 block">
-                            รูปแบบสินค้า (Product Form) *
-                            <select id="prodFormId" class="ui-input mt-1">${formsHtml}</select>
-                        </label>
+                        <div class="space-y-1">
+                            <div class="flex items-center justify-between gap-2">
+                                <label for="prodCategoryId" class="text-xs font-bold text-slate-600">หมวดสินค้า (Category) *</label>
+                                <button type="button" id="toggleQuickAddCategoryBtn" onclick="toggleInlineProductMasterForm('category')" class="text-[11px] font-bold text-teal-700 hover:text-teal-800 hover:underline">+ เพิ่มหมวดใหม่</button>
+                            </div>
+                            <select id="prodCategoryId" class="ui-input">${categoriesHtml}</select>
+                        </div>
+                        <div class="space-y-1">
+                            <div class="flex items-center justify-between gap-2">
+                                <label for="prodFormId" class="text-xs font-bold text-slate-600">รูปแบบสินค้า (Product Form) *</label>
+                                <button type="button" id="toggleQuickAddFormBtn" onclick="toggleInlineProductMasterForm('form')" class="text-[11px] font-bold text-teal-700 hover:text-teal-800 hover:underline">+ เพิ่มรูปแบบใหม่</button>
+                            </div>
+                            <select id="prodFormId" class="ui-input">${formsHtml}</select>
+                        </div>
+                    </div>
+
+                    <div id="inlineAddCategoryBox" class="hidden rounded-lg border border-teal-200 bg-teal-50/50 p-3 space-y-2">
+                        <div class="flex items-center justify-between">
+                            <span class="text-xs font-bold text-teal-900">เพิ่มหมวดสินค้าใหม่ (New Category)</span>
+                            <button type="button" onclick="toggleInlineProductMasterForm('category')" class="text-[11px] text-slate-500 hover:text-slate-700">ปิด</button>
+                        </div>
+                        <div class="grid grid-cols-2 gap-2">
+                            <input id="inlineNewCategoryCode" type="text" class="ui-input text-xs" placeholder="รหัสหมวด เช่น TAPIOCA">
+                            <input id="inlineNewCategoryName" type="text" class="ui-input text-xs" placeholder="ชื่อหมวด เช่น Tapioca">
+                        </div>
+                        <div id="inlineNewCategoryError" class="hidden text-[11px] font-bold text-rose-700"></div>
+                        <div class="flex justify-end gap-2">
+                            <button type="button" onclick="toggleInlineProductMasterForm('category')" class="ui-btn ui-btn-secondary text-xs py-1 px-2.5">ยกเลิก</button>
+                            <button type="button" onclick="saveInlineProductCategory()" class="ui-btn ui-btn-primary text-xs py-1 px-2.5">บันทึกหมวด</button>
+                        </div>
+                    </div>
+
+                    <div id="inlineAddFormBox" class="hidden rounded-lg border border-teal-200 bg-teal-50/50 p-3 space-y-2">
+                        <div class="flex items-center justify-between">
+                            <span class="text-xs font-bold text-teal-900">เพิ่มรูปแบบสินค้าใหม่ (New Product Form)</span>
+                            <button type="button" onclick="toggleInlineProductMasterForm('form')" class="text-[11px] text-slate-500 hover:text-slate-700">ปิด</button>
+                        </div>
+                        <div class="grid grid-cols-2 gap-2">
+                            <input id="inlineNewFormCode" type="text" class="ui-input text-xs" placeholder="รหัสรูปแบบ เช่น PELLET">
+                            <input id="inlineNewFormName" type="text" class="ui-input text-xs" placeholder="ชื่อรูปแบบ เช่น Pellet">
+                        </div>
+                        <div id="inlineNewFormError" class="hidden text-[11px] font-bold text-rose-700"></div>
+                        <div class="flex justify-end gap-2">
+                            <button type="button" onclick="toggleInlineProductMasterForm('form')" class="ui-btn ui-btn-secondary text-xs py-1 px-2.5">ยกเลิก</button>
+                            <button type="button" onclick="saveInlineProductForm()" class="ui-btn ui-btn-primary text-xs py-1 px-2.5">บันทึกรูปแบบ</button>
+                        </div>
                     </div>
 
                     <div class="grid grid-cols-2 gap-4">
