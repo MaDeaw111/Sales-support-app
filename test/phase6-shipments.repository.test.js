@@ -14,7 +14,8 @@ async function setupTestDb({ pauseFirstBatch, pauseQueuedFirstBatch } = {}) {
     '0004_commercial_shipment_control.sql',
     '0005_po_management.sql',
     '0006_customer_ownership_type.sql',
-    '0007_shipping_di_integration.sql'
+    '0007_shipping_di_integration.sql',
+    '0010_booking_bl_no.sql'
   ]) {
     db.exec(await readFile(new URL(`../migrations/${migration}`, import.meta.url), 'utf8'));
   }
@@ -1474,4 +1475,57 @@ test('concurrent document and payment writes complete exactly once after either 
   assert.equal((await repo.getPhase6Shipment(shipment.shipment_id)).status, 'COMPLETED');
   assert.equal((await repo.getDeliveryInstruction('DI-CONFIRMED')).status, 'COMPLETED');
   assert.equal(db.prepare("SELECT COUNT(*) AS n FROM shipment_audit_events WHERE entity_id = ? AND event_type = 'SHIPMENT_COMPLETED'").get(shipment.shipment_id).n, 1);
+});
+
+test('Booking stores, updates, clears, audits, and searches optional bl_no cleanly', async () => {
+  const { db, wrappedDb } = await setupTestDb();
+  const repo = createShippingDiRepository(wrappedDb);
+  const shipment = await repo.createShipmentForDeliveryInstruction('DI-CONFIRMED', 'U_EXPORT');
+
+  // 1. Non-string blNo is rejected
+  await assert.rejects(
+    () => repo.recordShipmentBooking(shipment.shipment_id, { bookingNo: 'BK-BL-1', blNo: 12345 }, 'U_EXPORT'),
+    /SHIPMENT_BOOKING_VALUE_INVALID/
+  );
+
+  // 2. Initial booking stores trimmed blNo and logs it in BOOKING_RECORDED audit metadata
+  const booked = await repo.recordShipmentBooking(shipment.shipment_id, {
+    bookingNo: 'BK-BL-1',
+    blNo: '  MSCU1234567  ',
+    vessel: 'MV Ocean Star'
+  }, 'U_EXPORT');
+  assert.equal(booked.status, 'BOOKED');
+  assert.equal(booked.bl_no, 'MSCU1234567');
+
+  const detail = await repo.getPhase6ShipmentByShipmentId(shipment.shipment_id);
+  assert.equal(detail.bl_no, 'MSCU1234567');
+
+  const auditCreated = db.prepare("SELECT metadata_json FROM shipment_audit_events WHERE entity_id = ? AND event_type = 'BOOKING_RECORDED'").get(shipment.shipment_id);
+  assert.equal(JSON.parse(auditCreated.metadata_json).blNo, 'MSCU1234567');
+
+  // 3. Workspace search matches by bl_no
+  const searchMatched = await repo.listDeliveryInstructionWorkspace({ search: 'MSCU1234' });
+  assert.equal(searchMatched.length, 1);
+  assert.equal(searchMatched[0].bl_no, 'MSCU1234567');
+
+  // 4. Updating booking on BOOKED shipment updates bl_no and logs SHIPMENT_UPDATED
+  const updated = await repo.recordShipmentBooking(shipment.shipment_id, {
+    bookingNo: 'BK-BL-1',
+    blNo: '  ONEY9876543  ',
+    vessel: 'MV Ocean Star v2'
+  }, 'U_EXPORT');
+  assert.equal(updated.status, 'BOOKED');
+  assert.equal(updated.bl_no, 'ONEY9876543');
+  assert.equal(updated.vessel, 'MV Ocean Star v2');
+
+  const auditUpdated = db.prepare("SELECT metadata_json FROM shipment_audit_events WHERE entity_id = ? AND event_type = 'SHIPMENT_UPDATED'").get(shipment.shipment_id);
+  assert.equal(JSON.parse(auditUpdated.metadata_json).blNo, 'ONEY9876543');
+
+  // 5. Empty / whitespace blNo clears bl_no to null
+  const cleared = await repo.recordShipmentBooking(shipment.shipment_id, {
+    bookingNo: 'BK-BL-1',
+    blNo: '   ',
+    vessel: 'MV Ocean Star v2'
+  }, 'U_EXPORT');
+  assert.equal(cleared.bl_no, null);
 });
