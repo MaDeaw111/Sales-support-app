@@ -1562,3 +1562,261 @@ test('Logistics Partners directory and detail hide write controls for SALES_SUPP
     delete globalThis.loadLogisticsPartnerDetailFromApi;
   }
 });
+
+test('Phase 9 Payment Status renderers use D1 state and never read mock paymentRecords or expose hard delete', () => {
+  const renderCode = extractFunction('renderPayments');
+  const detailCode = extractFunction('openPaymentDetailModal');
+  const cashCode = extractFunction('openRecordPaymentModal');
+  const creditCode = extractFunction('openCreateCustomerCreditModal');
+  const applyCode = extractFunction('openApplyCreditModal');
+  const combined = [renderCode, detailCode, cashCode, creditCode, applyCode].join('\n');
+
+  assert.doesNotMatch(combined, /state\.paymentRecords/);
+  assert.doesNotMatch(combined, /deletePaymentRecord/);
+  assert.doesNotMatch(combined, /savePaymentRecord/);
+  assert.match(renderCode, /state\.paymentsDashboard/);
+  assert.match(renderCode, /totals_by_currency/);
+  assert.match(renderCode, /openPhase6ShipmentFromCalendar/);
+});
+
+test('loadPaymentsDashboardFromApi fetches /api/payments, omits customerId for EXTERNAL_SALES, and updates state', async () => {
+  const code = extractFunction('loadPaymentsDashboardFromApi');
+  const capturedUrls = [];
+  let rendered = 0;
+
+  globalThis.state = {
+    currentUser: { id: 'U_SALES1', role: 'EXTERNAL_SALES' },
+    paymentsDashboard: {
+      summary: null,
+      items: [],
+      customerCredits: [],
+      detail: null,
+      loading: false,
+      detailLoading: false,
+      error: null,
+      loaded: false,
+      activeTab: 'SHIPMENTS',
+      filters: { paymentStatus: 'PARTIAL', invoiceReadiness: 'ALL', shipmentStatus: 'ALL', currency: 'USD', customerId: 'C2', search: '' }
+    }
+  };
+  globalThis.renderView = () => { rendered++; };
+  globalThis.fetch = async (url) => {
+    capturedUrls.push(url);
+    return {
+      ok: true,
+      async json() {
+        return {
+          status: 'SUCCESS',
+          data: {
+            summary: { total_shipments: 1, paid_count: 0, partial_count: 1, unpaid_count: 0, final_invoiced_count: 1, awaiting_final_invoice_count: 0, totals_by_currency: [] },
+            items: [{ di_no: 'DI-001', payment_status: 'PARTIAL', final_invoice_total: 10000, payment_total: 4000, outstanding_balance: 6000 }],
+            customerCredits: []
+          }
+        };
+      }
+    };
+  };
+
+  try {
+    const load = new Function(`return (${code.trim()});`)();
+    await load();
+    assert.equal(capturedUrls.length, 1);
+    assert.match(capturedUrls[0], /^\/api\/payments\?/);
+    assert.match(capturedUrls[0], /paymentStatus=PARTIAL/);
+    assert.match(capturedUrls[0], /currency=USD/);
+    assert.doesNotMatch(capturedUrls[0], /customerId=/, 'EXTERNAL_SALES must not send customerId query param');
+    assert.equal(globalThis.state.paymentsDashboard.loaded, true);
+    assert.equal(globalThis.state.paymentsDashboard.items.length, 1);
+    assert.ok(rendered >= 1);
+  } finally {
+    delete globalThis.state;
+    delete globalThis.renderView;
+    delete globalThis.fetch;
+  }
+});
+
+test('submitShipmentCashPaymentToApi calls Phase 6 PUT /api/shipments-v2/:id/payment and reloads dashboard', async () => {
+  const code = extractFunction('submitShipmentCashPaymentToApi');
+  const calls = [];
+  let closed = 0;
+  let reloaded = 0;
+
+  const fields = {
+    payCashAmount: { value: '6500.5' },
+    payCashNote: { value: 'TT Ref 2026-11' },
+    payCashFormError: { textContent: '', classList: { add() {}, remove() {} } }
+  };
+
+  globalThis.state = { currentUser: { role: 'EXPORT' } };
+  globalThis.canEditPayment = () => true;
+  globalThis.document = { getElementById: (id) => fields[id] || null };
+  globalThis.closeModal = () => { closed++; };
+  globalThis.loadPaymentsDashboardFromApi = async () => { reloaded++; };
+  globalThis.fetch = async (url, init) => {
+    calls.push({ url, method: init.method, body: JSON.parse(init.body) });
+    return { ok: true, async json() { return { status: 'SUCCESS', data: { shipment: { shipment_id: 'SHP-1' } } }; } };
+  };
+
+  try {
+    const submit = new Function(`return (${code.trim()});`)();
+    await submit('SHP-1');
+    assert.deepEqual(calls, [{
+      url: '/api/shipments-v2/SHP-1/payment',
+      method: 'PUT',
+      body: { cashReceivedAmount: 6500.5, paymentNote: 'TT Ref 2026-11' }
+    }]);
+    assert.equal(closed, 1);
+    assert.equal(reloaded, 1);
+  } finally {
+    delete globalThis.state;
+    delete globalThis.canEditPayment;
+    delete globalThis.document;
+    delete globalThis.closeModal;
+    delete globalThis.loadPaymentsDashboardFromApi;
+    delete globalThis.fetch;
+  }
+});
+
+test('submitCustomerCreditToApi and submitApplyCustomerCreditToApi call Phase 6 endpoints with requestKey', async () => {
+  const createCode = extractFunction('submitCustomerCreditToApi');
+  const applyCode = extractFunction('submitApplyCustomerCreditToApi');
+  const calls = [];
+  let closed = 0;
+  let reloaded = 0;
+
+  const fields = {
+    creditCustomerId: { value: 'C1' },
+    creditAmount: { value: '1200' },
+    creditReason: { value: 'Overpayment balance' },
+    creditFormError: { textContent: '', classList: { add() {}, remove() {} } },
+    applyCreditId: { value: 'CR-1' },
+    applyCreditAmount: { value: '500' },
+    applyCreditInvoiceId: { value: 'INV-1' },
+    applyCreditFormError: { textContent: '', classList: { add() {}, remove() {} } }
+  };
+
+  globalThis.state = { currentUser: { role: 'MANAGER' } };
+  globalThis.canEditPayment = () => true;
+  globalThis.document = { getElementById: (id) => fields[id] || null };
+  globalThis.closeModal = () => { closed++; };
+  globalThis.loadPaymentsDashboardFromApi = async () => { reloaded++; };
+  globalThis.fetch = async (url, init) => {
+    calls.push({ url, method: init.method, body: JSON.parse(init.body) });
+    return { ok: true, async json() { return { status: 'SUCCESS', data: {} }; } };
+  };
+
+  try {
+    const createCredit = new Function(`return (${createCode.trim()});`)();
+    const applyCredit = new Function(`return (${applyCode.trim()});`)();
+
+    await createCredit();
+    assert.equal(calls[0].url, '/api/customer-credits');
+    assert.equal(calls[0].method, 'POST');
+    assert.equal(calls[0].body.customerId, 'C1');
+    assert.equal(calls[0].body.amount, 1200);
+    assert.equal(calls[0].body.reason, 'Overpayment balance');
+    assert.ok(typeof calls[0].body.requestKey === 'string' && calls[0].body.requestKey.length > 0);
+
+    await applyCredit('SHP-1');
+    assert.equal(calls[1].url, '/api/shipments-v2/SHP-1/credit-usage');
+    assert.equal(calls[1].method, 'POST');
+    assert.equal(calls[1].body.creditId, 'CR-1');
+    assert.equal(calls[1].body.amount, 500);
+    assert.equal(calls[1].body.invoiceId, 'INV-1');
+    assert.ok(typeof calls[1].body.requestKey === 'string' && calls[1].body.requestKey.length > 0);
+
+    assert.equal(closed, 2);
+    assert.equal(reloaded, 2);
+  } finally {
+    delete globalThis.state;
+    delete globalThis.canEditPayment;
+    delete globalThis.document;
+    delete globalThis.closeModal;
+    delete globalThis.loadPaymentsDashboardFromApi;
+    delete globalThis.fetch;
+  }
+});
+
+test('renderPayments enforces role-aware UI for EXTERNAL_SALES, SALES_SUPPORT, and ADMIN/MANAGER/EXPORT', () => {
+  const escapeFn = new Function(`return (${extractFunction('escapePaymentHtml').trim()});`)();
+  const canEditFn = new Function(`return (${extractFunction('canEditPayment').trim()});`)();
+  const badgeFn = new Function(`return (${extractFunction('paymentStatusBadge').trim()});`)();
+  const formatFn = new Function(`return (${extractFunction('formatMoney').trim()});`)();
+  const renderFn = new Function(`return (${extractFunction('renderPayments').trim()});`)();
+
+  globalThis.escapePaymentHtml = escapeFn;
+  globalThis.canEditPayment = canEditFn;
+  globalThis.paymentStatusBadge = badgeFn;
+  globalThis.formatMoney = formatFn;
+  globalThis.loadPaymentsDashboardFromApi = async () => {};
+  globalThis.lucide = { createIcons() {} };
+
+  const baseDashboard = {
+    summary: {
+      total_shipments: 1,
+      paid_count: 0,
+      partial_count: 1,
+      unpaid_count: 0,
+      final_invoiced_count: 1,
+      awaiting_final_invoice_count: 0,
+      totals_by_currency: [{ currency: 'USD', shipment_count: 1, final_invoice_total: 10000, cash_received_total: 4000, allocated_credit_total: 1000, payment_total: 5000, outstanding_total: 5000 }],
+      customer_credits_summary: { total_credits: 1, active_credits_count: 1, total_remaining_amount: 500 }
+    },
+    items: [{
+      shipment_id: 'SHP-1',
+      di_id: 'DI-1',
+      di_no: 'DI-001',
+      customer_po_no: 'CPO-1',
+      customer_name: 'Meelunie',
+      currency: 'USD',
+      shipment_status: 'DOCS_SENT',
+      invoice_readiness: 'FINALIZED',
+      final_invoice_nos: 'WCAT-001',
+      final_invoice_total: 10000,
+      cash_received_amount: 4000,
+      allocated_credit_amount: 1000,
+      payment_total: 5000,
+      outstanding_balance: 5000,
+      payment_status: 'PARTIAL',
+      commission_ready: false
+    }],
+    customerCredits: [{ credit_id: 'CR-1', customer_name: 'Meelunie', amount: 1500, used_amount: 1000, remaining_amount: 500, usage_count: 1, reason: 'Overpayment', created_at: '2026-11-01' }],
+    detail: null,
+    loading: false,
+    detailLoading: false,
+    error: null,
+    loaded: true,
+    activeTab: 'SHIPMENTS',
+    filters: { paymentStatus: 'ALL', invoiceReadiness: 'ALL', shipmentStatus: 'ALL', currency: 'ALL', customerId: 'ALL', search: '' }
+  };
+
+  try {
+    for (const [role, expectWrite, expectCreditsTab] of [
+      ['EXTERNAL_SALES', false, false],
+      ['SALES_SUPPORT', false, true],
+      ['ADMIN', true, true],
+      ['MANAGER', true, true],
+      ['EXPORT', true, true]
+    ]) {
+      globalThis.state = {
+        currentUser: { role },
+        customers: [{ id: 'C1', name: 'Meelunie' }],
+        paymentsDashboard: structuredClone(baseDashboard)
+      };
+      const container = { innerHTML: '' };
+      renderFn(container);
+      assert.equal(container.innerHTML.includes('+ Add Customer Credit'), expectWrite, `${role} + Add Customer Credit visibility`);
+      assert.equal(container.innerHTML.includes('Record Payment'), expectWrite, `${role} Record Payment visibility`);
+      assert.equal(container.innerHTML.includes('Customer Credits'), expectCreditsTab, `${role} Customer Credits tab visibility`);
+      assert.equal(container.innerHTML.includes('Delete'), false, `${role} must never see Delete Payment button`);
+    }
+  } finally {
+    delete globalThis.state;
+    delete globalThis.escapePaymentHtml;
+    delete globalThis.canEditPayment;
+    delete globalThis.paymentStatusBadge;
+    delete globalThis.formatMoney;
+    delete globalThis.loadPaymentsDashboardFromApi;
+    delete globalThis.lucide;
+  }
+});

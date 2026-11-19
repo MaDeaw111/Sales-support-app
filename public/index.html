@@ -748,6 +748,7 @@
                 state.currentUser = { id:'', name:'', role:'', email:'', customerScope:'' };
                 state.selectedLogisticsProviderId = null;
                 state.logisticsPartners = { items: [], detail: null, loading: false, detailLoading: false, error: null, loaded: false, statusFilter: 'ALL', search: '' };
+                state.paymentsDashboard = { summary: null, items: [], customerCredits: [], detail: null, loading: false, detailLoading: false, error: null, loaded: false, activeTab: 'SHIPMENTS', filters: { paymentStatus: 'ALL', invoiceReadiness: 'ALL', shipmentStatus: 'ALL', currency: 'ALL', customerId: 'ALL', search: '' } };
                 showLoginScreen('Signed out successfully.');
                 const email = document.getElementById('loginEmail');
                 if (email) email.focus();
@@ -804,6 +805,7 @@
             providerDetailTab: 'PROFILE',
             providerTypeFilter: 'ALL',
             logisticsPartners: { items: [], detail: null, loading: false, detailLoading: false, error: null, loaded: false, statusFilter: 'ALL', search: '' },
+            paymentsDashboard: { summary: null, items: [], customerCredits: [], detail: null, loading: false, detailLoading: false, error: null, loaded: false, activeTab: 'SHIPMENTS', filters: { paymentStatus: 'ALL', invoiceReadiness: 'ALL', shipmentStatus: 'ALL', currency: 'ALL', customerId: 'ALL', search: '' } },
             shippingFilter: 'ALL',
             poFilters: { search: '', customerId: 'ALL', productId: 'ALL', status: 'ALL', year: 'ALL' },
             poDocuments: {},
@@ -1090,12 +1092,11 @@
         function canCreateDI() { return ['ADMIN','SALES_SUPPORT','EXPORT'].includes(state.currentUser.role); }
         function canEditLoading() { return ['ADMIN','SALES_SUPPORT','EXPORT'].includes(state.currentUser.role); }
         function canUpdateProductionStatus() { return ['ADMIN','PRODUCTION_WAREHOUSE'].includes(state.currentUser.role); }
-        function canEditPayment() { return ['ADMIN','MANAGER','EXPORT'].includes(state.currentUser.role); }
+        function canEditPayment() { return ['ADMIN','MANAGER','EXPORT'].includes(state.currentUser?.role); }
         function canManageTruckAllocation() { return ['ADMIN','EXPORT'].includes(state.currentUser.role); }
         function canManageLogisticsPartners() { return ['ADMIN','MANAGER','EXPORT'].includes(state.currentUser?.role); }
         function canManageShipmentPartners() { return ['ADMIN','EXPORT'].includes(state.currentUser.role); }
-        function canDeletePayment() { return ['ADMIN','MANAGER'].includes(state.currentUser.role); }
-        function canViewPaymentDetail() { return ['ADMIN','MANAGER','SALES_SUPPORT','EXPORT','EXTERNAL_SALES'].includes(state.currentUser.role); }
+        function canViewPaymentDetail() { return ['ADMIN','MANAGER','SALES_SUPPORT','EXPORT'].includes(state.currentUser?.role); }
         function canManageUsers() { return ['ADMIN'].includes(state.currentUser.role); }
         function canViewUsers() { return ['ADMIN','MANAGER'].includes(state.currentUser.role); }
         function canViewExternalSalesManagement() { return ['ADMIN','MANAGER','SALES_SUPPORT'].includes(state.currentUser.role); }
@@ -8594,20 +8595,14 @@
             }
         }
 
-        // --- PAYMENTS ---
-        function getScopedPaymentRecords() {
-            const records = state.paymentRecords || [];
-            if (state.currentUser.role !== 'EXTERNAL_SALES') return records;
-            const allowedCustomers = new Set(getScopedCustomers().map(c => c.id));
-            return records.filter(r => allowedCustomers.has(r.customerId));
-        }
-
-        function derivePaymentStatus(invoiceAmount, receivedAmount) {
-            const invoice = Number(invoiceAmount || 0);
-            const received = Number(receivedAmount || 0);
-            if (received <= 0) return 'UNPAID';
-            if (invoice > 0 && received >= invoice) return 'PAID';
-            return 'PARTIAL';
+        // --- PAYMENTS (Phase 9 D1-Backed Finance Dashboard) ---
+        function escapePaymentHtml(value) {
+            return String(value ?? '')
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;')
+                .replace(/'/g, '&#39;');
         }
 
         function paymentStatusBadge(status) {
@@ -8621,173 +8616,647 @@
             return `${currency} ${Number(value || 0).toLocaleString(undefined, {minimumFractionDigits:2, maximumFractionDigits:2})}`;
         }
 
+        function ensurePaymentsDashboardState() {
+            if (!state.paymentsDashboard) {
+                state.paymentsDashboard = {
+                    summary: null,
+                    items: [],
+                    customerCredits: [],
+                    detail: null,
+                    loading: false,
+                    detailLoading: false,
+                    error: null,
+                    loaded: false,
+                    activeTab: 'SHIPMENTS',
+                    filters: { paymentStatus: 'ALL', invoiceReadiness: 'ALL', shipmentStatus: 'ALL', currency: 'ALL', customerId: 'ALL', search: '' }
+                };
+            }
+            return state.paymentsDashboard;
+        }
+
+        async function loadPaymentsDashboardFromApi(options) {
+            const opts = options || {};
+            if (!state.paymentsDashboard) {
+                state.paymentsDashboard = {
+                    summary: null,
+                    items: [],
+                    customerCredits: [],
+                    detail: null,
+                    loading: false,
+                    detailLoading: false,
+                    error: null,
+                    loaded: false,
+                    activeTab: 'SHIPMENTS',
+                    filters: { paymentStatus: 'ALL', invoiceReadiness: 'ALL', shipmentStatus: 'ALL', currency: 'ALL', customerId: 'ALL', search: '' }
+                };
+            }
+            const pd = state.paymentsDashboard;
+            if (pd.loading && !opts.force) return pd;
+            pd.loading = true;
+            pd.error = null;
+
+            const isExternal = state.currentUser?.role === 'EXTERNAL_SALES';
+            const f = pd.filters || {};
+            const params = new URLSearchParams();
+            if (f.paymentStatus && f.paymentStatus !== 'ALL') params.set('paymentStatus', f.paymentStatus);
+            if (f.invoiceReadiness && f.invoiceReadiness !== 'ALL') params.set('invoiceReadiness', f.invoiceReadiness);
+            if (f.shipmentStatus && f.shipmentStatus !== 'ALL') params.set('shipmentStatus', f.shipmentStatus);
+            if (f.currency && f.currency !== 'ALL') params.set('currency', f.currency);
+            if (!isExternal && f.customerId && f.customerId !== 'ALL') params.set('customerId', f.customerId);
+            if (String(f.search || '').trim()) params.set('search', String(f.search).trim());
+
+            const qs = params.toString();
+            const url = qs ? `/api/payments?${qs}` : '/api/payments';
+
+            try {
+                const res = await fetch(url);
+                const body = await res.json().catch(() => null);
+                if (!res.ok || body?.status !== 'SUCCESS' || !body.data || !Array.isArray(body.data.items)) {
+                    pd.error = body?.message || 'Failed to load payment status dashboard.';
+                    return pd;
+                }
+                pd.summary = body.data.summary || null;
+                pd.items = body.data.items;
+                pd.customerCredits = Array.isArray(body.data.customerCredits) ? body.data.customerCredits : [];
+                pd.loaded = true;
+                pd.error = null;
+                return pd;
+            } catch (err) {
+                pd.error = err?.message || 'Failed to load payment status dashboard.';
+                return pd;
+            } finally {
+                pd.loading = false;
+                if (typeof renderView === 'function') renderView();
+            }
+        }
+
+        async function loadPaymentDetailFromApi(shipmentId) {
+            const id = String(shipmentId || '').trim();
+            if (!id) return null;
+            const pd = ensurePaymentsDashboardState();
+            pd.detailLoading = true;
+            try {
+                const res = await fetch(`/api/payments/${encodeURIComponent(id)}`);
+                const body = await res.json().catch(() => null);
+                if (!res.ok || body?.status !== 'SUCCESS' || !body.data?.shipment) {
+                    return null;
+                }
+                pd.detail = body.data;
+                return pd.detail;
+            } catch (err) {
+                console.error('Failed to load payment detail:', err);
+                return null;
+            } finally {
+                pd.detailLoading = false;
+            }
+        }
+
+        function setPaymentsDashboardTab(tab) {
+            const pd = ensurePaymentsDashboardState();
+            pd.activeTab = tab === 'CREDITS' ? 'CREDITS' : 'SHIPMENTS';
+            renderView();
+        }
+
+        function setPaymentsFilter(key, value) {
+            const pd = ensurePaymentsDashboardState();
+            pd.filters = pd.filters || { paymentStatus: 'ALL', invoiceReadiness: 'ALL', shipmentStatus: 'ALL', currency: 'ALL', customerId: 'ALL', search: '' };
+            pd.filters[key] = value;
+            loadPaymentsDashboardFromApi({ force: true });
+        }
+
+        function resetPaymentsFilters() {
+            const pd = ensurePaymentsDashboardState();
+            pd.filters = { paymentStatus: 'ALL', invoiceReadiness: 'ALL', shipmentStatus: 'ALL', currency: 'ALL', customerId: 'ALL', search: '' };
+            loadPaymentsDashboardFromApi({ force: true });
+        }
+
         function renderPayments(container) {
-            const records = getScopedPaymentRecords();
-            const customerMap = Object.fromEntries((state.customers || []).map(c => [c.id, c]));
-            const paid = records.filter(r => derivePaymentStatus(r.invoiceAmount, r.receivedAmount) === 'PAID').length;
-            const partial = records.filter(r => derivePaymentStatus(r.invoiceAmount, r.receivedAmount) === 'PARTIAL').length;
-            const unpaid = records.filter(r => derivePaymentStatus(r.invoiceAmount, r.receivedAmount) === 'UNPAID').length;
-            const totalInvoice = records.reduce((a,r) => a + Number(r.invoiceAmount || 0), 0);
-            const totalReceived = records.reduce((a,r) => a + Number(r.receivedAmount || 0), 0);
-            const totalBalance = Math.max(0, totalInvoice - totalReceived);
-            const role = state.currentUser.role;
-            const externalNote = role === 'EXTERNAL_SALES' ? '<span class="text-[10px] font-bold bg-blue-50 text-blue-700 px-2 py-1 rounded border border-blue-100">OWN CUSTOMERS ONLY</span>' : '';
+            if (!state.paymentsDashboard) {
+                state.paymentsDashboard = {
+                    summary: null,
+                    items: [],
+                    customerCredits: [],
+                    detail: null,
+                    loading: false,
+                    detailLoading: false,
+                    error: null,
+                    loaded: false,
+                    activeTab: 'SHIPMENTS',
+                    filters: { paymentStatus: 'ALL', invoiceReadiness: 'ALL', shipmentStatus: 'ALL', currency: 'ALL', customerId: 'ALL', search: '' }
+                };
+            }
+            const pd = state.paymentsDashboard;
+            if (!pd.loaded && !pd.loading && !pd.error) {
+                loadPaymentsDashboardFromApi();
+            }
 
-            container.innerHTML = `
-                <div class="space-y-5">
-                    <div class="flex flex-col md:flex-row md:items-center justify-between gap-3">
-                        <div>
-                            <div class="flex items-center gap-2"><h2 class="text-xl font-bold text-slate-900">Payment Status</h2>${externalNote}</div>
-                            <p class="text-xs text-slate-500 mt-1">Track customer receipts against DI / WCAT / Invoice for export coordination and commission readiness.</p>
-                        </div>
-                        ${canEditPayment() ? `<button onclick="openPaymentModal()" class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-xs font-bold flex items-center gap-2 shadow-sm"><i data-lucide="plus-circle" class="w-4 h-4"></i>Add Payment Record</button>` : `<span class="text-[10px] font-bold text-slate-500 bg-white border border-slate-200 rounded px-3 py-2">VIEW ONLY</span>`}
-                    </div>
-
-                    <div class="grid grid-cols-2 lg:grid-cols-5 gap-3">
-                        <div class="bg-white border border-slate-200 rounded-xl p-4"><div class="text-[10px] uppercase font-bold text-slate-400">Invoices</div><div class="text-xl font-black mt-1">${records.length}</div></div>
-                        <div class="bg-white border border-emerald-200 rounded-xl p-4"><div class="text-[10px] uppercase font-bold text-emerald-600">Paid</div><div class="text-xl font-black mt-1 text-emerald-700">${paid}</div></div>
-                        <div class="bg-white border border-amber-200 rounded-xl p-4"><div class="text-[10px] uppercase font-bold text-amber-600">Partial</div><div class="text-xl font-black mt-1 text-amber-700">${partial}</div></div>
-                        <div class="bg-white border border-rose-200 rounded-xl p-4"><div class="text-[10px] uppercase font-bold text-rose-600">Unpaid</div><div class="text-xl font-black mt-1 text-rose-700">${unpaid}</div></div>
-                        <div class="bg-slate-900 text-white rounded-xl p-4"><div class="text-[10px] uppercase font-bold text-slate-300">Outstanding</div><div class="text-lg font-black mt-1">${formatMoney(totalBalance)}</div></div>
-                    </div>
-
-                    <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
-                        <div class="overflow-x-auto">
-                            <table class="ui-table w-full text-left text-xs min-w-[1050px]">
-                                <thead class="bg-slate-100 border-b border-slate-200 text-[10px] uppercase text-slate-500 font-bold">
-                                    <tr>
-                                        <th class="p-3">DI</th>
-                                        <th class="p-3">WCAT / Invoice</th>
-                                        <th class="p-3">Customer</th>
-                                        <th class="p-3 text-right">Invoice Amount</th>
-                                        <th class="p-3 text-right">Received</th>
-                                        <th class="p-3 text-right">Balance</th>
-                                        <th class="p-3 text-center">Payment Date</th>
-                                        <th class="p-3">Bank Reference</th>
-                                        <th class="p-3 text-center">Status</th>
-                                        <th class="p-3 text-center">Action</th>
-                                    </tr>
-                                </thead>
-                                <tbody class="divide-y divide-slate-100">
-                                    ${records.length ? records.map(r => {
-                                        const status = derivePaymentStatus(r.invoiceAmount, r.receivedAmount);
-                                        const balance = Math.max(0, Number(r.invoiceAmount || 0) - Number(r.receivedAmount || 0));
-                                        const c = customerMap[r.customerId];
-                                        const di = (state.diRecords || []).find(d => d.id === r.diId);
-                                        return `<tr class="hover:bg-slate-50">
-                                            <td class="p-3"><div class="font-bold text-slate-800">${di?.diNo || '-'}</div><div class="text-[10px] font-mono text-slate-400">${r.diId || '-'}</div></td>
-                                            <td class="p-3"><div class="font-mono font-bold text-blue-700">${r.wcatNo || '-'}</div><div class="text-[10px] text-slate-400">${r.id}</div></td>
-                                            <td class="p-3 font-bold text-slate-800">${c?.name || r.customerId || '-'}</td>
-                                            <td class="p-3 text-right font-bold">${formatMoney(r.invoiceAmount, r.currency)}</td>
-                                            <td class="p-3 text-right font-bold text-emerald-700">${formatMoney(r.receivedAmount, r.currency)}</td>
-                                            <td class="p-3 text-right font-bold ${balance > 0 ? 'text-rose-700' : 'text-slate-500'}">${formatMoney(balance, r.currency)}</td>
-                                            <td class="p-3 text-center">${r.paymentDate || '-'}</td>
-                                            <td class="p-3"><div class="font-mono text-[11px]">${r.bankReference || '-'}</div>${r.note ? `<div class="text-[10px] text-slate-400 mt-1 truncate max-w-[180px]" title="${r.note}">${r.note}</div>` : ''}</td>
-                                            <td class="p-3 text-center">${paymentStatusBadge(status)}</td>
-                                            <td class="p-3 text-center whitespace-nowrap">
-                                                ${canEditPayment() ? `<button onclick="openPaymentModal('${r.id}')" class="text-amber-600 hover:underline font-bold mr-2">Edit</button>` : '<span class="text-slate-300">View</span>'}
-                                                ${canDeletePayment() ? `<button onclick="deletePaymentRecord('${r.id}')" class="text-rose-600 hover:underline font-bold">Delete</button>` : ''}
-                                            </td>
-                                        </tr>`;
-                                    }).join('') : `<tr><td colspan="10" class="p-8 text-center text-slate-400">No payment records in your scope.</td></tr>`}
-                                </tbody>
-                            </table>
-                        </div>
-                    </div>
-
-                    ${role === 'EXPORT' ? `<div class="bg-blue-50 border border-blue-200 rounded-lg p-3 text-xs text-blue-800"><strong>EXPORT FULL ACCESS:</strong> Export can create and edit payment coordination records because the team coordinates customer payment follow-up. Delete remains Manager/Admin only.</div>` : ''}
-                </div>`;
-            lucide.createIcons();
-        }
-
-        function getPaymentEligibleDIs() {
-            return getScopedDIs().filter(di => di.status !== 'CANCELLED' && !!di.wcatNo);
-        }
-
-        function openPaymentModal(paymentId='') {
-            if (!canEditPayment()) { alert('Permission denied: Payment edit is limited to Export, Manager and Admin.'); return; }
-            const existing = (state.paymentRecords || []).find(r => r.id === paymentId) || null;
-            const availableDIs = getPaymentEligibleDIs();
-            const defaultDI = existing ? availableDIs.find(di => di.id === existing.diId) : availableDIs[0];
-            const po = defaultDI ? (state.pos || []).find(p => p.id === defaultDI.poId) : null;
-            const customerId = existing?.customerId || po?.customerId || '';
-            const invoiceAmount = existing?.invoiceAmount ?? 0;
-            const receivedAmount = existing?.receivedAmount ?? 0;
-            openModal(`
-                <div class="flex justify-between items-start border-b border-slate-100 pb-3 mb-4">
-                    <div><h3 class="text-lg font-bold text-slate-900">${existing ? 'Edit Payment Record' : 'Add Payment Record'}</h3><p class="text-xs text-slate-500 mt-1">Payment is tracked against one DI / WCAT so commission can later use the same reference.</p></div>
-                    <button onclick="closeModal()" class="text-slate-400 hover:text-slate-700"><i data-lucide="x" class="w-5 h-5"></i></button>
-                </div>
-                <div class="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
-                    <label class="space-y-1 md:col-span-2"><span class="font-bold text-slate-600">WCAT / DI</span><select id="payDiId" onchange="syncPaymentDIFields()" class="w-full border border-slate-300 rounded-lg px-3 py-2 bg-white">${availableDIs.map(di => `<option value="${di.id}" ${di.id === (existing?.diId || defaultDI?.id) ? 'selected' : ''}>${di.wcatNo || 'Waiting WCAT'} · ${di.diNo || di.id}</option>`).join('')}</select></label>
-                    <div class="md:col-span-2 grid grid-cols-1 md:grid-cols-3 gap-3 bg-slate-50 border border-slate-200 rounded-lg p-3">
-                        <div><div class="text-[10px] uppercase font-bold text-slate-400">Customer</div><div id="payCustomerDisplay" class="font-bold text-slate-800 mt-1">-</div></div>
-                        <div><div class="text-[10px] uppercase font-bold text-slate-400">PO</div><div id="payPoDisplay" class="font-bold text-slate-800 mt-1">-</div></div>
-                        <div><div class="text-[10px] uppercase font-bold text-slate-400">WCAT</div><div id="payWcatDisplay" class="font-mono font-bold text-blue-700 mt-1">-</div></div>
-                    </div>
-                    <label class="space-y-1"><span class="font-bold text-slate-600">Currency</span><select id="payCurrency" class="w-full border border-slate-300 rounded-lg px-3 py-2"><option value="USD" ${(existing?.currency || po?.poCurrency || 'USD')==='USD'?'selected':''}>USD</option><option value="EUR" ${existing?.currency==='EUR'?'selected':''}>EUR</option><option value="THB" ${existing?.currency==='THB'?'selected':''}>THB</option></select></label>
-                    <label class="space-y-1"><span class="font-bold text-slate-600">Payment Date</span><input id="payDate" type="date" value="${existing?.paymentDate || getTodayIso()}" class="w-full border border-slate-300 rounded-lg px-3 py-2"></label>
-                    <label class="space-y-1"><span class="font-bold text-slate-600">Invoice Amount</span><input id="payInvoice" type="number" step="0.01" value="${invoiceAmount}" class="w-full border border-slate-300 rounded-lg px-3 py-2"></label>
-                    <label class="space-y-1"><span class="font-bold text-slate-600">Received Amount</span><input id="payReceived" type="number" step="0.01" value="${receivedAmount}" class="w-full border border-slate-300 rounded-lg px-3 py-2"></label>
-                    <label class="space-y-1 md:col-span-2"><span class="font-bold text-slate-600">Bank Reference</span><input id="payBankRef" value="${existing?.bankReference || ''}" class="w-full border border-slate-300 rounded-lg px-3 py-2" placeholder="TT / Bank reference"></label>
-                    <label class="space-y-1 md:col-span-2"><span class="font-bold text-slate-600">Note</span><textarea id="payNote" rows="3" class="w-full border border-slate-300 rounded-lg px-3 py-2">${existing?.note || ''}</textarea></label>
-                </div>
-                <input type="hidden" id="payRecordId" value="${existing?.id || ''}">
-                <input type="hidden" id="payCustomerId" value="${customerId}">
-                <div class="mt-5 flex justify-end gap-2"><button onclick="closeModal()" class="px-4 py-2 rounded-lg border border-slate-300 text-slate-600 text-xs font-bold">Cancel</button><button onclick="savePaymentRecord()" class="px-4 py-2 rounded-lg bg-blue-600 text-white text-xs font-bold">Save Payment</button></div>
-            `);
-            syncPaymentDIFields();
-        }
-
-        function syncPaymentDIFields() {
-            const diId = document.getElementById('payDiId')?.value;
-            const di = (state.diRecords || []).find(d => d.id === diId);
-            const po = di ? (state.pos || []).find(p => p.id === di.poId) : null;
-            const customer = po ? (state.customers || []).find(c => c.id === po.customerId) : null;
-            if (!di) return;
-            const cust = document.getElementById('payCustomerId'); if (cust) cust.value = po?.customerId || '';
-            const custDisplay = document.getElementById('payCustomerDisplay'); if (custDisplay) custDisplay.textContent = customer?.name || po?.customerId || '-';
-            const poDisplay = document.getElementById('payPoDisplay'); if (poDisplay) poDisplay.textContent = po?.customerPoNo || po?.id || '-';
-            const wcatDisplay = document.getElementById('payWcatDisplay'); if (wcatDisplay) wcatDisplay.textContent = di.wcatNo || '-';
-            const currency = document.getElementById('payCurrency'); if (currency && po?.poCurrency) currency.value = po.poCurrency;
-        }
-
-        function savePaymentRecord() {
-            if (!canEditPayment()) { alert('Permission denied.'); return; }
-            const id = document.getElementById('payRecordId').value;
-            const diId = document.getElementById('payDiId').value;
-            const di = (state.diRecords || []).find(d => d.id === diId);
-            const po = di ? (state.pos || []).find(p => p.id === di.poId) : null;
-            if (!di || !di.wcatNo) { alert('Select a DI that already has WCAT / Invoice assigned.'); return; }
-            const invoiceAmount = Number(document.getElementById('payInvoice').value || 0);
-            const receivedAmount = Number(document.getElementById('payReceived').value || 0);
-            if (invoiceAmount <= 0) { alert('Invoice Amount must be greater than 0.'); return; }
-            if (receivedAmount < 0) { alert('Received Amount cannot be negative.'); return; }
-            const record = {
-                id: id || `PAY-${new Date().getFullYear()}-${String((state.paymentRecords || []).length + 1).padStart(3,'0')}`,
-                diId,
-                customerId: po?.customerId || document.getElementById('payCustomerId').value,
-                wcatNo: di?.wcatNo || '-',
-                currency: document.getElementById('payCurrency').value,
-                invoiceAmount,
-                receivedAmount,
-                paymentDate: document.getElementById('payDate').value,
-                bankReference: document.getElementById('payBankRef').value.trim(),
-                status: derivePaymentStatus(invoiceAmount, receivedAmount),
-                note: document.getElementById('payNote').value.trim()
+            const role = state.currentUser?.role || '';
+            const isExternal = role === 'EXTERNAL_SALES';
+            const canWrite = canEditPayment();
+            const activeTab = isExternal ? 'SHIPMENTS' : (pd.activeTab || 'SHIPMENTS');
+            const summary = pd.summary || {
+                total_shipments: 0,
+                paid_count: 0,
+                partial_count: 0,
+                unpaid_count: 0,
+                final_invoiced_count: 0,
+                awaiting_final_invoice_count: 0,
+                totals_by_currency: [],
+                customer_credits_summary: null
             };
-            const idx = (state.paymentRecords || []).findIndex(r => r.id === id);
-            if (idx >= 0) state.paymentRecords[idx] = record; else state.paymentRecords.push(record);
-            if (di) di.paymentStatus = record.status;
-            closeModal();
-            renderView();
+            const items = Array.isArray(pd.items) ? pd.items : [];
+            const credits = Array.isArray(pd.customerCredits) ? pd.customerCredits : [];
+            const filters = pd.filters || { paymentStatus: 'ALL', invoiceReadiness: 'ALL', shipmentStatus: 'ALL', currency: 'ALL', customerId: 'ALL', search: '' };
+
+            const readinessBadge = (r) => {
+                if (r === 'FINALIZED') return '<span class="px-1.5 py-0.5 rounded bg-emerald-50 text-emerald-700 font-bold text-[9px]">FINAL</span>';
+                if (r === 'PRELIMINARY_ONLY') return '<span class="px-1.5 py-0.5 rounded bg-amber-50 text-amber-700 font-bold text-[9px]">PRELIM ONLY</span>';
+                return '<span class="px-1.5 py-0.5 rounded bg-slate-100 text-slate-500 font-bold text-[9px]">NO INVOICE</span>';
+            };
+
+            const currencyTotalsHtml = (summary.totals_by_currency || []).length
+                ? `<div class="grid md:grid-cols-3 gap-3">${summary.totals_by_currency.map(t => `
+                    <div class="bg-slate-900 text-white rounded-xl p-4 space-y-1.5">
+                        <div class="flex items-center justify-between">
+                            <span class="text-[10px] font-black uppercase tracking-wider text-blue-300">${escapePaymentHtml(t.currency)} Totals (${Number(t.shipment_count || 0)} shipments)</span>
+                            <span class="text-[10px] font-bold text-slate-400">FINAL Invoiced</span>
+                        </div>
+                        <div class="flex items-baseline justify-between">
+                            <span class="text-[11px] text-slate-300">Outstanding</span>
+                            <span class="text-lg font-black text-rose-300">${escapePaymentHtml(formatMoney(t.outstanding_total, t.currency))}</span>
+                        </div>
+                        <div class="flex items-center justify-between text-[11px] text-slate-300">
+                            <span>Invoiced: <strong class="text-white">${escapePaymentHtml(formatMoney(t.final_invoice_total, t.currency))}</strong></span>
+                            <span>Received: <strong class="text-emerald-300">${escapePaymentHtml(formatMoney(t.payment_total, t.currency))}</strong></span>
+                        </div>
+                        ${!isExternal ? `<div class="text-[10px] text-slate-400 pt-1 border-t border-slate-800 flex justify-between">
+                            <span>Cash: ${escapePaymentHtml(formatMoney(t.cash_received_total, t.currency))}</span>
+                            <span>Credit: ${escapePaymentHtml(formatMoney(t.allocated_credit_total, t.currency))}</span>
+                        </div>` : ''}
+                    </div>`).join('')}</div>`
+                : '';
+
+            const customerOptions = (state.customers || []).map(c => {
+                const cid = c.customer_id || c.id;
+                const cname = c.customer_name || c.name || cid;
+                return `<option value="${escapePaymentHtml(cid)}" ${filters.customerId === cid ? 'selected' : ''}>${escapePaymentHtml(cname)}</option>`;
+            }).join('');
+
+            const filterBarHtml = `<div class="bg-white rounded-xl border border-slate-200 p-3 flex flex-wrap items-center gap-2 text-xs">
+                <select onchange="setPaymentsFilter('paymentStatus', this.value)" class="border rounded-lg px-2.5 py-1.5 bg-white font-bold text-slate-700">
+                    <option value="ALL" ${filters.paymentStatus === 'ALL' ? 'selected' : ''}>All Payment Status</option>
+                    <option value="UNPAID" ${filters.paymentStatus === 'UNPAID' ? 'selected' : ''}>UNPAID</option>
+                    <option value="PARTIAL" ${filters.paymentStatus === 'PARTIAL' ? 'selected' : ''}>PARTIAL</option>
+                    <option value="PAID" ${filters.paymentStatus === 'PAID' ? 'selected' : ''}>PAID</option>
+                </select>
+                <select onchange="setPaymentsFilter('invoiceReadiness', this.value)" class="border rounded-lg px-2.5 py-1.5 bg-white font-bold text-slate-700">
+                    <option value="ALL" ${filters.invoiceReadiness === 'ALL' ? 'selected' : ''}>All Invoice States</option>
+                    <option value="FINALIZED" ${filters.invoiceReadiness === 'FINALIZED' ? 'selected' : ''}>FINAL Invoiced</option>
+                    <option value="PRELIMINARY_ONLY" ${filters.invoiceReadiness === 'PRELIMINARY_ONLY' ? 'selected' : ''}>Preliminary Only</option>
+                    <option value="NO_INVOICE" ${filters.invoiceReadiness === 'NO_INVOICE' ? 'selected' : ''}>No Invoice Yet</option>
+                </select>
+                <select onchange="setPaymentsFilter('currency', this.value)" class="border rounded-lg px-2.5 py-1.5 bg-white font-bold text-slate-700">
+                    <option value="ALL" ${filters.currency === 'ALL' ? 'selected' : ''}>All Currencies</option>
+                    <option value="USD" ${filters.currency === 'USD' ? 'selected' : ''}>USD</option>
+                    <option value="EUR" ${filters.currency === 'EUR' ? 'selected' : ''}>EUR</option>
+                    <option value="THB" ${filters.currency === 'THB' ? 'selected' : ''}>THB</option>
+                </select>
+                ${!isExternal ? `<select onchange="setPaymentsFilter('customerId', this.value)" class="border rounded-lg px-2.5 py-1.5 bg-white font-bold text-slate-700 max-w-[200px]">
+                    <option value="ALL" ${filters.customerId === 'ALL' ? 'selected' : ''}>All Customers</option>
+                    ${customerOptions}
+                </select>` : ''}
+                <input type="search" value="${escapePaymentHtml(filters.search || '')}" onchange="setPaymentsFilter('search', this.value)" placeholder="Search DI, PO, invoice, customer..." class="border rounded-lg px-3 py-1.5 bg-white flex-1 min-w-[200px]">
+                <button onclick="resetPaymentsFilters()" class="px-3 py-1.5 rounded-lg border text-slate-600 font-bold hover:bg-slate-50">Reset</button>
+            </div>`;
+
+            let tabContentHtml = '';
+            if (activeTab === 'CREDITS' && !isExternal) {
+                const creditRows = credits.map(c => `<tr class="hover:bg-slate-50">
+                    <td class="p-3 font-mono font-bold text-slate-700">${escapePaymentHtml(c.credit_id)}</td>
+                    <td class="p-3 font-bold text-slate-900">${escapePaymentHtml(c.customer_name || c.customer_id)}</td>
+                    <td class="p-3 text-right font-bold">${Number(c.amount || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                    <td class="p-3 text-right text-slate-600">${Number(c.used_amount || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                    <td class="p-3 text-right font-black ${Number(c.remaining_amount || 0) > 0 ? 'text-emerald-700' : 'text-slate-400'}">${Number(c.remaining_amount || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                    <td class="p-3 text-center">${Number(c.usage_count || 0)}</td>
+                    <td class="p-3 text-slate-700">${escapePaymentHtml(c.reason || '-')}</td>
+                    <td class="p-3 font-mono text-[11px] text-slate-500">${escapePaymentHtml(String(c.created_at || '').slice(0, 10))}</td>
+                </tr>`).join('');
+                tabContentHtml = `<div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+                    <div class="overflow-x-auto">
+                        <table class="ui-table w-full text-left text-xs min-w-[900px]">
+                            <thead class="bg-slate-100 border-b border-slate-200 text-[10px] uppercase text-slate-500 font-bold">
+                                <tr>
+                                    <th class="p-3">Credit ID</th>
+                                    <th class="p-3">Customer</th>
+                                    <th class="p-3 text-right">Total Credit</th>
+                                    <th class="p-3 text-right">Used</th>
+                                    <th class="p-3 text-right">Remaining</th>
+                                    <th class="p-3 text-center">Allocations</th>
+                                    <th class="p-3">Reason</th>
+                                    <th class="p-3">Created</th>
+                                </tr>
+                            </thead>
+                            <tbody class="divide-y divide-slate-100">${creditRows || `<tr><td colspan="8" class="p-8 text-center text-slate-400">No customer credits recorded yet.</td></tr>`}</tbody>
+                        </table>
+                    </div>
+                </div>`;
+            } else {
+                const shipmentRows = pd.loading && !pd.loaded
+                    ? `<tr><td colspan="${isExternal ? 9 : 10}" class="p-8 text-center text-slate-400">Loading payment statuses...</td></tr>`
+                    : items.length
+                        ? items.map(r => {
+                            const cur = r.currency || 'USD';
+                            const canApplyCredit = canWrite && r.invoice_readiness === 'FINALIZED' && Number(r.outstanding_balance || 0) > 0;
+                            return `<tr class="hover:bg-slate-50">
+                                <td class="p-3">
+                                    <div class="font-bold text-slate-900">${escapePaymentHtml(r.di_no || '-')}</div>
+                                    ${!isExternal && r.booking_no ? `<div class="text-[10px] font-mono text-slate-400">BK: ${escapePaymentHtml(r.booking_no)}</div>` : ''}
+                                </td>
+                                <td class="p-3">
+                                    <div class="font-bold text-slate-800">${escapePaymentHtml(r.customer_name || '-')}</div>
+                                    <div class="text-[10px] font-mono text-slate-400">${escapePaymentHtml(r.customer_po_no || r.po_id || '-')}</div>
+                                </td>
+                                <td class="p-3">
+                                    <div class="font-mono font-bold text-blue-700">${escapePaymentHtml(r.final_invoice_nos || '-')}</div>
+                                    <div class="mt-0.5 flex items-center gap-1.5">${readinessBadge(r.invoice_readiness)}${r.latest_final_invoice_date ? `<span class="text-[10px] text-slate-400">${escapePaymentHtml(r.latest_final_invoice_date)}</span>` : ''}</div>
+                                </td>
+                                <td class="p-3 text-right font-bold">
+                                    ${r.invoice_readiness === 'FINALIZED' ? escapePaymentHtml(formatMoney(r.final_invoice_total, cur)) : `<span class="text-slate-400">-</span>`}
+                                    ${!isExternal && r.invoice_readiness === 'PRELIMINARY_ONLY' ? `<div class="text-[10px] text-amber-600 font-normal">Prelim: ${escapePaymentHtml(formatMoney(r.preliminary_invoice_total, cur))}</div>` : ''}
+                                </td>
+                                <td class="p-3 text-right">
+                                    <div class="font-bold text-emerald-700">${escapePaymentHtml(formatMoney(r.payment_total, cur))}</div>
+                                    ${!isExternal ? `<div class="text-[10px] text-slate-400">Cash ${escapePaymentHtml(formatMoney(r.cash_received_amount, cur))}${Number(r.allocated_credit_amount || 0) > 0 ? ` · Credit ${escapePaymentHtml(formatMoney(r.allocated_credit_amount, cur))}` : ''}</div>` : ''}
+                                </td>
+                                <td class="p-3 text-right font-bold ${Number(r.outstanding_balance || 0) > 0 ? 'text-rose-700' : 'text-slate-500'}">
+                                    ${r.invoice_readiness === 'FINALIZED' ? escapePaymentHtml(formatMoney(r.outstanding_balance, cur)) : '<span class="text-slate-400">-</span>'}
+                                </td>
+                                <td class="p-3 text-center">
+                                    <span class="px-2 py-0.5 rounded bg-slate-100 text-slate-700 font-bold text-[10px]">${escapePaymentHtml(r.shipment_status || '-')}</span>
+                                    ${r.etd ? `<div class="text-[10px] text-slate-400 mt-0.5">ETD ${escapePaymentHtml(r.etd)}</div>` : ''}
+                                </td>
+                                <td class="p-3 text-center">${paymentStatusBadge(r.payment_status)}</td>
+                                ${isExternal
+                                    ? `<td class="p-3 text-center">${r.commission_ready ? '<span class="px-2 py-0.5 rounded bg-emerald-100 text-emerald-700 font-bold text-[10px]">READY</span>' : '<span class="px-2 py-0.5 rounded bg-slate-100 text-slate-500 font-bold text-[10px]">PENDING</span>'}</td>`
+                                    : `<td class="p-3 text-right whitespace-nowrap space-x-1">
+                                        <button onclick="openPaymentDetailModal('${escapePaymentHtml(r.shipment_id)}')" class="px-2 py-1 rounded border text-[10px] font-bold hover:bg-slate-50">Details</button>
+                                        ${canWrite ? `<button onclick="openRecordPaymentModal('${escapePaymentHtml(r.shipment_id)}')" class="px-2 py-1 rounded bg-blue-600 text-white text-[10px] font-bold hover:bg-blue-700">Record Payment</button>` : ''}
+                                        ${canApplyCredit ? `<button onclick="openApplyCreditModal('${escapePaymentHtml(r.shipment_id)}')" class="px-2 py-1 rounded bg-amber-600 text-white text-[10px] font-bold hover:bg-amber-700">Apply Credit</button>` : ''}
+                                        ${r.di_id ? `<button onclick="openPhase6ShipmentFromCalendar('${escapePaymentHtml(r.di_id)}')" class="px-2 py-1 rounded border text-blue-700 text-[10px] font-bold hover:bg-blue-50">Open Shipment</button>` : ''}
+                                    </td>`}
+                            </tr>`;
+                        }).join('')
+                        : `<tr><td colspan="${isExternal ? 9 : 10}" class="p-8 text-center text-slate-400">No shipment payment records match the current filters.</td></tr>`;
+
+                tabContentHtml = `${filterBarHtml}
+                <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+                    <div class="overflow-x-auto">
+                        <table class="ui-table w-full text-left text-xs min-w-[1080px]">
+                            <thead class="bg-slate-100 border-b border-slate-200 text-[10px] uppercase text-slate-500 font-bold">
+                                <tr>
+                                    <th class="p-3">DI</th>
+                                    <th class="p-3">Customer / PO</th>
+                                    <th class="p-3">Final Invoice</th>
+                                    <th class="p-3 text-right">Invoice Total</th>
+                                    <th class="p-3 text-right">${isExternal ? 'Received' : 'Cash + Credit'}</th>
+                                    <th class="p-3 text-right">Outstanding</th>
+                                    <th class="p-3 text-center">Shipment</th>
+                                    <th class="p-3 text-center">Payment Status</th>
+                                    ${isExternal ? '<th class="p-3 text-center">Commission</th>' : '<th class="p-3 text-right">Actions</th>'}
+                                </tr>
+                            </thead>
+                            <tbody class="divide-y divide-slate-100">${shipmentRows}</tbody>
+                        </table>
+                    </div>
+                </div>`;
+            }
+
+            const roleBadge = isExternal
+                ? '<span class="text-[10px] font-bold bg-blue-50 text-blue-700 px-2 py-1 rounded border border-blue-100">OWN CUSTOMERS ONLY</span>'
+                : (!canWrite ? '<span class="text-[10px] font-bold text-slate-500 bg-white border border-slate-200 rounded px-2 py-1">VIEW ONLY</span>' : '');
+
+            const creditsRemaining = summary.customer_credits_summary ? Number(summary.customer_credits_summary.total_remaining_amount || 0) : 0;
+
+            container.innerHTML = `<div class="space-y-5">
+                <div class="flex flex-col md:flex-row md:items-center justify-between gap-3">
+                    <div>
+                        <div class="flex items-center gap-2"><h2 class="text-xl font-black text-slate-900">Payment Status</h2>${roleBadge}</div>
+                        <p class="text-xs text-slate-500 mt-1">${isExternal ? 'Track payment statuses, final invoice totals, and commission readiness for your assigned customers.' : 'Live Finance dashboard consolidated from Phase 6 Shipments, Final Invoices, Customer Credits, and payment audit history.'}</p>
+                    </div>
+                    <div class="flex items-center gap-2">
+                        <button onclick="loadPaymentsDashboardFromApi({ force: true })" class="px-3 py-2 rounded-lg border bg-white text-slate-600 text-xs font-bold hover:bg-slate-50">Refresh</button>
+                        ${canWrite ? `<button onclick="openCreateCustomerCreditModal()" class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-xs font-bold shadow-sm">+ Add Customer Credit</button>` : ''}
+                    </div>
+                </div>
+
+                ${pd.error ? `<div class="bg-rose-50 border border-rose-200 text-rose-700 rounded-xl px-4 py-3 text-xs font-bold">${escapePaymentHtml(pd.error)}</div>` : ''}
+
+                <div class="grid grid-cols-2 lg:grid-cols-5 gap-3">
+                    <div class="bg-white border border-slate-200 rounded-xl p-4"><div class="text-[10px] uppercase font-bold text-slate-400">Active Shipments</div><div class="text-xl font-black mt-1">${Number(summary.total_shipments || 0)}</div></div>
+                    <div class="bg-white border border-emerald-200 rounded-xl p-4"><div class="text-[10px] uppercase font-bold text-emerald-600">Paid</div><div class="text-xl font-black mt-1 text-emerald-700">${Number(summary.paid_count || 0)}</div></div>
+                    <div class="bg-white border border-amber-200 rounded-xl p-4"><div class="text-[10px] uppercase font-bold text-amber-600">Partial</div><div class="text-xl font-black mt-1 text-amber-700">${Number(summary.partial_count || 0)}</div></div>
+                    <div class="bg-white border border-rose-200 rounded-xl p-4"><div class="text-[10px] uppercase font-bold text-rose-600">Unpaid</div><div class="text-xl font-black mt-1 text-rose-700">${Number(summary.unpaid_count || 0)}</div></div>
+                    <div class="bg-white border border-slate-200 rounded-xl p-4"><div class="text-[10px] uppercase font-bold text-slate-500">Awaiting Final Inv.</div><div class="text-xl font-black mt-1 text-slate-800">${Number(summary.awaiting_final_invoice_count || 0)}</div></div>
+                </div>
+
+                ${currencyTotalsHtml}
+
+                ${!isExternal ? `<div class="flex items-center gap-2 border-b border-slate-200">
+                    <button onclick="setPaymentsDashboardTab('SHIPMENTS')" class="px-4 py-2 text-xs font-bold border-b-2 ${activeTab === 'SHIPMENTS' ? 'border-blue-600 text-blue-600' : 'border-transparent text-slate-500 hover:text-slate-700'}">Shipment Payments (${items.length})</button>
+                    <button onclick="setPaymentsDashboardTab('CREDITS')" class="px-4 py-2 text-xs font-bold border-b-2 ${activeTab === 'CREDITS' ? 'border-blue-600 text-blue-600' : 'border-transparent text-slate-500 hover:text-slate-700'}">Customer Credits (${credits.length}${creditsRemaining > 0 ? ` · ${creditsRemaining.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} avail.` : ''})</button>
+                </div>` : ''}
+
+                ${tabContentHtml}
+            </div>`;
+            if (typeof lucide !== 'undefined' && lucide.createIcons) lucide.createIcons();
         }
 
-        function deletePaymentRecord(paymentId) {
-            if (!canDeletePayment()) { alert('Delete is limited to Manager / Admin.'); return; }
-            if (!confirm('Delete this payment record?')) return;
-            state.paymentRecords = (state.paymentRecords || []).filter(r => r.id !== paymentId);
-            renderView();
+        async function openPaymentDetailModal(shipmentId) {
+            if (!canViewPaymentDetail()) return;
+            openModal(`<div class="p-6 text-center text-xs text-slate-400">Loading payment details...</div>`);
+            const detail = await loadPaymentDetailFromApi(shipmentId);
+            if (!detail || !detail.shipment) {
+                openModal(`<div class="p-4 space-y-3 text-xs"><div class="font-bold text-rose-700">Unable to load payment details.</div><div class="flex justify-end"><button onclick="closeModal()" class="px-3 py-1.5 border rounded-lg font-bold">Close</button></div></div>`);
+                return;
+            }
+            const s = detail.shipment;
+            const cur = s.currency || 'USD';
+            const invoices = detail.invoices || [];
+            const usages = detail.creditUsages || [];
+            const history = detail.paymentHistory || [];
+            const canWrite = canEditPayment();
+            const canApplyCredit = canWrite && s.invoice_readiness === 'FINALIZED' && Number(s.outstanding_balance || 0) > 0 && (detail.availableCustomerCredits || []).length > 0;
+
+            openModal(`<div class="space-y-4 text-xs">
+                <div class="flex items-start justify-between gap-4 border-b border-slate-100 pb-3">
+                    <div>
+                        <div class="text-[10px] font-black uppercase text-blue-600">Shipment Payment Detail</div>
+                        <h3 class="text-lg font-black text-slate-900 mt-0.5">${escapePaymentHtml(s.di_no)} · ${escapePaymentHtml(s.customer_name)}</h3>
+                        <div class="text-slate-500 mt-0.5">PO: ${escapePaymentHtml(s.customer_po_no || s.po_id || '-')} · Shipment: ${escapePaymentHtml(s.shipment_status)} · ${paymentStatusBadge(s.payment_status)}</div>
+                    </div>
+                    <button onclick="closeModal()" class="text-slate-400 hover:text-slate-700 font-bold">✕</button>
+                </div>
+
+                <div class="grid grid-cols-2 md:grid-cols-4 gap-2">
+                    <div class="bg-slate-50 rounded-lg p-3"><div class="text-[10px] text-slate-400 font-bold uppercase">Final Invoice</div><div class="font-black text-slate-900 mt-1">${escapePaymentHtml(formatMoney(s.final_invoice_total, cur))}</div></div>
+                    <div class="bg-slate-50 rounded-lg p-3"><div class="text-[10px] text-slate-400 font-bold uppercase">Cash Received</div><div class="font-black text-emerald-700 mt-1">${escapePaymentHtml(formatMoney(s.cash_received_amount, cur))}</div></div>
+                    <div class="bg-slate-50 rounded-lg p-3"><div class="text-[10px] text-slate-400 font-bold uppercase">Credit Applied</div><div class="font-black text-amber-700 mt-1">${escapePaymentHtml(formatMoney(s.allocated_credit_amount, cur))}</div></div>
+                    <div class="bg-slate-900 text-white rounded-lg p-3"><div class="text-[10px] text-slate-300 font-bold uppercase">Outstanding</div><div class="font-black text-rose-300 mt-1">${escapePaymentHtml(formatMoney(s.outstanding_balance, cur))}</div></div>
+                </div>
+
+                ${s.payment_note ? `<div class="bg-blue-50 border border-blue-100 rounded-lg p-3"><div class="text-[10px] font-bold uppercase text-blue-600">Payment Note</div><div class="text-slate-800 mt-1 whitespace-pre-line">${escapePaymentHtml(s.payment_note)}</div></div>` : ''}
+
+                <div>
+                    <div class="font-black text-slate-800 mb-1.5">Invoices (${invoices.length})</div>
+                    <div class="border rounded-lg overflow-hidden"><table class="w-full text-xs"><thead class="bg-slate-50 text-slate-500"><tr><th class="p-2 text-left">Invoice No.</th><th class="p-2">Version</th><th class="p-2">Date</th><th class="p-2 text-right">Amount</th></tr></thead><tbody class="divide-y">${invoices.map(i => `<tr><td class="p-2 font-mono font-bold">${escapePaymentHtml(i.invoice_no)}</td><td class="p-2 text-center"><span class="px-1.5 py-0.5 rounded text-[9px] font-bold ${i.version === 'FINAL' ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'}">${escapePaymentHtml(i.version)}</span></td><td class="p-2 text-center font-mono">${escapePaymentHtml(i.invoice_date)}</td><td class="p-2 text-right font-bold">${escapePaymentHtml(formatMoney(i.invoice_total, i.currency))}</td></tr>`).join('') || '<tr><td colspan="4" class="p-3 text-center text-slate-400">No invoices yet.</td></tr>'}</tbody></table></div>
+                </div>
+
+                <div>
+                    <div class="font-black text-slate-800 mb-1.5">Credit Allocations (${usages.length})</div>
+                    <div class="border rounded-lg overflow-hidden"><table class="w-full text-xs"><thead class="bg-slate-50 text-slate-500"><tr><th class="p-2 text-left">Credit ID</th><th class="p-2 text-left">Invoice</th><th class="p-2 text-left">Reason</th><th class="p-2 text-right">Amount</th></tr></thead><tbody class="divide-y">${usages.map(u => `<tr><td class="p-2 font-mono">${escapePaymentHtml(u.credit_id)}</td><td class="p-2 font-mono">${escapePaymentHtml(u.invoice_no || '-')}</td><td class="p-2">${escapePaymentHtml(u.reason || '-')}</td><td class="p-2 text-right font-bold">${Number(u.amount || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td></tr>`).join('') || '<tr><td colspan="4" class="p-3 text-center text-slate-400">No credits allocated.</td></tr>'}</tbody></table></div>
+                </div>
+
+                <div>
+                    <div class="font-black text-slate-800 mb-1.5">Audit Trail (${history.length})</div>
+                    <div class="border rounded-lg divide-y max-h-40 overflow-y-auto">${history.map(h => `<div class="p-2 flex items-center justify-between gap-2"><div><span class="font-bold text-slate-800">${escapePaymentHtml(h.event_type)}</span> <span class="text-slate-400">by ${escapePaymentHtml(h.actor_name || h.actor_id)}</span></div><span class="font-mono text-[10px] text-slate-400">${escapePaymentHtml(h.created_at)}</span></div>`).join('') || '<div class="p-3 text-center text-slate-400">No payment audit events yet.</div>'}</div>
+                </div>
+
+                <div class="flex flex-wrap justify-end gap-2 pt-2 border-t border-slate-100">
+                    ${s.di_id ? `<button onclick="openPhase6ShipmentFromCalendar('${escapePaymentHtml(s.di_id)}')" class="px-3 py-2 border rounded-lg font-bold text-blue-700 hover:bg-blue-50">Open Shipment</button>` : ''}
+                    ${canApplyCredit ? `<button onclick="openApplyCreditModal('${escapePaymentHtml(s.shipment_id)}')" class="px-3 py-2 bg-amber-600 text-white rounded-lg font-bold hover:bg-amber-700">Apply Credit</button>` : ''}
+                    ${canWrite ? `<button onclick="openRecordPaymentModal('${escapePaymentHtml(s.shipment_id)}')" class="px-3 py-2 bg-blue-600 text-white rounded-lg font-bold hover:bg-blue-700">Record Payment</button>` : ''}
+                    <button onclick="closeModal()" class="px-3 py-2 border rounded-lg font-bold">Close</button>
+                </div>
+            </div>`);
+        }
+
+        function openRecordPaymentModal(shipmentId) {
+            if (!canEditPayment()) return alert('Permission denied: Payment updates are limited to Admin, Manager, and Export.');
+            const pd = ensurePaymentsDashboardState();
+            const item = (pd.items || []).find(x => x.shipment_id === shipmentId) || pd.detail?.shipment;
+            if (!item) return;
+            const cur = item.currency || 'USD';
+            openModal(`<div class="space-y-4 text-xs">
+                <div class="flex items-start justify-between gap-4 border-b border-slate-100 pb-3">
+                    <div>
+                        <h3 class="text-lg font-black text-slate-900">Record Cash Payment</h3>
+                        <p class="text-slate-500 mt-0.5">${escapePaymentHtml(item.di_no)} · ${escapePaymentHtml(item.customer_name)} · Final Invoice: ${escapePaymentHtml(formatMoney(item.final_invoice_total, cur))}</p>
+                    </div>
+                    <button onclick="closeModal()" class="text-slate-400 hover:text-slate-700 font-bold">✕</button>
+                </div>
+                <div class="bg-slate-50 border rounded-lg p-3 grid grid-cols-3 gap-2">
+                    <div><div class="text-[10px] text-slate-400 font-bold uppercase">Current Cash</div><div class="font-bold mt-0.5">${escapePaymentHtml(formatMoney(item.cash_received_amount, cur))}</div></div>
+                    <div><div class="text-[10px] text-slate-400 font-bold uppercase">Credit Applied</div><div class="font-bold mt-0.5">${escapePaymentHtml(formatMoney(item.allocated_credit_amount, cur))}</div></div>
+                    <div><div class="text-[10px] text-slate-400 font-bold uppercase">Outstanding</div><div class="font-bold text-rose-700 mt-0.5">${escapePaymentHtml(formatMoney(item.outstanding_balance, cur))}</div></div>
+                </div>
+                <div class="space-y-3">
+                    <label class="block font-bold text-slate-700">Cumulative Cash Received (${escapePaymentHtml(cur)}) *
+                        <input id="payCashAmount" type="number" step="0.01" min="0" value="${Number(item.cash_received_amount || 0)}" class="mt-1 w-full border rounded-lg px-3 py-2 font-normal">
+                    </label>
+                    <label class="block font-bold text-slate-700">Payment Note / TT Reference
+                        <textarea id="payCashNote" rows="3" class="mt-1 w-full border rounded-lg px-3 py-2 font-normal" placeholder="e.g. TT Ref, receipt date, bank confirmation">${escapePaymentHtml(item.payment_note || '')}</textarea>
+                    </label>
+                </div>
+                <div id="payCashFormError" class="hidden text-xs font-bold text-rose-700 bg-rose-50 border border-rose-200 rounded-lg px-3 py-2"></div>
+                <div class="flex justify-end gap-2">
+                    <button onclick="closeModal()" class="px-4 py-2 border rounded-lg font-bold">Cancel</button>
+                    <button onclick="submitShipmentCashPaymentToApi('${escapePaymentHtml(shipmentId)}')" class="px-4 py-2 bg-blue-600 text-white rounded-lg font-bold hover:bg-blue-700">Save Cash Payment</button>
+                </div>
+            </div>`);
+        }
+
+        async function submitShipmentCashPaymentToApi(shipmentId) {
+            if (!canEditPayment()) return;
+            const errorEl = document.getElementById('payCashFormError');
+            const showErr = (msg) => {
+                if (!errorEl) return;
+                errorEl.textContent = msg || '';
+                if (msg) errorEl.classList.remove('hidden');
+                else errorEl.classList.add('hidden');
+            };
+            showErr('');
+
+            const cashReceivedAmount = Number(document.getElementById('payCashAmount')?.value ?? -1);
+            if (!Number.isFinite(cashReceivedAmount) || cashReceivedAmount < 0) {
+                return showErr('Cash received amount must be 0 or greater.');
+            }
+            const paymentNote = String(document.getElementById('payCashNote')?.value || '').trim();
+
+            try {
+                const res = await fetch(`/api/shipments-v2/${encodeURIComponent(shipmentId)}/payment`, {
+                    method: 'PUT',
+                    headers: { 'content-type': 'application/json' },
+                    body: JSON.stringify({
+                        cashReceivedAmount,
+                        paymentNote: paymentNote || null
+                    })
+                });
+                const body = await res.json().catch(() => null);
+                if (!res.ok || body?.status !== 'SUCCESS') {
+                    return showErr(body?.message || 'Failed to update shipment payment.');
+                }
+                closeModal();
+                await loadPaymentsDashboardFromApi({ force: true });
+            } catch (err) {
+                showErr(err?.message || 'Failed to update shipment payment.');
+            }
+        }
+
+        function openCreateCustomerCreditModal() {
+            if (!canEditPayment()) return alert('Permission denied: Creating customer credits is limited to Admin, Manager, and Export.');
+            const options = (state.customers || []).map(c => {
+                const cid = c.customer_id || c.id;
+                const cname = c.customer_name || c.name || cid;
+                return `<option value="${escapePaymentHtml(cid)}">${escapePaymentHtml(cname)}</option>`;
+            }).join('');
+            openModal(`<div class="space-y-4 text-xs">
+                <div class="flex items-start justify-between gap-4 border-b border-slate-100 pb-3">
+                    <div>
+                        <h3 class="text-lg font-black text-slate-900">Add Customer Credit</h3>
+                        <p class="text-slate-500 mt-0.5">Record a reusable customer credit balance (e.g. prior overpayment or claim credit).</p>
+                    </div>
+                    <button onclick="closeModal()" class="text-slate-400 hover:text-slate-700 font-bold">✕</button>
+                </div>
+                <div class="space-y-3">
+                    <label class="block font-bold text-slate-700">Customer *
+                        <select id="creditCustomerId" class="mt-1 w-full border rounded-lg px-3 py-2 font-normal bg-white">${options}</select>
+                    </label>
+                    <label class="block font-bold text-slate-700">Credit Amount *
+                        <input id="creditAmount" type="number" step="0.01" min="0.01" class="mt-1 w-full border rounded-lg px-3 py-2 font-normal">
+                    </label>
+                    <label class="block font-bold text-slate-700">Reason *
+                        <input id="creditReason" class="mt-1 w-full border rounded-lg px-3 py-2 font-normal" placeholder="e.g. Overpayment from previous shipment">
+                    </label>
+                </div>
+                <div id="creditFormError" class="hidden text-xs font-bold text-rose-700 bg-rose-50 border border-rose-200 rounded-lg px-3 py-2"></div>
+                <div class="flex justify-end gap-2">
+                    <button onclick="closeModal()" class="px-4 py-2 border rounded-lg font-bold">Cancel</button>
+                    <button onclick="submitCustomerCreditToApi()" class="px-4 py-2 bg-blue-600 text-white rounded-lg font-bold hover:bg-blue-700">Save Customer Credit</button>
+                </div>
+            </div>`);
+        }
+
+        async function submitCustomerCreditToApi() {
+            if (!canEditPayment()) return;
+            const errorEl = document.getElementById('creditFormError');
+            const showErr = (msg) => {
+                if (!errorEl) return;
+                errorEl.textContent = msg || '';
+                if (msg) errorEl.classList.remove('hidden');
+                else errorEl.classList.add('hidden');
+            };
+            showErr('');
+
+            const customerId = String(document.getElementById('creditCustomerId')?.value || '').trim();
+            const amount = Number(document.getElementById('creditAmount')?.value || 0);
+            const reason = String(document.getElementById('creditReason')?.value || '').trim();
+            if (!customerId) return showErr('Customer is required.');
+            if (!Number.isFinite(amount) || amount <= 0) return showErr('Credit amount must be greater than 0.');
+            if (!reason) return showErr('Reason is required.');
+
+            const requestKey = (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function')
+                ? `credit-${crypto.randomUUID()}`
+                : `credit-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+
+            try {
+                const res = await fetch('/api/customer-credits', {
+                    method: 'POST',
+                    headers: { 'content-type': 'application/json' },
+                    body: JSON.stringify({ customerId, amount, reason, requestKey })
+                });
+                const body = await res.json().catch(() => null);
+                if (!res.ok || body?.status !== 'SUCCESS') {
+                    return showErr(body?.message || 'Failed to create customer credit.');
+                }
+                closeModal();
+                await loadPaymentsDashboardFromApi({ force: true });
+            } catch (err) {
+                showErr(err?.message || 'Failed to create customer credit.');
+            }
+        }
+
+        async function openApplyCreditModal(shipmentId) {
+            if (!canEditPayment()) return alert('Permission denied.');
+            openModal(`<div class="p-6 text-center text-xs text-slate-400">Loading available customer credits...</div>`);
+            const detail = await loadPaymentDetailFromApi(shipmentId);
+            if (!detail || !detail.shipment) {
+                openModal(`<div class="p-4 space-y-3 text-xs"><div class="font-bold text-rose-700">Unable to load shipment payment detail.</div><div class="flex justify-end"><button onclick="closeModal()" class="px-3 py-1.5 border rounded-lg font-bold">Close</button></div></div>`);
+                return;
+            }
+            const s = detail.shipment;
+            const avail = detail.availableCustomerCredits || [];
+            const finalInvoices = (detail.invoices || []).filter(i => i.version === 'FINAL');
+            if (!avail.length) {
+                openModal(`<div class="p-4 space-y-3 text-xs"><div class="font-bold text-slate-800">No available credit balance for ${escapePaymentHtml(s.customer_name)}.</div><div class="flex justify-end gap-2"><button onclick="openCreateCustomerCreditModal()" class="px-3 py-1.5 bg-blue-600 text-white rounded-lg font-bold">+ Add Customer Credit</button><button onclick="closeModal()" class="px-3 py-1.5 border rounded-lg font-bold">Close</button></div></div>`);
+                return;
+            }
+            const creditOpts = avail.map(c => `<option value="${escapePaymentHtml(c.credit_id)}">${escapePaymentHtml(c.credit_id)} · Remaining ${Number(c.remaining_amount || 0).toFixed(2)} (${escapePaymentHtml(c.reason)})</option>`).join('');
+            const invOpts = `<option value="">-- Shipment Level --</option>` + finalInvoices.map(i => `<option value="${escapePaymentHtml(i.invoice_id)}">${escapePaymentHtml(i.invoice_no)} (${escapePaymentHtml(formatMoney(i.invoice_total, i.currency))})</option>`).join('');
+            const suggested = Math.min(Number(avail[0].remaining_amount || 0), Number(s.outstanding_balance || 0));
+
+            openModal(`<div class="space-y-4 text-xs">
+                <div class="flex items-start justify-between gap-4 border-b border-slate-100 pb-3">
+                    <div>
+                        <h3 class="text-lg font-black text-slate-900">Apply Customer Credit</h3>
+                        <p class="text-slate-500 mt-0.5">${escapePaymentHtml(s.di_no)} · ${escapePaymentHtml(s.customer_name)} · Outstanding: ${escapePaymentHtml(formatMoney(s.outstanding_balance, s.currency || 'USD'))}</p>
+                    </div>
+                    <button onclick="closeModal()" class="text-slate-400 hover:text-slate-700 font-bold">✕</button>
+                </div>
+                <div class="space-y-3">
+                    <label class="block font-bold text-slate-700">Customer Credit *
+                        <select id="applyCreditId" class="mt-1 w-full border rounded-lg px-3 py-2 font-normal bg-white">${creditOpts}</select>
+                    </label>
+                    <label class="block font-bold text-slate-700">Final Invoice (Optional)
+                        <select id="applyCreditInvoiceId" class="mt-1 w-full border rounded-lg px-3 py-2 font-normal bg-white">${invOpts}</select>
+                    </label>
+                    <label class="block font-bold text-slate-700">Amount to Apply *
+                        <input id="applyCreditAmount" type="number" step="0.01" min="0.01" value="${suggested > 0 ? suggested.toFixed(2) : ''}" class="mt-1 w-full border rounded-lg px-3 py-2 font-normal">
+                    </label>
+                </div>
+                <div id="applyCreditFormError" class="hidden text-xs font-bold text-rose-700 bg-rose-50 border border-rose-200 rounded-lg px-3 py-2"></div>
+                <div class="flex justify-end gap-2">
+                    <button onclick="closeModal()" class="px-4 py-2 border rounded-lg font-bold">Cancel</button>
+                    <button onclick="submitApplyCustomerCreditToApi('${escapePaymentHtml(shipmentId)}')" class="px-4 py-2 bg-amber-600 text-white rounded-lg font-bold hover:bg-amber-700">Apply Credit</button>
+                </div>
+            </div>`);
+        }
+
+        async function submitApplyCustomerCreditToApi(shipmentId) {
+            if (!canEditPayment()) return;
+            const errorEl = document.getElementById('applyCreditFormError');
+            const showErr = (msg) => {
+                if (!errorEl) return;
+                errorEl.textContent = msg || '';
+                if (msg) errorEl.classList.remove('hidden');
+                else errorEl.classList.add('hidden');
+            };
+            showErr('');
+
+            const creditId = String(document.getElementById('applyCreditId')?.value || '').trim();
+            const invoiceId = String(document.getElementById('applyCreditInvoiceId')?.value || '').trim() || null;
+            const amount = Number(document.getElementById('applyCreditAmount')?.value || 0);
+            if (!creditId) return showErr('Select a customer credit.');
+            if (!Number.isFinite(amount) || amount <= 0) return showErr('Amount must be greater than 0.');
+
+            const requestKey = (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function')
+                ? `credit-usage-${crypto.randomUUID()}`
+                : `credit-usage-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+
+            try {
+                const res = await fetch(`/api/shipments-v2/${encodeURIComponent(shipmentId)}/credit-usage`, {
+                    method: 'POST',
+                    headers: { 'content-type': 'application/json' },
+                    body: JSON.stringify({ creditId, amount, invoiceId, requestKey })
+                });
+                const body = await res.json().catch(() => null);
+                if (!res.ok || body?.status !== 'SUCCESS') {
+                    return showErr(body?.message || 'Failed to apply customer credit.');
+                }
+                closeModal();
+                await loadPaymentsDashboardFromApi({ force: true });
+            } catch (err) {
+                showErr(err?.message || 'Failed to apply customer credit.');
+            }
         }
 
         // --- COMMISSION ---

@@ -105,6 +105,12 @@ export default {
       return createLogisticsPartnersHandlerFromEnv(env)(request);
     }
 
+    if (url.pathname === '/api/payments' || url.pathname.startsWith('/api/payments/')) {
+      if (!env.DB) return jsonResponse({ status: 'ERROR', message: 'D1 DB binding is not configured.' }, 503);
+      const { createPaymentsHandlerFromEnv } = await import('./payments/routes.js');
+      return createPaymentsHandlerFromEnv(env)(request);
+    }
+
     if (url.pathname === '/api/gateway') {
       return jsonResponse({
         status: 'ERROR',
