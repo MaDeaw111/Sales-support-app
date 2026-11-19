@@ -11,6 +11,219 @@ function round3(value) {
   return Math.round(Number(value || 0) * 1000) / 1000;
 }
 
+function addMonthsIso(monthPrefix, deltaMonths) {
+  const [yearStr, monthStr] = String(monthPrefix).split('-');
+  const d = new Date(Date.UTC(Number(yearStr), Number(monthStr) - 1 + deltaMonths, 1));
+  return d.toISOString().slice(0, 7);
+}
+
+function parseContainerPlanCount(plan) {
+  const text = String(plan || '').trim();
+  if (!text) return 0;
+  const matches = [...text.matchAll(/(\d+)\s*[x×]/gi)];
+  if (matches.length > 0) {
+    return matches.reduce((sum, m) => sum + Number(m[1] || 0), 0);
+  }
+  if (/^\d+$/.test(text)) return Number(text);
+  return 0;
+}
+
+function summarizeMonthRows(month, rows) {
+  let shippedMt = 0;
+  let shippedContainers = 0;
+  let shippedCount = 0;
+  let remainingMt = 0;
+  let remainingContainers = 0;
+  let remainingCount = 0;
+
+  for (const row of rows) {
+    const effectiveMonth = row.actual_loading_date
+      ? String(row.actual_loading_date).slice(0, 7)
+      : row.planned_loading_date
+        ? String(row.planned_loading_date).slice(0, 7)
+        : String(row.shipping_month || '').slice(0, 7);
+    if (effectiveMonth !== month) continue;
+
+    const isShipped = Boolean(
+      row.actual_loading_date || ['LOADED', 'DOCS_SENT', 'COMPLETED'].includes(row.shipment_status)
+    );
+    const plannedMt = Number(row.planned_qty_mt || 0);
+    const actualMt = Number(row.actual_qty_mt || 0);
+    const actualCnt = Number(row.actual_container_count || 0);
+    const plannedCnt = parseContainerPlanCount(row.container_plan);
+
+    if (isShipped) {
+      shippedMt += actualMt > 0 ? actualMt : plannedMt;
+      shippedContainers += actualCnt > 0 ? actualCnt : plannedCnt;
+      shippedCount += 1;
+    } else {
+      remainingMt += plannedMt;
+      remainingContainers += plannedCnt > 0 ? plannedCnt : actualCnt;
+      remainingCount += 1;
+    }
+  }
+
+  const roundedShippedMt = round3(shippedMt);
+  const roundedRemainingMt = round3(remainingMt);
+  return {
+    month,
+    total_mt: round3(roundedShippedMt + roundedRemainingMt),
+    total_containers: shippedContainers + remainingContainers,
+    shipment_count: shippedCount + remainingCount,
+    shipped_mt: roundedShippedMt,
+    shipped_containers: shippedContainers,
+    shipped_count: shippedCount,
+    remaining_mt: roundedRemainingMt,
+    remaining_containers: remainingContainers,
+    remaining_count: remainingCount
+  };
+}
+
+async function buildTeamOverview(db, todayIso) {
+  const currentMonth = todayIso.slice(0, 7);
+  const nextMonth = addMonthsIso(currentMonth, 1);
+
+  const [activePoCountRow, productRows, shippedByProductRows, monthlyShipmentRows] = await Promise.all([
+    db.prepare(`
+      SELECT COUNT(*) AS active_po_count
+      FROM po_headers
+      WHERE header_status IN ('OPEN', 'PARTIALLY_SHIPPED')
+        AND current_active_revision_id IS NOT NULL
+    `).first(),
+    db.prepare(`
+      SELECT
+        prl.product_id,
+        p.product_code,
+        p.product_name,
+        p.short_name,
+        COUNT(DISTINCT ph.po_id) AS po_count,
+        ROUND(COALESCE(SUM(prl.contract_qty_mt), 0), 3) AS contract_qty_mt
+      FROM po_headers ph
+      JOIN po_revisions pr ON pr.revision_id = ph.current_active_revision_id
+      JOIN po_revision_lines prl ON prl.po_revision_id = pr.revision_id
+      JOIN products p ON p.product_id = prl.product_id
+      WHERE ph.header_status IN ('OPEN', 'PARTIALLY_SHIPPED')
+        AND ph.current_active_revision_id IS NOT NULL
+      GROUP BY prl.product_id, p.product_code, p.product_name, p.short_name
+      ORDER BY contract_qty_mt DESC, p.product_code ASC
+    `).all(),
+    db.prepare(`
+      SELECT
+        dil.product_id,
+        ROUND(COALESCE(SUM(scl.qty_mt), 0), 3) AS actual_shipped_mt
+      FROM shipment_container_lines scl
+      JOIN shipment_containers sc ON sc.container_id = scl.container_id
+      JOIN phase6_shipments s ON s.shipment_id = sc.shipment_id
+      JOIN delivery_instructions di ON di.di_id = s.di_id
+      JOIN delivery_instruction_lines dil ON dil.di_line_id = scl.delivery_instruction_line_id
+      JOIN po_headers ph ON ph.po_id = dil.po_id
+      WHERE ph.header_status IN ('OPEN', 'PARTIALLY_SHIPPED')
+        AND ph.current_active_revision_id IS NOT NULL
+        AND sc.status <> 'CANCELLED'
+        AND s.status <> 'CANCELLED'
+        AND di.status <> 'CANCELLED'
+      GROUP BY dil.product_id
+    `).all(),
+    db.prepare(`
+      SELECT
+        di.di_id,
+        di.shipping_month,
+        di.container_plan,
+        di.status AS di_status,
+        s.shipment_id,
+        s.status AS shipment_status,
+        s.planned_loading_date,
+        s.actual_loading_date,
+        ROUND(COALESCE((
+          SELECT SUM(dil.planned_qty_mt)
+          FROM delivery_instruction_lines dil
+          WHERE dil.di_id = di.di_id
+        ), 0), 3) AS planned_qty_mt,
+        ROUND(COALESCE((
+          SELECT SUM(scl.qty_mt)
+          FROM shipment_containers sc
+          JOIN shipment_container_lines scl ON scl.container_id = sc.container_id
+          WHERE sc.shipment_id = s.shipment_id
+            AND sc.status <> 'CANCELLED'
+        ), 0), 3) AS actual_qty_mt,
+        COALESCE((
+          SELECT COUNT(*)
+          FROM shipment_containers sc
+          WHERE sc.shipment_id = s.shipment_id
+            AND sc.status <> 'CANCELLED'
+        ), 0) AS actual_container_count
+      FROM delivery_instructions di
+      LEFT JOIN phase6_shipments s ON s.di_id = di.di_id
+      WHERE di.status <> 'CANCELLED'
+        AND (s.shipment_id IS NULL OR s.status <> 'CANCELLED')
+    `).all()
+  ]);
+
+  const shippedByProduct = new Map();
+  let totalActualShipped = 0;
+  for (const r of shippedByProductRows.results || []) {
+    const qty = round3(r.actual_shipped_mt || 0);
+    shippedByProduct.set(r.product_id, qty);
+    totalActualShipped += qty;
+  }
+  totalActualShipped = round3(totalActualShipped);
+
+  let totalContractMt = 0;
+  const productBreakdown = (productRows.results || []).map((r) => {
+    const contractQty = round3(r.contract_qty_mt || 0);
+    const shippedQty = shippedByProduct.get(r.product_id) || 0;
+    const remainingQty = Math.max(0, round3(contractQty - shippedQty));
+    totalContractMt += contractQty;
+    return {
+      product_id: r.product_id,
+      product_code: r.product_code,
+      product_name: r.product_name,
+      short_name: r.short_name || r.product_code,
+      po_count: Number(r.po_count || 0),
+      contract_qty_mt: contractQty,
+      shipped_qty_mt: shippedQty,
+      remaining_qty_mt: remainingQty
+    };
+  });
+  totalContractMt = round3(totalContractMt);
+
+  const remainingContractMt = Math.max(0, round3(totalContractMt - totalActualShipped));
+  const shippedPct = totalContractMt > 0
+    ? Math.min(100, Math.round((totalActualShipped / totalContractMt) * 1000) / 10)
+    : 0;
+
+  const shipmentRows = monthlyShipmentRows.results || [];
+  const thisMonth = summarizeMonthRows(currentMonth, shipmentRows);
+  const nextBucket = summarizeMonthRows(nextMonth, shipmentRows);
+
+  return {
+    active_pos: {
+      active_po_count: Number(activePoCountRow?.active_po_count || 0),
+      total_contract_mt: totalContractMt,
+      product_breakdown: productBreakdown
+    },
+    fulfillment: {
+      total_contract_mt: totalContractMt,
+      actual_shipped_mt: totalActualShipped,
+      remaining_contract_mt: remainingContractMt,
+      shipped_pct: shippedPct
+    },
+    this_month: thisMonth,
+    next_month: {
+      month: nextBucket.month,
+      planned_mt: nextBucket.total_mt,
+      planned_containers: nextBucket.total_containers,
+      shipment_count: nextBucket.shipment_count,
+      shipped_mt: nextBucket.shipped_mt,
+      shipped_containers: nextBucket.shipped_containers,
+      shipped_count: nextBucket.shipped_count,
+      remaining_mt: nextBucket.remaining_mt,
+      remaining_containers: nextBucket.remaining_containers,
+      remaining_count: nextBucket.remaining_count
+    }
+  };
+}
+
 async function listUpcomingMilestones(db, todayIso, windowDays, options = {}) {
   const endIso = addDaysIso(todayIso, windowDays);
   let query = `
@@ -59,6 +272,7 @@ export function createDashboardRepository(db) {
 
       if (role === 'ADMIN') {
         const [
+          teamOverview,
           userCounts,
           roleRows,
           customerCounts,
@@ -70,6 +284,7 @@ export function createDashboardRepository(db) {
           payments,
           commissions
         ] = await Promise.all([
+          buildTeamOverview(db, todayIso),
           db.prepare(`
             SELECT
               SUM(CASE WHEN status = 'ACTIVE' THEN 1 ELSE 0 END) AS active_users,
@@ -129,6 +344,7 @@ export function createDashboardRepository(db) {
         return {
           role: 'ADMIN',
           as_of_date: todayIso,
+          team_overview: teamOverview,
           kpis: {
             active_users: Number(userCounts?.active_users || 0),
             inactive_users: Number(userCounts?.inactive_users || 0),
@@ -157,7 +373,8 @@ export function createDashboardRepository(db) {
       }
 
       if (role === 'MANAGER') {
-        const [customerCounts, poStats, shipmentCounts, payments, commissions, upcoming] = await Promise.all([
+        const [teamOverview, customerCounts, poStats, shipmentCounts, payments, commissions, upcoming] = await Promise.all([
+          buildTeamOverview(db, todayIso),
           db.prepare(`
             SELECT COUNT(*) AS total_customers,
                    SUM(CASE WHEN status = 'ACTIVE_CUSTOMER' THEN 1 ELSE 0 END) AS active_customers
@@ -201,6 +418,7 @@ export function createDashboardRepository(db) {
         return {
           role: 'MANAGER',
           as_of_date: todayIso,
+          team_overview: teamOverview,
           kpis: {
             active_customers_count: Number(customerCounts?.active_customers || 0),
             total_customers_count: Number(customerCounts?.total_customers || 0),
@@ -217,7 +435,8 @@ export function createDashboardRepository(db) {
       }
 
       if (role === 'SALES_SUPPORT') {
-        const [customerCounts, poCounts, diCounts, payments, upcoming] = await Promise.all([
+        const [teamOverview, customerCounts, poCounts, diCounts, payments, upcoming] = await Promise.all([
+          buildTeamOverview(db, todayIso),
           db.prepare(`
             SELECT COUNT(*) AS total_customers,
                    SUM(CASE WHEN status = 'ACTIVE_CUSTOMER' THEN 1 ELSE 0 END) AS active_customers
@@ -246,6 +465,7 @@ export function createDashboardRepository(db) {
         return {
           role: 'SALES_SUPPORT',
           as_of_date: todayIso,
+          team_overview: teamOverview,
           kpis: {
             active_customers_count: Number(customerCounts?.active_customers || 0),
             open_pos_count: Number(poCounts?.open_pos_count || 0),
@@ -328,7 +548,8 @@ export function createDashboardRepository(db) {
       }
 
       if (role === 'EXPORT') {
-        const [shipStats, partnerCount, payments, upcoming] = await Promise.all([
+        const [teamOverview, shipStats, partnerCount, payments, upcoming] = await Promise.all([
+          buildTeamOverview(db, todayIso),
           db.prepare(`
             SELECT
               SUM(CASE WHEN planned_loading_date = ? OR actual_loading_date = ? THEN 1 ELSE 0 END) AS loading_today_count,
@@ -352,6 +573,7 @@ export function createDashboardRepository(db) {
         return {
           role: 'EXPORT',
           as_of_date: todayIso,
+          team_overview: teamOverview,
           kpis: {
             loading_today_count: Number(shipStats?.loading_today_count || 0),
             booking_pending_count: Number(shipStats?.booking_pending_count || 0),

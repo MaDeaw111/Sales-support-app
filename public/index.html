@@ -2875,6 +2875,121 @@
             const errBanner = ds.error ? `<div class="bg-rose-50 border border-rose-200 text-rose-700 rounded-xl px-4 py-3 text-xs font-bold">${escapeDashboardHtml(ds.error)}</div>` : '';
             const loadingBanner = (!hasLive && ds.loading) ? `<div class="bg-white border border-slate-200 rounded-xl p-6 text-center text-xs text-slate-400">Loading live D1 dashboard...</div>` : '';
 
+            const formatDashboardMt = (val) => Number(val || 0).toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 2 });
+            const formatDashboardMonthLabel = (ym) => {
+                const m = /^(\d{4})-(\d{2})$/.exec(String(ym || ''));
+                if (!m) return String(ym || '-');
+                const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+                return `${months[Number(m[2]) - 1] || m[2]} ${m[1]}`;
+            };
+            const renderTeamOverviewSection = (overview) => {
+                if (!overview) return '';
+                const active = overview.active_pos || { active_po_count: 0, total_contract_mt: 0, product_breakdown: [] };
+                const ful = overview.fulfillment || { total_contract_mt: 0, actual_shipped_mt: 0, remaining_contract_mt: 0, shipped_pct: 0 };
+                const cur = overview.this_month || { month: '-', total_mt: 0, total_containers: 0, shipment_count: 0, shipped_mt: 0, shipped_containers: 0, remaining_mt: 0, remaining_containers: 0 };
+                const nxt = overview.next_month || { month: '-', planned_mt: 0, planned_containers: 0, shipment_count: 0 };
+                const pct = Math.max(0, Math.min(100, Number(ful.shipped_pct || 0)));
+
+                const productRows = (active.product_breakdown || []).length
+                    ? active.product_breakdown.map(p => `<div class="flex items-center justify-between gap-2 text-[11px] py-1 border-b border-slate-100 last:border-b-0">
+                        <span class="truncate font-bold text-slate-700" title="${escapeDashboardHtml(p.product_name || p.product_code)}">${escapeDashboardHtml(p.product_code || p.short_name)}</span>
+                        <span class="shrink-0 font-mono font-bold text-slate-900">${escapeDashboardHtml(formatDashboardMt(p.contract_qty_mt))} MT</span>
+                    </div>`).join('')
+                    : '<div class="text-[11px] text-slate-400 py-1">No active PO lines</div>';
+
+                return `<section data-section="wcat-team-overview" class="space-y-3">
+                    <div class="flex flex-wrap items-center justify-between gap-2">
+                        <div class="flex items-center gap-2">
+                            <h2 class="text-sm font-black text-slate-900 tracking-tight">WCAT Team Overview</h2>
+                            <span class="px-2 py-0.5 rounded-full text-[10px] font-black bg-blue-100">SHARED LIVE D1</span>
+                        </div>
+                        <div class="text-[11px] text-slate-500">Same live numbers across Admin · Manager · Sales Support · Export</div>
+                    </div>
+                    <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3">
+                        <div class="bg-white rounded-xl border border-slate-200 shadow-sm p-4 flex flex-col justify-between gap-3">
+                            <div>
+                                <div class="flex items-center justify-between gap-2">
+                                    <span class="text-[10px] font-black uppercase tracking-wider text-slate-500">What Was Sold (Active POs)</span>
+                                    <span class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-blue-100">${Number(active.active_po_count || 0)} POs</span>
+                                </div>
+                                <div class="mt-2 text-2xl font-black text-slate-900">${escapeDashboardHtml(formatDashboardMt(active.total_contract_mt))} <span class="text-xs font-bold text-slate-500">MT</span></div>
+                            </div>
+                            <div class="pt-2 border-t border-slate-100 max-h-28 overflow-y-auto custom-scrollbar">
+                                ${productRows}
+                            </div>
+                        </div>
+
+                        <div class="bg-white rounded-xl border border-slate-200 shadow-sm p-4 flex flex-col justify-between gap-3">
+                            <div>
+                                <div class="flex items-center justify-between gap-2">
+                                    <span class="text-[10px] font-black uppercase tracking-wider text-slate-500">Shipped vs. Remaining</span>
+                                    <span class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-blue-100">${pct.toFixed(1)}%</span>
+                                </div>
+                                <div class="mt-2 grid grid-cols-2 gap-2">
+                                    <div class="rounded-lg bg-emerald-50 border border-emerald-200 px-2.5 py-2">
+                                        <div class="text-[9px] font-black uppercase text-emerald-700">Actual Shipped</div>
+                                        <div class="text-base font-black text-emerald-900 mt-0.5">${escapeDashboardHtml(formatDashboardMt(ful.actual_shipped_mt))} <span class="text-[10px] font-bold">MT</span></div>
+                                    </div>
+                                    <div class="rounded-lg bg-blue-50 border border-blue-200 px-2.5 py-2">
+                                        <div class="text-[9px] font-black uppercase text-blue-700">Remaining</div>
+                                        <div class="text-base font-black text-slate-900 mt-0.5">${escapeDashboardHtml(formatDashboardMt(ful.remaining_contract_mt))} <span class="text-[10px] font-bold">MT</span></div>
+                                    </div>
+                                </div>
+                            </div>
+                            <div>
+                                <div class="h-2 w-full rounded-full bg-slate-100 overflow-hidden">
+                                    <div class="h-full rounded-full bg-blue-600" style="width:${pct}%"></div>
+                                </div>
+                                <div class="mt-1.5 flex justify-between text-[10px] text-slate-500">
+                                    <span>Active contract progress</span>
+                                    <span class="font-mono font-bold text-slate-900">${escapeDashboardHtml(formatDashboardMt(ful.actual_shipped_mt))} / ${escapeDashboardHtml(formatDashboardMt(ful.total_contract_mt))} MT</span>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="bg-white rounded-xl border border-slate-200 shadow-sm p-4 flex flex-col justify-between gap-3">
+                            <div>
+                                <div class="flex items-center justify-between gap-2">
+                                    <span class="text-[10px] font-black uppercase tracking-wider text-slate-500">This Month's Shipments</span>
+                                    <span class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-slate-100 text-slate-700">${escapeDashboardHtml(formatDashboardMonthLabel(cur.month))}</span>
+                                </div>
+                                <div class="mt-2 flex items-baseline gap-2">
+                                    <span class="text-2xl font-black text-slate-900">${escapeDashboardHtml(formatDashboardMt(cur.total_mt))} <span class="text-xs font-bold text-slate-500">MT</span></span>
+                                    <span class="text-xs font-bold text-slate-500">· ${Number(cur.total_containers || 0)} cnt</span>
+                                </div>
+                            </div>
+                            <div class="grid grid-cols-2 gap-2">
+                                <div class="rounded-lg bg-emerald-50 border border-emerald-200 px-2.5 py-2">
+                                    <div class="text-[9px] font-black uppercase text-emerald-700">Shipped / Loaded</div>
+                                    <div class="text-xs font-black text-emerald-900 mt-0.5">${escapeDashboardHtml(formatDashboardMt(cur.shipped_mt))} MT</div>
+                                    <div class="text-[10px] text-emerald-700 font-semibold">${Number(cur.shipped_containers || 0)} cnt · ${Number(cur.shipped_count || 0)} shpt</div>
+                                </div>
+                                <div class="rounded-lg bg-blue-50 border border-blue-200 px-2.5 py-2">
+                                    <div class="text-[9px] font-black uppercase text-blue-700">Remaining</div>
+                                    <div class="text-xs font-black text-slate-900 mt-0.5">${escapeDashboardHtml(formatDashboardMt(cur.remaining_mt))} MT</div>
+                                    <div class="text-[10px] text-slate-600 font-semibold">${Number(cur.remaining_containers || 0)} cnt · ${Number(cur.remaining_count || 0)} shpt</div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="bg-slate-900 text-white rounded-xl p-4 flex flex-col justify-between gap-3">
+                            <div>
+                                <div class="flex items-center justify-between gap-2">
+                                    <span class="text-[10px] font-black uppercase tracking-wider text-blue-300">Next Month's Shipments</span>
+                                    <span class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-white/10 text-white">${escapeDashboardHtml(formatDashboardMonthLabel(nxt.month))}</span>
+                                </div>
+                                <div class="mt-2 text-2xl font-black text-white">${escapeDashboardHtml(formatDashboardMt(nxt.planned_mt))} <span class="text-xs font-bold text-slate-300">MT</span></div>
+                                <div class="mt-1 text-xs font-bold text-blue-300">${Number(nxt.planned_containers || 0)} planned containers</div>
+                            </div>
+                            <div class="pt-2 border-t border-white/10 flex items-center justify-between text-[11px] text-slate-200">
+                                <span>${Number(nxt.shipment_count || 0)} scheduled DI / shipments</span>
+                                <button onclick="changeView('calendar')" class="font-bold text-blue-300 hover:underline">Calendar →</button>
+                            </div>
+                        </div>
+                    </div>
+                </section>`;
+            };
+
             const renderMilestonesTable = (rows, allowJump) => `<div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
                 <div class="px-4 py-3 border-b border-slate-100 flex items-center justify-between">
                     <div><h3 class="text-sm font-black text-slate-900">Upcoming Loading &amp; ETD (Next 14 Days)</h3><p class="text-[10px] text-slate-400 mt-0.5">Live schedule from Phase 6 Shipments</p></div>
@@ -2898,6 +3013,7 @@
                 container.innerHTML = `<div class="space-y-5">
                     ${renderDashboardHeader('System Administration', 'Live D1 health · Master data · Access control · Operational overview', actions)}
                     ${errBanner}${loadingBanner}
+                    ${renderTeamOverviewSection(d?.team_overview)}
                     <div class="grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-3">
                         ${renderDashboardCard('Active Users', Number(k.active_users || 0), 'user-check', 'emerald')}
                         ${renderDashboardCard('Inactive Users', Number(k.inactive_users || 0), 'user-x', 'slate')}
@@ -2932,6 +3048,7 @@
                 container.innerHTML = `<div class="space-y-5">
                     ${renderDashboardHeader('Executive & Commercial Overview', 'Live D1 POs · Shipments · Multi-currency Receivables · Commission Settlement', actions)}
                     ${errBanner}${loadingBanner}
+                    ${renderTeamOverviewSection(d?.team_overview)}
                     <div class="grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-3">
                         ${renderDashboardCard('Active Customers', Number(k.active_customers_count || 0), 'users', 'blue')}
                         ${renderDashboardCard('Open POs', Number(k.open_pos_count || 0), 'file-text', 'slate')}
@@ -2966,6 +3083,7 @@
                 container.innerHTML = `<div class="space-y-5">
                     ${renderDashboardHeader('Sales Operations', 'Live D1 Customer · PO · DI · Booking · Payment follow-up', actions)}
                     ${errBanner}${loadingBanner}
+                    ${renderTeamOverviewSection(d?.team_overview)}
                     <div class="grid grid-cols-2 lg:grid-cols-5 gap-3">
                         ${renderDashboardCard('Active Customers', activeCustomers, 'users', 'blue')}
                         ${renderDashboardCard('Open POs', Number(k.open_pos_count || 0), 'file-text', 'slate')}
@@ -3040,6 +3158,7 @@
                 container.innerHTML = `<div class="space-y-5">
                     ${renderDashboardHeader('Export Workspace', 'Live D1 Export Control Tower — Bookings, Loading, Docs, Final Invoices & Payments', actions)}
                     ${errBanner}${loadingBanner}
+                    ${renderTeamOverviewSection(d?.team_overview)}
                     <div class="grid grid-cols-2 lg:grid-cols-4 xl:grid-cols-7 gap-3">
                         ${renderDashboardCard('Loading Today', Number(k.loading_today_count || 0), 'calendar-days', 'emerald')}
                         ${renderDashboardCard('Booking Pending', Number(k.booking_pending_count || 0), 'ship', 'blue')}
