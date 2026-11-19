@@ -531,21 +531,60 @@ SUCCESS (354 automated tests passed; remote D1 migration 0008 applied and servic
 
 ---
 
+### Phase 9 — Payment Status (Finance Dashboard)
+
+**Status:** COMPLETE / MERGED / DEPLOYED / PRODUCTION VERIFIED
+
+Implemented backend:
+- Zero new D1 migrations required (`0001`–`0008` preserved); consolidates live truth directly from Phase 6 tables (`phase6_shipments`, `shipment_invoices`, `shipment_invoice_lines`, `customer_credits`, `customer_credit_usages`, `delivery_instructions`, `po_revisions`, `customers`, `shipment_audit_events`).
+- Dedicated Finance consolidation module (`src/payments/validation.js`, `src/payments/repository.js`, `src/payments/routes.js`) wired to `/api/payments` and `/api/payments/:shipmentId` in `src/index.js`:
+  - `GET /api/payments`: filterable by `paymentStatus`, `invoiceReadiness`, `shipmentStatus`, `currency`, `customerId`, and `search`; returns currency-grouped KPIs (`totals_by_currency` for `USD` / `EUR` / `THB`, never blended), shipment payment rows, and customer credits overview.
+  - `GET /api/payments/:shipmentId`: returns shipment summary, invoices (`PRELIMINARY` / `FINAL`), credit usages, available customer credits, and payment/credit/invoice/completion audit history.
+- Reuses Phase 6's atomic, idempotent write endpoints untouched (`PUT /api/shipments-v2/:id/payment`, `POST /api/customer-credits`, `POST /api/shipments-v2/:id/credit-usage`), preserving automatic `DOCS_SENT` → `COMPLETED` promotion.
+- Strict RBAC & anti-inference hardening:
+  - `ADMIN`, `MANAGER`, `EXPORT`: full read + write (`can_edit_payment: true`).
+  - `SALES_SUPPORT`: full read-only (`can_edit_payment: false`; `403` on writes).
+  - `EXTERNAL_SALES`: strictly owner-scoped (`customers.owner_user_id`) on `GET /api/payments` with exact projected allowlist (`final_invoice_total`, `payment_total`, `outstanding_balance`, `payment_status`, `commission_ready`; internal IDs, `payment_note`, cash/credit split, `customerCredits`, and `paymentHistory` omitted), ignores hidden `customerId` filter and restricts search to projected fields; `403` on `GET /api/payments/:shipmentId` and all writes.
+  - `PRODUCTION_WAREHOUSE`: `403` on all `/api/payments` endpoints; unauthenticated: `401`.
+
+Implemented frontend:
+- Replaced prototype `state.paymentRecords` Payment Status view and removed prototype hard-delete flow in `public/index.html`.
+- Added `state.paymentsDashboard`, `loadPaymentsDashboardFromApi()`, `loadPaymentDetailFromApi()`, currency-grouped KPI cards, Shipment Payments & Customer Credits tabs, Payment Detail & Audit modal, and Phase 6 action modals (`Record Payment`, `Add Customer Credit`, `Apply Credit`) + **Open Shipment** jump.
+
+Release details:
+```text
+Merge commit:        28a9dcd8b6643758dc0d8b5ff4353cae9cbec74d
+Feature commit:      a141881 (branch: feature/phase9-payment-status — deleted after merge)
+Migrations required: None (0001–0008 unchanged)
+Worker version:      e2dc5942-161c-4cfb-ba36-383b714375f7 (2026-11-19T11:56:08.507Z)
+Workers URL:         https://wcat-sales-support.deono111.workers.dev
+Automated tests:     368 passed, 0 failed
+Design spec:         docs/superpowers/specs/2026-11-19-phase9-payment-status-design.md
+Implementation plan: docs/superpowers/plans/2026-11-19-phase9-payment-status-implementation-plan.md
+```
+
+Production Verification:
+```text
+SUCCESS (368 automated tests passed; zero D1 migrations required; live Worker /api/health 200, /api/payments 401 unauthenticated, and live frontend serves loadPaymentsDashboardFromApi. Limitation: authenticated multi-role browser smoke was not exercised in this automated check.)
+```
+
+---
+
 # 3. CURRENT CHECKPOINT
 
 ## STOPPED HERE — 2026-11-19
 
-Phase 8 (Logistics Partners) is merged via PR #11 (`fd00a80`), remote D1 migration `0008_logistics_partners.sql` is applied and verified in production `wcat-sales-db`, and the production Worker (`379c39b7-1cb0-489c-946a-224edd1d002f`) is live and verified.
+Phase 9 (Payment Status) is merged to `main` (`28a9dcd`), deployed to production Worker `wcat-sales-support` (`e2dc5942-161c-4cfb-ba36-383b714375f7`), and verified live.
 Next Action:
-- Select and scope Phase 9 from the remaining backlog (**Payment Status** or **Commission Settlement**).
+- Scope the final migration phase: **Phase 10 — Commission Settlement**.
 - Draft bounded design spec and implementation plan before coding.
 
 ---
 
-# 4. NEXT STEP — Phase 9 (Payment Status or Commission Settlement)
+# 4. NEXT STEP — Phase 10 (Commission Settlement)
 
 Next Action:
-- Confirm priority order between **Payment Status** and **Commission Settlement**, then draft the bounded Phase 9 design spec and implementation plan.
+- Draft the bounded Phase 10 (**Commission Settlement**) design spec and implementation plan (reconciling PO commission rates, Phase 6 actual shipped MT, Phase 9 `PAID` eligibility, approval/settlement snapshots, and strict `EXTERNAL_SALES` / `MANAGER` / `ADMIN` RBAC).
 
 ---
 
@@ -594,6 +633,9 @@ Next Action:
   - PR #11 merge commit: `fd00a80a0fcfc67b43ceb930a3ef0aeb1cc5c4de`
   - Migration `0008_logistics_partners.sql` applied to production `wcat-sales-db`; `service_partner_rates` table and indexes verified.
   - Worker version `379c39b7-1cb0-489c-946a-224edd1d002f`; `/api/health` (200), `/api/logistics-partners` (401 unauthenticated), and live frontend (`loadLogisticsPartnersFromApi`) verified; automated verification: 354 passed, 0 failed.
+- [x] Phase 9 Payment Status — COMPLETE / MERGED / DEPLOYED / PRODUCTION VERIFIED
+  - Merge commit: `28a9dcd8b6643758dc0d8b5ff4353cae9cbec74d`
+  - Zero D1 migrations required (`0001`–`0008` preserved); Worker version `e2dc5942-161c-4cfb-ba36-383b714375f7`; `/api/health` (200), `/api/payments` (401 unauthenticated), and live frontend (`loadPaymentsDashboardFromApi`) verified; automated verification: 368 passed, 0 failed.
 
 ---
 
@@ -614,6 +656,7 @@ PO Management
 Shipping / DI Integration
 Operations Calendar
 Logistics Partners
+Payment Status
 ```
 
 Production truth must come from:
@@ -636,11 +679,10 @@ must not appear to save unless persistence is actually implemented.
 
 # 7. Recommended Next Development Order
 
-After Phase 8 (Logistics Partners) release:
+After Phase 9 (Payment Status) release:
 
 ```text
-1. Payment Status
-2. Commission Settlement
+1. Commission Settlement (Final Migration Phase)
 ```
 
 Continue using:
