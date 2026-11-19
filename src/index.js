@@ -44,6 +44,12 @@ export default {
       return createExternalSalesHandlerFromEnv(env)(request);
     }
 
+    if (url.pathname === '/api/pricing' || url.pathname.startsWith('/api/pricing/')) {
+      if (!env.DB) return jsonResponse({ status: 'ERROR', message: 'D1 DB binding is not configured.' }, 503);
+      const { createPricingHandlerFromEnv } = await import('./pricing/routes.js');
+      return createPricingHandlerFromEnv(env)(request);
+    }
+
     if (
       url.pathname === '/api/manager-price-notes' || url.pathname.startsWith('/api/manager-price-notes/') ||
       url.pathname === '/api/freight-quotes' || url.pathname.startsWith('/api/freight-quotes/')

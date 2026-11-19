@@ -819,6 +819,26 @@
             }
         }
 
+        async function loadPricingFromApi() {
+            try {
+                const res = await fetch('/api/pricing');
+                if (!res.ok) return;
+                const body = await res.json();
+                if (body && body.status === 'SUCCESS' && body.data) {
+                    if (Array.isArray(body.data.standardPrices)) {
+                        state.standardPrices = body.data.standardPrices;
+                    }
+                    if (Array.isArray(body.data.specialPrices)) {
+                        state.specialPrices = body.data.specialPrices;
+                    }
+                    state.pricingLoaded = true;
+                    renderView();
+                }
+            } catch (err) {
+                console.error('Failed to load pricing:', err);
+            }
+        }
+
         function startAuthenticatedApp() {
             showAuthenticatedShell(true);
             state.selectedCustomerId = null;
@@ -836,6 +856,7 @@
             loadProductFormsFromApi();
             loadSpecParametersFromApi();
             loadProductsFromApi();
+            loadPricingFromApi();
             loadDashboardSummaryFromApi({ force: true });
         }
 
@@ -984,20 +1005,12 @@
             productCategories: [],
             productForms: [],
             specParameters: [],
-            // FRONTEND PROTOTYPE ONLY: sales price masters used to suggest PO selling price.
-            standardPrices: [
-                { id: 'STD-2026-001', productId: 'PRD-001', fobUsdPerMt: 185, effectiveDate: '2026-08-01', validUntil: '2026-08-31', status: 'ACTIVE' },
-                { id: 'STD-2026-002', productId: 'PRD-002', fobUsdPerMt: 210, effectiveDate: '2026-08-01', validUntil: '2026-08-31', status: 'ACTIVE' },
-                { id: 'STD-2026-003', productId: 'PRD-005', fobUsdPerMt: 285, effectiveDate: '2026-08-01', validUntil: '2026-08-31', status: 'ACTIVE' },
-                { id: 'STD-2026-004', productId: 'PRD-007', fobUsdPerMt: 290, effectiveDate: '2026-08-01', validUntil: '2026-08-31', status: 'ACTIVE' }
-            ],
-            specialPrices: [
-                { id: 'SPR-2026-0012', customerId: 'CUST-001', productId: 'PRD-001', stdFobAtRequest: 185, approvedPriceUsd: 178, expectedQtyMt: 540, validUntil: '2026-09-15', approvalStatus: 'APPROVED', reason: 'Volume commitment' },
-                { id: 'SPR-2026-0013', customerId: 'CUST-002', productId: 'PRD-002', stdFobAtRequest: 210, approvedPriceUsd: 205, expectedQtyMt: 270, validUntil: '2026-08-31', approvalStatus: 'PENDING', reason: 'Trial order' }
-            ],
+            standardPrices: [],
+            specialPrices: [],
+            pricingLoaded: false,
             pos: [
                 { id: 'PO-2026-001', customerId: 'CUST-001', customerPoNo: 'PO-MEEL-2601', poDate: '2026-03-10', deliveryStart: '2026-03-01', deliveryEnd: '2026-04-30', productId: 'PRD-001', contractQtyMt: 540, tolerancePct: 5, maxInvoiceQtyMt: 567, incoterm: 'FOB', destinationPort: 'Rotterdam', shipmentType: 'Container', containerType: "20'", packaging: 'Jumbo Bag 850 kg', packageWeightKg: 850, unitsPerContainer: 32, totalWeightPerContainerMt: 27.2, poCurrency: 'USD', sellingPrice: 185, priceSource: 'STANDARD_FOB',
-                priceReference: 'STD-2026-001',
+                priceReference: '',
                 suggestedSellingPrice: 185,
                 commercialApprovalStatus: 'APPROVED', commissionRecipientId: 'USR-0006', commissionRateUsdPerMt: 2.00, poStatus: 'COMPLETED' },
                 { id: 'PO-2026-002', customerId: 'CUST-001', customerPoNo: 'PO-MEEL-2608', poDate: '2026-07-15', deliveryStart: '2026-07-01', deliveryEnd: '2026-12-31', productId: 'PRD-001', contractQtyMt: 1080, tolerancePct: 5, maxInvoiceQtyMt: 1134, incoterm: 'FOB', destinationPort: 'Rotterdam', shipmentType: 'Container', containerType: "20'", packaging: 'Bulk Container', packageWeightKg: 1000, unitsPerContainer: 27, totalWeightPerContainerMt: 27.0, poCurrency: 'USD', sellingPrice: 188, commercialApprovalStatus: 'APPROVED', commissionRecipientId: 'USR-0006', commissionRateUsdPerMt: 2.00, poStatus: 'IN_PROGRESS' },
@@ -1262,6 +1275,9 @@
             state.selectedLogisticsProviderId = null;
             renderSidebar(); 
             renderView(); 
+            if (id === 'pricing') {
+                loadPricingFromApi();
+            }
         }
 
         function goToPODetail(poId) {
@@ -1329,10 +1345,17 @@
             if (special) return { price: Number(special.approvedPriceUsd || 0), source: 'SPECIAL_PRICE', reference: special.id, record: special };
 
             const standard = (state.standardPrices || []).find(x =>
-                x.productId === productId && String(x.status || '').toUpperCase() === 'ACTIVE' &&
-                isDateWithin(dateIso, x.effectiveDate, x.validUntil)
+                x.productId === productId &&
+                x.hasActivePrice !== false &&
+                String(x.status || '').toUpperCase() === 'ACTIVE' &&
+                isDateWithin(dateIso, x.effectiveFrom || x.effectiveDate, x.validUntil)
             );
-            if (standard) return { price: Number(standard.fobUsdPerMt || 0), source: 'STANDARD_FOB', reference: standard.id, record: standard };
+            if (standard) {
+                const price = Number(standard.pricePerMt ?? standard.fobUsdPerMt ?? 0);
+                if (price > 0) {
+                    return { price, source: 'STANDARD_FOB', reference: standard.id || '', record: standard };
+                }
+            }
             return { price: 0, source: 'NO_ACTIVE_PRICE', reference: '', record: null };
         }
 
@@ -1341,7 +1364,9 @@
             const main = document.getElementById('mainContent');
             renderPricing(main);
             lucide.createIcons();
-            if (tab === 'PRICE_NOTES') {
+            if (tab === 'STANDARD' || tab === 'SPECIAL') {
+                loadPricingFromApi();
+            } else if (tab === 'PRICE_NOTES') {
                 loadPriceNotesFromApi();
                 loadUsersFromApi();
             } else if (tab === 'FREIGHT_QUOTES') {
@@ -1351,58 +1376,287 @@
         }
 
         function canManagePricing() {
-            return ['MANAGER', 'ADMIN'].includes(state.currentUser.role);
+            return ['MANAGER', 'ADMIN'].includes(state.currentUser?.role);
         }
 
-        function openEditStandardPrice(priceId) {
+        function escapePricingHtml(value) {
+            return String(value ?? '')
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;')
+                .replace(/'/g, '&#39;');
+        }
+
+        function openEditStandardPrice(productIdOrPriceId) {
             if (!canManagePricing()) return alert('Only Manager or Admin can edit Standard Price.');
-            const rec = (state.standardPrices || []).find(x => x.id === priceId);
-            if (!rec) return;
-            const product = (state.products || []).find(p => p.id === rec.productId);
+            const rec = (state.standardPrices || []).find(x => x.productId === productIdOrPriceId || x.id === productIdOrPriceId);
+            const productId = rec?.productId || productIdOrPriceId;
+            const product = (state.products || []).find(p => p.id === productId);
+            const hasPrice = Boolean(rec && rec.hasActivePrice !== false && rec.id);
+            const title = hasPrice ? 'Edit Standard Price' : 'Set Standard Price';
+            const displayLabel = rec?.shortName || product?.shortName || rec?.productCode || product?.code || productId;
+            const displayName = rec?.productName || product?.name || '';
+            const currentVal = hasPrice ? (rec.pricePerMt ?? rec.fobUsdPerMt ?? '') : '';
+            const currentCurrency = rec?.currency || 'USD';
+            const effectiveVal = hasPrice ? (rec.effectiveFrom || rec.effectiveDate || getTodayIso()) : getTodayIso();
+            const validUntilVal = hasPrice ? (rec.validUntil || '') : '';
+
             openModal(`
                 <div class="space-y-4">
-                    <div class="flex justify-between items-start"><div><h3 class="text-lg font-bold text-slate-900">Edit Standard Price</h3><p class="text-xs text-slate-500">${product?.shortName || rec.productId}</p></div><button onclick="closeModal()" class="text-slate-400 text-xl">&times;</button></div>
-                    <div><label class="text-xs font-bold text-slate-600">FOB USD / MT</label><input id="stdPriceValue" type="number" step="0.01" value="${rec.fobUsdPerMt}" class="mt-1 w-full border rounded-lg px-3 py-2 text-sm"></div>
-                    <div class="grid grid-cols-2 gap-3"><div><label class="text-xs font-bold text-slate-600">Effective Date</label><input id="stdPriceEffective" type="date" value="${rec.effectiveDate || ''}" class="mt-1 w-full border rounded-lg px-3 py-2 text-sm"></div><div><label class="text-xs font-bold text-slate-600">Valid Until</label><input id="stdPriceValid" type="date" value="${rec.validUntil || ''}" class="mt-1 w-full border rounded-lg px-3 py-2 text-sm"></div></div>
-                    <div class="flex justify-end gap-2"><button onclick="closeModal()" class="px-4 py-2 rounded-lg border text-xs font-bold">Cancel</button><button onclick="saveStandardPrice('${rec.id}')" class="px-4 py-2 rounded-lg bg-amber-500 text-white text-xs font-bold">Save Price</button></div>
+                    <div class="flex justify-between items-start">
+                        <div>
+                            <div class="text-[10px] font-black uppercase tracking-wider text-blue-600">Standard Price</div>
+                            <h3 class="text-lg font-bold text-slate-900">${title}</h3>
+                            <p class="text-xs text-slate-500">${escapePricingHtml(displayLabel)}${displayName ? ` · ${escapePricingHtml(displayName)}` : ''}</p>
+                        </div>
+                        <button type="button" onclick="closeModal()" class="text-slate-400 text-xl">&times;</button>
+                    </div>
+                    <div class="grid grid-cols-3 gap-3">
+                        <div class="col-span-2">
+                            <label class="text-xs font-bold text-slate-600">FOB Price / MT *</label>
+                            <input id="stdPriceValue" type="number" step="0.01" min="0.01" value="${escapePricingHtml(currentVal)}" placeholder="e.g. 185.00" class="mt-1 w-full border rounded-lg px-3 py-2 text-sm">
+                        </div>
+                        <div>
+                            <label class="text-xs font-bold text-slate-600">Currency</label>
+                            <select id="stdPriceCurrency" class="mt-1 w-full border rounded-lg px-3 py-2 text-sm">
+                                ${['USD', 'THB', 'EUR'].map(curr => `<option value="${curr}" ${currentCurrency === curr ? 'selected' : ''}>${curr}</option>`).join('')}
+                            </select>
+                        </div>
+                    </div>
+                    <div class="grid grid-cols-2 gap-3">
+                        <div>
+                            <label class="text-xs font-bold text-slate-600">Effective From *</label>
+                            <input id="stdPriceEffective" type="date" value="${escapePricingHtml(effectiveVal)}" class="mt-1 w-full border rounded-lg px-3 py-2 text-sm">
+                        </div>
+                        <div>
+                            <label class="text-xs font-bold text-slate-600">Valid Until</label>
+                            <input id="stdPriceValid" type="date" value="${escapePricingHtml(validUntilVal)}" class="mt-1 w-full border rounded-lg px-3 py-2 text-sm">
+                        </div>
+                    </div>
+                    <div>
+                        <label class="text-xs font-bold text-slate-600">Change Reason / Note</label>
+                        <input id="stdPriceReason" type="text" placeholder="เหตุผลการตั้ง/ปรับราคา (บันทึกลงประวัติราคา)" class="mt-1 w-full border rounded-lg px-3 py-2 text-sm">
+                    </div>
+                    <div id="stdPriceFormError" class="hidden rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-bold text-rose-700"></div>
+                    <div class="flex justify-end gap-2">
+                        <button type="button" onclick="closeModal()" class="px-4 py-2 rounded-lg border text-xs font-bold">Cancel</button>
+                        <button type="button" onclick="saveStandardPrice('${escapePricingHtml(productId)}')" class="px-4 py-2 rounded-lg bg-amber-500 text-white text-xs font-bold">Save Price</button>
+                    </div>
                 </div>`);
         }
 
-        function saveStandardPrice(priceId) {
+        async function saveStandardPrice(productId) {
             if (!canManagePricing()) return alert('Only Manager or Admin can edit Standard Price.');
-            const rec = (state.standardPrices || []).find(x => x.id === priceId);
-            if (!rec) return;
-            const price = Number(document.getElementById('stdPriceValue').value || 0);
-            if (price <= 0) return alert('Price must be greater than 0.');
-            rec.fobUsdPerMt = price;
-            rec.effectiveDate = document.getElementById('stdPriceEffective').value;
-            rec.validUntil = document.getElementById('stdPriceValid').value;
-            closeModal(); renderPricing(document.getElementById('mainContent'));
+            const errEl = document.getElementById('stdPriceFormError');
+            const showErr = (msg) => {
+                if (errEl) {
+                    errEl.textContent = msg;
+                    errEl.classList.remove('hidden');
+                } else {
+                    alert(msg);
+                }
+            };
+            if (errEl) errEl.classList.add('hidden');
+
+            const pricePerMt = Number(document.getElementById('stdPriceValue')?.value || 0);
+            const currency = (document.getElementById('stdPriceCurrency')?.value || 'USD').trim().toUpperCase();
+            const effectiveFrom = (document.getElementById('stdPriceEffective')?.value || '').trim();
+            const validUntil = (document.getElementById('stdPriceValid')?.value || '').trim() || null;
+            const changeReason = (document.getElementById('stdPriceReason')?.value || '').trim();
+
+            if (!Number.isFinite(pricePerMt) || pricePerMt <= 0) {
+                return showErr('Price must be greater than 0.');
+            }
+            if (!effectiveFrom) {
+                return showErr('Effective From date is required.');
+            }
+            if (validUntil && validUntil < effectiveFrom) {
+                return showErr('Valid Until date cannot be earlier than Effective From.');
+            }
+
+            try {
+                const res = await fetch(`/api/pricing/standard/${encodeURIComponent(productId)}`, {
+                    method: 'PUT',
+                    headers: { 'content-type': 'application/json' },
+                    body: JSON.stringify({ pricePerMt, currency, effectiveFrom, validUntil, changeReason })
+                });
+                const body = await res.json();
+                if (!res.ok || !body || body.status !== 'SUCCESS') {
+                    throw new Error(body?.message || 'Unable to save Standard Price.');
+                }
+                closeModal();
+                await loadPricingFromApi();
+            } catch (err) {
+                showErr(err.message);
+            }
+        }
+
+        async function openProductPriceHistoryModal(productId) {
+            if (!canManagePricing()) return alert('Only Manager or Admin can view Price History.');
+            openModal(`
+                <div class="space-y-4">
+                    <div class="flex justify-between items-start">
+                        <div>
+                            <div class="text-[10px] font-black uppercase tracking-wider text-blue-600">Price History</div>
+                            <h3 class="text-lg font-bold text-slate-900">Loading Price History...</h3>
+                        </div>
+                        <button type="button" onclick="closeModal()" class="text-slate-400 text-xl">&times;</button>
+                    </div>
+                    <div class="py-8 text-center text-xs text-slate-500">Fetching historical price revisions...</div>
+                </div>
+            `);
+
+            try {
+                const res = await fetch(`/api/pricing/products/${encodeURIComponent(productId)}/history`);
+                const body = await res.json();
+                if (!res.ok || !body || body.status !== 'SUCCESS') {
+                    throw new Error(body?.message || 'Unable to load Price History.');
+                }
+                const { product, standardPriceHistory = [], approvedSpecialPriceHistory = [] } = body.data;
+                const stdRows = standardPriceHistory.map(entry => {
+                    const prev = entry.previousPricePerMt;
+                    const curr = Number(entry.pricePerMt || 0);
+                    let deltaHtml = '<span class="text-[10px] text-slate-400">Initial</span>';
+                    if (prev !== null && prev !== undefined) {
+                        const diff = curr - Number(prev);
+                        const sign = diff > 0 ? '+' : '';
+                        const cls = diff > 0 ? 'text-emerald-700 bg-emerald-50' : diff < 0 ? 'text-rose-700 bg-rose-50' : 'text-slate-600 bg-slate-100';
+                        deltaHtml = `<span class="text-[10px] font-bold px-1.5 py-0.5 rounded ${cls}">${sign}${diff.toFixed(2)}</span>`;
+                    }
+                    const priceFlow = prev !== null && prev !== undefined
+                        ? `<span class="text-slate-400 line-through mr-1">${escapePricingHtml(entry.currency)} ${Number(prev).toFixed(2)}</span>→ <strong class="text-slate-900">${escapePricingHtml(entry.currency)} ${curr.toFixed(2)}</strong>`
+                        : `<strong class="text-slate-900">${escapePricingHtml(entry.currency)} ${curr.toFixed(2)}</strong>`;
+                    const statusBadge = entry.status === 'ACTIVE'
+                        ? '<span class="px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-700 font-bold text-[9px]">ACTIVE</span>'
+                        : `<span class="px-1.5 py-0.5 rounded bg-slate-100 text-slate-600 font-bold text-[9px]">${escapePricingHtml(entry.status)}</span>`;
+                    return `
+                        <tr class="hover:bg-slate-50">
+                            <td class="p-2.5 font-mono font-bold text-blue-700">Rev.${entry.revisionNo}<div class="text-[9px] text-slate-400">${escapePricingHtml(entry.id)}</div></td>
+                            <td class="p-2.5">${priceFlow}<div class="mt-0.5">${deltaHtml}</div></td>
+                            <td class="p-2.5 text-center">${escapePricingHtml(entry.effectiveFrom || '-')}<div class="text-[10px] text-slate-400">to ${escapePricingHtml(entry.validUntil || 'Open')}</div></td>
+                            <td class="p-2.5 text-center">${statusBadge}</td>
+                            <td class="p-2.5 text-slate-700">${escapePricingHtml(entry.changedByName || entry.changedBy || '-')}<div class="text-[10px] text-slate-400">${escapePricingHtml(entry.changedAt || '-')}</div></td>
+                            <td class="p-2.5 text-slate-600">${escapePricingHtml(entry.changeReason || '-')}</td>
+                        </tr>
+                    `;
+                }).join('');
+
+                const specialSection = approvedSpecialPriceHistory.length ? `
+                    <div class="space-y-2 pt-2 border-t border-slate-200">
+                        <h4 class="text-xs font-black uppercase tracking-wide text-slate-700">Approved Customer Special Price History</h4>
+                        <div class="overflow-x-auto border rounded-lg">
+                            <table class="w-full text-left text-xs">
+                                <thead class="bg-slate-50 text-slate-500 text-[10px] uppercase">
+                                    <tr><th class="p-2">Customer</th><th class="p-2 text-right">Approved FOB</th><th class="p-2 text-center">Valid Until</th><th class="p-2">Reviewed By</th><th class="p-2">Reason</th></tr>
+                                </thead>
+                                <tbody class="divide-y divide-slate-100">
+                                    ${approvedSpecialPriceHistory.map(sp => `
+                                        <tr>
+                                            <td class="p-2 font-bold text-slate-800">${escapePricingHtml(sp.customerName || sp.customerId)}</td>
+                                            <td class="p-2 text-right font-bold text-emerald-700">USD ${Number(sp.approvedPriceUsd || 0).toFixed(2)}</td>
+                                            <td class="p-2 text-center">${escapePricingHtml(sp.validUntil || '-')}</td>
+                                            <td class="p-2 text-slate-600">${escapePricingHtml(sp.reviewedByName || sp.reviewedBy || '-')}<div class="text-[10px] text-slate-400">${escapePricingHtml(sp.reviewedAt || sp.createdAt || '')}</div></td>
+                                            <td class="p-2 text-slate-600">${escapePricingHtml(sp.reason || '-')}</td>
+                                        </tr>
+                                    `).join('')}
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                ` : '';
+
+                openModal(`
+                    <div class="space-y-4">
+                        <div class="flex justify-between items-start border-b pb-3">
+                            <div>
+                                <div class="text-[10px] font-black uppercase tracking-wider text-blue-600">Standard Price History</div>
+                                <h3 class="text-lg font-bold text-slate-900">${escapePricingHtml(product?.shortName || product?.code || productId)} — ${escapePricingHtml(product?.name || '')}</h3>
+                                <p class="text-xs text-slate-500 mt-0.5">${standardPriceHistory.length} recorded revision(s)</p>
+                            </div>
+                            <button type="button" onclick="closeModal()" class="text-slate-400 text-xl">&times;</button>
+                        </div>
+                        <div class="overflow-x-auto border rounded-lg">
+                            <table class="w-full text-left text-xs">
+                                <thead class="bg-slate-100 text-slate-600 text-[10px] uppercase">
+                                    <tr>
+                                        <th class="p-2.5">Rev</th>
+                                        <th class="p-2.5">Price Change (FOB/MT)</th>
+                                        <th class="p-2.5 text-center">Effective / Valid</th>
+                                        <th class="p-2.5 text-center">Status</th>
+                                        <th class="p-2.5">Updated By</th>
+                                        <th class="p-2.5">Reason / Note</th>
+                                    </tr>
+                                </thead>
+                                <tbody class="divide-y divide-slate-100">
+                                    ${stdRows || '<tr><td colspan="6" class="p-6 text-center text-slate-400">No standard price revisions recorded yet.</td></tr>'}
+                                </tbody>
+                            </table>
+                        </div>
+                        ${specialSection}
+                        <div class="flex justify-end">
+                            <button type="button" onclick="closeModal()" class="px-4 py-2 rounded-lg border text-xs font-bold">Close</button>
+                        </div>
+                    </div>
+                `);
+            } catch (err) {
+                openModal(`
+                    <div class="space-y-4">
+                        <div class="flex justify-between items-start">
+                            <h3 class="text-lg font-bold text-slate-900">Price History</h3>
+                            <button type="button" onclick="closeModal()" class="text-slate-400 text-xl">&times;</button>
+                        </div>
+                        <div class="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-bold text-rose-700">${escapePricingHtml(err.message)}</div>
+                        <div class="flex justify-end"><button type="button" onclick="closeModal()" class="px-4 py-2 rounded-lg border text-xs font-bold">Close</button></div>
+                    </div>
+                `);
+            }
         }
 
         function openRequestSpecialPrice() {
-            const productOptions = (state.products || []).map(p => `<option value="${p.id}">${p.shortName}</option>`).join('');
-            const customerOptions = getScopedCustomers().map(c => `<option value="${c.id}">${c.name}</option>`).join('');
+            const activeProducts = (state.products || []).filter(p => p.status === 'ACTIVE' || !p.status);
+            const productOptions = activeProducts.map(p => `<option value="${escapePricingHtml(p.id)}">${escapePricingHtml(p.shortName || p.code)} — ${escapePricingHtml(p.name)}</option>`).join('');
+            const customerOptions = getScopedCustomers().map(c => `<option value="${escapePricingHtml(c.id)}">${escapePricingHtml(c.name)}</option>`).join('');
             openModal(`
                 <div class="space-y-4">
-                    <div class="flex justify-between items-start"><div><h3 class="text-lg font-bold text-slate-900">Request Special Price</h3><p class="text-xs text-slate-500">Request will be PENDING until Manager/Admin approval.</p></div><button onclick="closeModal()" class="text-slate-400 text-xl">&times;</button></div>
+                    <div class="flex justify-between items-start"><div><h3 class="text-lg font-bold text-slate-900">Request Special Price</h3><p class="text-xs text-slate-500">Request will be PENDING until Manager/Admin approval.</p></div><button type="button" onclick="closeModal()" class="text-slate-400 text-xl">&times;</button></div>
                     <div class="grid grid-cols-2 gap-3"><div><label class="text-xs font-bold text-slate-600">Customer</label><select id="sprCustomer" class="mt-1 w-full border rounded-lg px-3 py-2 text-sm">${customerOptions}</select></div><div><label class="text-xs font-bold text-slate-600">Product</label><select id="sprProduct" class="mt-1 w-full border rounded-lg px-3 py-2 text-sm">${productOptions}</select></div></div>
                     <div class="grid grid-cols-2 gap-3"><div><label class="text-xs font-bold text-slate-600">Requested FOB USD / MT</label><input id="sprRequested" type="number" step="0.01" class="mt-1 w-full border rounded-lg px-3 py-2 text-sm"></div><div><label class="text-xs font-bold text-slate-600">Expected Qty (MT)</label><input id="sprQty" type="number" step="0.001" class="mt-1 w-full border rounded-lg px-3 py-2 text-sm"></div></div>
                     <div><label class="text-xs font-bold text-slate-600">Reason</label><input id="sprReason" class="mt-1 w-full border rounded-lg px-3 py-2 text-sm"></div>
                     <div><label class="text-xs font-bold text-slate-600">Valid Until</label><input id="sprValid" type="date" class="mt-1 w-full border rounded-lg px-3 py-2 text-sm"></div>
-                    <div class="flex justify-end gap-2"><button onclick="closeModal()" class="px-4 py-2 rounded-lg border text-xs font-bold">Cancel</button><button onclick="submitSpecialPriceRequest()" class="px-4 py-2 rounded-lg bg-blue-600 text-white text-xs font-bold">Submit Request</button></div>
+                    <div class="flex justify-end gap-2"><button type="button" onclick="closeModal()" class="px-4 py-2 rounded-lg border text-xs font-bold">Cancel</button><button type="button" onclick="submitSpecialPriceRequest()" class="px-4 py-2 rounded-lg bg-blue-600 text-white text-xs font-bold">Submit Request</button></div>
                 </div>`);
         }
 
-        function submitSpecialPriceRequest() {
-            const customerId = document.getElementById('sprCustomer').value;
-            const productId = document.getElementById('sprProduct').value;
-            const requested = Number(document.getElementById('sprRequested').value || 0);
-            if (requested <= 0) return alert('Requested price must be greater than 0.');
-            const std = getSuggestedSellingPrice('', productId);
-            const id = `SPR-2026-${String((state.specialPrices || []).length + 14).padStart(4,'0')}`;
-            state.specialPrices.push({ id, customerId, productId, stdFobAtRequest: std.source === 'STANDARD_FOB' ? std.price : 0, approvedPriceUsd: requested, expectedQtyMt: Number(document.getElementById('sprQty').value || 0), validUntil: document.getElementById('sprValid').value, approvalStatus: 'PENDING', reason: document.getElementById('sprReason').value || '' });
-            state.pricingTab = 'SPECIAL'; closeModal(); renderPricing(document.getElementById('mainContent'));
+        async function submitSpecialPriceRequest() {
+            const customerId = document.getElementById('sprCustomer')?.value || '';
+            const productId = document.getElementById('sprProduct')?.value || '';
+            const requested = Number(document.getElementById('sprRequested')?.value || 0);
+            if (!customerId || !productId) return alert('Customer and Product are required.');
+            if (!Number.isFinite(requested) || requested <= 0) return alert('Requested price must be greater than 0.');
+            try {
+                const res = await fetch('/api/pricing/special', {
+                    method: 'POST',
+                    headers: { 'content-type': 'application/json' },
+                    body: JSON.stringify({
+                        customerId,
+                        productId,
+                        approvedPriceUsd: requested,
+                        expectedQtyMt: Number(document.getElementById('sprQty')?.value || 0),
+                        validUntil: document.getElementById('sprValid')?.value || null,
+                        reason: document.getElementById('sprReason')?.value || ''
+                    })
+                });
+                const body = await res.json();
+                if (!res.ok || !body || body.status !== 'SUCCESS') {
+                    throw new Error(body?.message || 'Unable to submit special price request.');
+                }
+                state.pricingTab = 'SPECIAL';
+                closeModal();
+                await loadPricingFromApi();
+            } catch (err) {
+                alert(err.message);
+            }
         }
 
         function filterPnCustomerDropdown(salesUserId) {
@@ -1939,38 +2193,88 @@
             }
         }
 
-        function reviewSpecialPrice(priceId, decision) {
+        async function reviewSpecialPrice(priceId, decision) {
             if (!canManagePricing()) return alert('Only Manager or Admin can approve/reject Special Price.');
-            const rec = (state.specialPrices || []).find(x => x.id === priceId);
-            if (!rec) return;
-            rec.approvalStatus = decision === 'APPROVE' ? 'APPROVED' : 'REJECTED';
-            renderPricing(document.getElementById('mainContent'));
+            try {
+                const res = await fetch(`/api/pricing/special/${encodeURIComponent(priceId)}/review`, {
+                    method: 'POST',
+                    headers: { 'content-type': 'application/json' },
+                    body: JSON.stringify({ decision })
+                });
+                const body = await res.json();
+                if (!res.ok || !body || body.status !== 'SUCCESS') {
+                    throw new Error(body?.message || 'Unable to review special price.');
+                }
+                await loadPricingFromApi();
+            } catch (err) {
+                alert(err.message);
+            }
         }
 
         function pricingStatusBadge(status) {
             const s = String(status || '').toUpperCase();
             if (s === 'ACTIVE' || s === 'APPROVED') return '<span class="px-2 py-1 rounded bg-emerald-100 text-emerald-700 font-bold text-[10px]">'+s+'</span>';
             if (s === 'PENDING') return '<span class="px-2 py-1 rounded bg-amber-100 text-amber-700 font-bold text-[10px]">PENDING</span>';
+            if (s === 'NOT_SET') return '<span class="px-2 py-1 rounded bg-slate-100 text-slate-500 font-bold text-[10px]">NOT SET</span>';
             return '<span class="px-2 py-1 rounded bg-slate-100 text-slate-600 font-bold text-[10px]">'+(s || '-')+'</span>';
         }
 
         function renderPricing(container) {
             const tab = state.pricingTab || 'STANDARD';
             const manager = canManagePricing();
+            const escPrice = (v) => String(v ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
             const productMap = Object.fromEntries((state.products || []).map(p => [p.id, p]));
             const customerMap = Object.fromEntries(getScopedCustomers().map(c => [c.id, c]));
             const userMap = Object.fromEntries((state.adminUsers || []).map(u => [u.user_id || u.id, u]));
 
-            const standardRows = (state.standardPrices || []).map(x => {
+            const liveStandardList = (state.standardPrices && state.standardPrices.length > 0)
+                ? state.standardPrices
+                : (state.products || []).filter(p => p.status === 'ACTIVE' || !p.status).map(p => ({
+                    productId: p.id,
+                    productCode: p.code,
+                    productName: p.name,
+                    shortName: p.shortName,
+                    hasActivePrice: false,
+                    id: null,
+                    revisionNo: 0,
+                    fobUsdPerMt: null,
+                    pricePerMt: null,
+                    currency: 'USD',
+                    effectiveDate: null,
+                    effectiveFrom: null,
+                    validUntil: null,
+                    status: 'NOT_SET',
+                    historyCount: 0
+                }));
+
+            const standardRows = liveStandardList.map(x => {
                 const p = productMap[x.productId];
-                return `<tr class="hover:bg-slate-50"><td class="p-3 font-mono text-blue-600 font-bold">${x.id}</td><td class="p-3"><div class="font-bold text-slate-900">${p?.shortName || x.productId}</div><div class="text-[10px] text-slate-500">${p?.name || ''}</div></td><td class="p-3 text-right font-black text-emerald-700">USD ${Number(x.fobUsdPerMt || 0).toFixed(2)}</td><td class="p-3 text-center">${x.effectiveDate || '-'}</td><td class="p-3 text-center">${x.validUntil || '-'}</td><td class="p-3 text-center">${pricingStatusBadge(x.status)}</td><td class="p-3 text-right">${manager ? `<button onclick="openEditStandardPrice('${x.id}')" class="px-2.5 py-1.5 rounded-lg bg-amber-100 text-amber-700 font-bold text-[10px]">Edit Standard Price</button>` : '<span class="text-[10px] text-slate-400">View only</span>'}</td></tr>`;
+                const hasPrice = Boolean(x.hasActivePrice !== false && x.id && Number(x.pricePerMt ?? x.fobUsdPerMt ?? 0) > 0);
+                const codeLabel = x.productCode || p?.code || x.productId;
+                const shortLabel = x.shortName || p?.shortName || codeLabel;
+                const fullName = x.productName || p?.name || '';
+                const currency = x.currency || 'USD';
+                const priceNum = Number(x.pricePerMt ?? x.fobUsdPerMt ?? 0);
+                const priceCell = hasPrice
+                    ? `<span class="font-black text-emerald-700">${escPrice(currency)} ${priceNum.toFixed(2)}</span>`
+                    : `<span class="text-slate-400 font-semibold italic">Not Set</span>`;
+                const idCell = hasPrice
+                    ? `<span class="font-mono text-blue-600 font-bold">${escPrice(x.id)}</span>${x.revisionNo ? `<div class="text-[9px] text-slate-400">Rev.${x.revisionNo}</div>` : ''}`
+                    : `<span class="text-slate-400 italic">Not Set</span>`;
+                const actionCell = manager
+                    ? `<div class="flex items-center justify-end gap-1.5">
+                            <button type="button" onclick="openEditStandardPrice('${escPrice(x.productId)}')" class="px-2.5 py-1.5 rounded-lg ${hasPrice ? 'bg-amber-100 text-amber-800' : 'bg-blue-600 text-white'} font-bold text-[10px] whitespace-nowrap">${hasPrice ? 'Edit Standard Price' : 'Set Standard Price'}</button>
+                            <button type="button" onclick="openProductPriceHistoryModal('${escPrice(x.productId)}')" class="px-2.5 py-1.5 rounded-lg border border-slate-200 bg-white text-slate-700 hover:bg-slate-50 font-bold text-[10px] whitespace-nowrap">History</button>
+                       </div>`
+                    : '<span class="text-[10px] text-slate-400">View only</span>';
+                return `<tr class="hover:bg-slate-50"><td class="p-3">${idCell}</td><td class="p-3"><div class="font-bold text-slate-900">${escPrice(shortLabel)} <span class="font-mono text-[10px] text-slate-400">(${escPrice(codeLabel)})</span></div><div class="text-[10px] text-slate-500">${escPrice(fullName)}</div></td><td class="p-3 text-right">${priceCell}</td><td class="p-3 text-center">${escPrice(x.effectiveFrom || x.effectiveDate || '-')}</td><td class="p-3 text-center">${escPrice(x.validUntil || '-')}</td><td class="p-3 text-center">${pricingStatusBadge(hasPrice ? x.status : 'NOT_SET')}</td><td class="p-3 text-right">${actionCell}</td></tr>`;
             }).join('');
 
             const allowedCustomerIds = new Set(getScopedCustomers().map(c => c.id));
             const specialRows = (state.specialPrices || []).filter(x => state.currentUser.role !== 'EXTERNAL_SALES' || allowedCustomerIds.has(x.customerId)).map(x => {
                 const p = productMap[x.productId], c = customerMap[x.customerId];
                 const actions = manager && String(x.approvalStatus).toUpperCase() === 'PENDING' ? `<div class="flex justify-end gap-1"><button onclick="reviewSpecialPrice('${x.id}','APPROVE')" class="px-2.5 py-1.5 rounded-lg bg-emerald-600 text-white font-bold text-[10px]">Approve</button><button onclick="reviewSpecialPrice('${x.id}','REJECT')" class="px-2.5 py-1.5 rounded-lg bg-red-100 text-red-700 font-bold text-[10px]">Reject</button></div>` : '<span class="text-[10px] text-slate-400">-</span>';
-                return `<tr class="hover:bg-slate-50"><td class="p-3 font-mono text-blue-600 font-bold">${x.id}</td><td class="p-3 font-bold text-slate-900">${c?.name || x.customerId}</td><td class="p-3"><div class="font-bold text-slate-900">${p?.shortName || x.productId}</div><div class="text-[10px] text-slate-500">Std at request: USD ${Number(x.stdFobAtRequest || 0).toFixed(2)}</div></td><td class="p-3 text-right font-black text-emerald-700">USD ${Number(x.approvedPriceUsd || 0).toFixed(2)}</td><td class="p-3 text-right">${Number(x.expectedQtyMt || 0).toFixed(3)} MT</td><td class="p-3 text-center">${x.validUntil || '-'}</td><td class="p-3 text-center">${pricingStatusBadge(x.approvalStatus)}</td><td class="p-3 text-right">${actions}</td></tr>`;
+                return `<tr class="hover:bg-slate-50"><td class="p-3 font-mono text-blue-600 font-bold">${escPrice(x.id)}</td><td class="p-3 font-bold text-slate-900">${escPrice(x.customerName || c?.name || x.customerId)}</td><td class="p-3"><div class="font-bold text-slate-900">${escPrice(x.shortName || p?.shortName || x.productId)}</div><div class="text-[10px] text-slate-500">Std at request: USD ${Number(x.stdFobAtRequest || 0).toFixed(2)}</div></td><td class="p-3 text-right font-black text-emerald-700">USD ${Number(x.approvedPriceUsd || 0).toFixed(2)}</td><td class="p-3 text-right">${Number(x.expectedQtyMt || 0).toFixed(3)} MT</td><td class="p-3 text-center">${escPrice(x.validUntil || '-')}</td><td class="p-3 text-center">${pricingStatusBadge(x.approvalStatus)}</td><td class="p-3 text-right">${actions}</td></tr>`;
             }).join('');
 
             const priceNoteRows = (state.priceNotes || []).map(x => {
@@ -2115,7 +2419,7 @@
                         <table class="ui-table w-full text-left text-xs"><thead class="bg-slate-100 text-slate-600 uppercase text-[10px] font-bold"><tr><th class="p-3">Price ID</th><th class="p-3">Product</th><th class="p-3 text-right">Standard FOB / MT</th><th class="p-3 text-center">Effective</th><th class="p-3 text-center">Valid Until</th><th class="p-3 text-center">Status</th><th class="p-3 text-right">Action</th></tr></thead><tbody class="divide-y divide-slate-200">${standardRows || '<tr><td colspan="7" class="p-6 text-center text-slate-400">No Standard Price</td></tr>'}</tbody></table>` : `
                         <table class="ui-table w-full text-left text-xs"><thead class="bg-slate-100 text-slate-600 uppercase text-[10px] font-bold"><tr><th class="p-3">SPR ID</th><th class="p-3">Customer</th><th class="p-3">Product</th><th class="p-3 text-right">Requested / Approved Price</th><th class="p-3 text-right">Expected Qty</th><th class="p-3 text-center">Valid Until</th><th class="p-3 text-center">Approval</th><th class="p-3 text-right">Action</th></tr></thead><tbody class="divide-y divide-slate-200">${specialRows || '<tr><td colspan="8" class="p-6 text-center text-slate-400">No Special Price</td></tr>'}</tbody></table>`}
                     </div>
-                    <div class="rounded-xl border border-blue-200 bg-blue-50/50 p-4 text-xs text-blue-900"><strong>Permission rule:</strong> Sales Support / External Sales can view prices and submit Special Price requests. Only Manager and Admin can edit Standard Price or Approve/Reject Special Price. Backend authorization will be enforced again when the Apps Script layer is connected.</div>
+                    <div class="rounded-xl border border-blue-200 bg-blue-50/50 p-4 text-xs text-blue-900"><strong>Permission rule:</strong> Sales Support / External Sales can view live Standard Prices and submit Special Price requests. Only Manager and Admin can set/edit Standard Prices, inspect Price History, or Approve/Reject Special Prices (enforced server-side via Cloudflare Workers &amp; D1 RBAC).</div>
                 </div>`;
         }
 
