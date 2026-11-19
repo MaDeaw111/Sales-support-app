@@ -914,7 +914,7 @@
             calendarAnchorDate: `${_initYear}-${String(_initMonth).padStart(2, '0')}-${String(_initDay).padStart(2, '0')}`,
             calendarFilters: { customerId: 'ALL', salesOwnerId: 'ALL', productId: 'ALL', eventType: 'ALL', status: 'ALL' },
             operationsCalendar: { range: null, events: [], dailyLoadingSummary: [], loading: false, error: null, lastRequestKey: '' },
-            currentUser: { id: 'USR-0002', name: 'Sarah Jenkins', role: 'SALES_SUPPORT' },
+            currentUser: { id: '', name: '', role: '' },
             currentView: 'dashboard',
             adminActivityLog: [],
             selectedCustomerId: null,
@@ -954,16 +954,7 @@
             externalSales: [],
             adminUsers: [],
             
-            users: [
-                { id: 'USR-0001', name: 'Chiradet Chermchabok', email: 'chiradet_c@wcat-thai.com', role: 'SALES_SUPPORT', defaultCurrency: '-', status: 'ACTIVE', customerScope: 'ALL' },
-                { id: 'USR-0002', name: 'Sarah Jenkins', email: 'sarah@wcat.com', role: 'SALES_SUPPORT', defaultCurrency: '-', status: 'ACTIVE', customerScope: 'ALL' },
-                { id: 'USR-0003', name: 'Somchai Warehouse', email: 'somchai@wcat.com', role: 'PRODUCTION_WAREHOUSE', defaultCurrency: '-', status: 'ACTIVE', customerScope: 'NONE' },
-                { id: 'USR-0004', name: 'Managing Director', email: 'wcat@wcat-thai.com', role: 'MANAGER', defaultCurrency: '-', status: 'ACTIVE', customerScope: 'ALL' },
-                { id: 'USR-0005', name: 'AL Sommerer', email: 'alsommerer@outlook.com', role: 'EXTERNAL_SALES', defaultCurrency: 'USD', status: 'ACTIVE', customerScope: 'OWN_CUSTOMERS', defaultCommissionRateUsdMt: 0 },
-                { id: 'USR-0006', name: 'Sira TTPagro', email: 'sira.p@ttpagro.com', role: 'EXTERNAL_SALES', defaultCurrency: 'USD', status: 'ACTIVE', customerScope: 'OWN_CUSTOMERS', defaultCommissionRateUsdMt: 0 },
-                { id: 'USR-0007', name: 'System Admin', email: 'admin@wcat-thai.com', role: 'ADMIN', defaultCurrency: '-', status: 'ACTIVE', customerScope: 'ALL' },
-                { id: 'USR-0008', name: 'Export Operations', email: 'export@wcat-thai.com', role: 'EXPORT', defaultCurrency: '-', status: 'ACTIVE', customerScope: 'NONE' }
-            ],
+            users: [],
             customers: [
                 { 
                     id: 'CUST-001', code: 'C-C-001', name: 'MEELUNIE B.V.', source: 'EXTERNAL_SALES', ownerId: 'USR-0006', status: 'ACTIVE_CUSTOMER', country: 'The Netherlands',
@@ -1142,18 +1133,9 @@
         ];
 
         function switchRole(newRole) {
-            const profile = {
-                SALES_SUPPORT: { id:'USR-0002', name:'Sarah Jenkins', avatar:'SS' },
-                EXTERNAL_SALES: { id:'USR-0006', name:'Sira TTPagro', avatar:'ES' },
-                EXPORT: { id:'USR-0008', name:'Export Operations', avatar:'EX' },
-                PRODUCTION_WAREHOUSE: { id:'USR-0003', name:'Somchai Warehouse', avatar:'PW' },
-                MANAGER: { id:'USR-0004', name:'Managing Director', avatar:'MG' },
-                ADMIN: { id:'USR-0007', name:'System Admin', avatar:'AD' }
-            }[newRole] || { id:'USR-0002', name:'Sarah Jenkins', avatar:'SS' };
-            state.currentUser = { ...state.currentUser, id: profile.id, name: profile.name, role: newRole };
+            state.currentUser = { ...state.currentUser, role: newRole };
             state.selectedCustomerId = null; state.selectedPoId = null; state.selectedShipmentId = null; state.selectedDiId = null;
             state.currentView = 'dashboard';
-            const avatar = document.getElementById('userAvatar'); if (avatar) avatar.innerText = profile.avatar;
             renderSidebar(); renderView();
         }
 
@@ -3613,8 +3595,18 @@
                         </thead>
                         <tbody class="divide-y divide-slate-200">
                             ${getScopedCustomers().map(c => {
-                                const owner = state.users.find(u => u.id === c.ownerId);
-                                const ownerName = owner ? owner.name : 'Unassigned';
+                                const liveOwners = state.customerOwners || [];
+                                const liveAdminUsers = state.adminUsers || [];
+                                const liveExternalSales = state.externalSales || [];
+                                const matchedOwner = c.ownerId
+                                    ? (liveOwners.find(u => u.id === c.ownerId)
+                                        || liveAdminUsers.find(u => (u.id || u.user_id) === c.ownerId)
+                                        || liveExternalSales.find(u => (u.id || u.user_id) === c.ownerId))
+                                    : null;
+                                const ownerName = c.ownerName
+                                    || (matchedOwner ? (matchedOwner.name || matchedOwner.full_name) : '')
+                                    || (c.ownerId && state.currentUser && state.currentUser.id === c.ownerId ? state.currentUser.name : '')
+                                    || (c.ownershipType === 'HOUSE_ACCOUNT' && !c.ownerId ? 'House Account' : 'Unassigned');
                                 const statusColors = {
                                     'ACTIVE_CUSTOMER': 'bg-emerald-100 text-emerald-800',
                                     'PROSPECT': 'bg-amber-100 text-amber-800',
@@ -3730,8 +3722,18 @@
             const c = getScopedCustomers().find(x => x.id === id);
             if(!c) { changeView('customers'); return; }
 
-            const owner = state.users.find(u => u.id === c.ownerId);
-            const ownerName = owner ? owner.name : 'Unassigned';
+            const liveOwners = state.customerOwners || [];
+            const liveAdminUsers = state.adminUsers || [];
+            const liveExternalSales = state.externalSales || [];
+            const matchedOwner = c.ownerId
+                ? (liveOwners.find(u => u.id === c.ownerId)
+                    || liveAdminUsers.find(u => (u.id || u.user_id) === c.ownerId)
+                    || liveExternalSales.find(u => (u.id || u.user_id) === c.ownerId))
+                : null;
+            const ownerName = c.ownerName
+                || (matchedOwner ? (matchedOwner.name || matchedOwner.full_name) : '')
+                || (c.ownerId && state.currentUser && state.currentUser.id === c.ownerId ? state.currentUser.name : '')
+                || (c.ownershipType === 'HOUSE_ACCOUNT' && !c.ownerId ? 'House Account' : 'Unassigned');
             const year = 2026;
 
             let contactList = c.contacts && c.contacts.length > 0 ? c.contacts : [
@@ -4368,7 +4370,7 @@
                         <div class="p-3 bg-fuchsia-50/50 rounded-lg border border-fuchsia-200 space-y-2">
                             <div class="font-bold text-fuchsia-900">Commission</div>
                             <div class="grid grid-cols-2 gap-3">
-                                <div><label class="font-semibold text-slate-700">Commission Recipient</label><select id="newPoCommissionRecipient" class="w-full border border-slate-300 bg-white rounded p-2 mt-1"><option value="">No Commission</option>${(state.users||[]).filter(u=>u.role==='EXTERNAL_SALES').map(u=>`<option value="${u.id}">${u.name}</option>`).join('')}</select></div>
+                                <div><label class="font-semibold text-slate-700">Commission Recipient</label><select id="newPoCommissionRecipient" class="w-full border border-slate-300 bg-white rounded p-2 mt-1"><option value="">No Commission</option>${(state.customerOwners||[]).map(u=>`<option value="${u.id}">${u.name}</option>`).join('')}</select></div>
                                 <div><label class="font-semibold text-slate-700">Commission Rate (USD / MT)</label><input id="newPoCommissionRate" type="number" step="0.01" min="0" value="0" class="w-full border border-slate-300 bg-white rounded p-2 mt-1"></div>
                             </div>
                         </div>
@@ -7691,7 +7693,10 @@
                                             const owners = state.customerOwners || [];
                                             const options = owners.map(u => `<option value="${u.id}" ${u.id === c.ownerId ? 'selected' : ''}>${u.name} (${u.role})</option>`);
                                             if (c.ownerId && !owners.some(u => u.id === c.ownerId)) {
-                                                options.push(`<option value="${c.ownerId}" selected>${c.ownerId} (Legacy/Unavailable)</option>`);
+                                                const fallbackLabel = c.ownerName
+                                                    ? `${c.ownerName} (${c.ownerRole || 'Unavailable'})`
+                                                    : `${c.ownerId} (Legacy/Unavailable)`;
+                                                options.push(`<option value="${c.ownerId}" selected>${fallbackLabel}</option>`);
                                             }
                                             return options.join('');
                                         })()}

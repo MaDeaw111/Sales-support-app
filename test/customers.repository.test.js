@@ -246,7 +246,17 @@ test('Customer CRM repository - customer ownership type rules', async () => {
   assert.equal(cust1Updated.ownershipType, 'ASSIGNED_SALES');
   assert.equal(cust1Updated.ownerId, 'USR-0001');
   
-  // 6. Find API returns ownershipType
+  // 6. Find API and listCustomers return ownershipType + live ownerName/ownerRole from users join
   const found = await repo.findCustomerById(cust1.id);
   assert.equal(found.ownershipType, 'ASSIGNED_SALES');
+  assert.equal(found.ownerName, 'Test Admin');
+  assert.equal(found.ownerRole, 'ADMIN');
+
+  const listed = await repo.listCustomers();
+  const listedAssigned = listed.find(c => c.id === cust1.id);
+  const listedHouse = listed.find(c => c.id === cust2.id);
+  assert.equal(listedAssigned.ownerName, 'Test Admin');
+  assert.equal(listedAssigned.ownerRole, 'ADMIN');
+  assert.equal(listedHouse.ownerName, '');
+  assert.equal(listedHouse.ownerRole, '');
 });
