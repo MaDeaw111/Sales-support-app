@@ -457,9 +457,39 @@ Commits on `main` after `a95f6bf`:
 - `8c167513c4f20b0ddafba0b76a91c7171b299b7c` — `ui: remove remaining prototype title`
 - `e2e4d6d2cec8baa8a442e21868e12898fa92ea9d` — `feat: expose spec parameter master UI`
 
-Follow-up housekeeping (local working copy):
+Follow-up housekeeping (`ff5e41b`):
 - Removed remaining dead `/api/gateway` (501) callers (`UPDATE_PO`, `SEED_ALL_MASTER_DATA`) from `public/index.html` and added a regression guard in `test/frontend-adapter.test.js`.
 - Refreshed `docs/PROJECT_STATUS.md` checkpoint and backlog sections.
+
+---
+
+### Phase 7 — Operations Calendar
+
+**Status:** COMPLETE / MERGED / RELEASED
+
+Implemented backend:
+- Dedicated read-only calendar module (`src/calendar/validation.js`, `src/calendar/repository.js`, `src/calendar/routes.js`) dispatched at `GET /api/operations-calendar` in `src/index.js`.
+- Zero new D1 migrations required (`0001`–`0007` untouched); sources live milestones directly from Phase 5F (`po_headers`, `po_revisions`, `po_revision_lines`) and Phase 6 (`delivery_instructions`, `delivery_instruction_lines`, `phase6_shipments`, `shipment_containers`, `shipment_container_lines`, `shipment_audit_events`).
+- 6 canonical event types: `LOADING_PLANNED` (deduplicated when `actual_loading_date` matches the same day), `LOADING_ACTUAL`, `ETD`, `ETA`, `PO_DELIVERY_START`, and `PO_DELIVERY_END` (`PO_VALID_UNTIL` intentionally excluded; all `CANCELLED`/non-`ACTIVE` records excluded).
+- Strict server-side RBAC projections and anti-inference filter hardening:
+  - `PRODUCTION_WAREHOUSE`: loading events only (`LOADING_PLANNED`, `LOADING_ACTUAL`), opaque SHA-256 `event_id`, exact Phase 6 Warehouse field allowlist, ignores `customerId`/`salesOwnerId`/`status` filters.
+  - `EXTERNAL_SALES`: owned-Customer events only, opaque SHA-256 `event_id`, exact Phase 5F/6 allowlists, `dailyLoadingSummary: []`, ignores `customerId`/`salesOwnerId`/`productId` filters.
+  - `ADMIN`, `MANAGER`, `SALES_SUPPORT`, `EXPORT`: full operational calendar fields + real `loading_date_history` from `shipment_audit_events`; `can_reschedule` granted only to `ADMIN`, `MANAGER`, and `EXPORT` on `BOOKED` `LOADING_PLANNED` events.
+- Planned Loading Date rescheduling reuses Phase 6 `PUT /api/shipments-v2/:id/schedule` untouched.
+
+Implemented frontend:
+- Replaced mock prototype calendar arrays in `public/index.html` with `loadOperationsCalendarFromApi()` backed by `/api/operations-calendar`.
+- Preserved Month, Week, and Agenda views with Today/Prev/Next/Refresh controls, truthful daily loading summary badges (`shipment_count`, `planned_qty_mt`, `actual_container_count`), and role-aware filters/detail modals.
+
+Release details:
+```text
+PR #10 merge commit: 3309ba4e79ccd91d556e54bc0a15c85eb53d76ad
+Feature commit:      29190fa (branch: feature/phase7-operations-calendar)
+Migrations required: None (0001–0007 unchanged)
+Automated tests:     334 passed, 0 failed
+Design spec:         docs/superpowers/specs/2026-11-19-phase7-operations-calendar-design.md
+Implementation plan: docs/superpowers/plans/2026-11-19-phase7-operations-calendar-implementation-plan.md
+```
 
 ---
 
@@ -467,17 +497,17 @@ Follow-up housekeeping (local working copy):
 
 ## STOPPED HERE — 2026-11-19
 
-Phase 6 (Shipping / DI Integration) is deployed and production-verified, and post-release `main` maintenance through `e2e4d6d` (plus dead `/api/gateway` caller cleanup) is complete.
+Phase 7 (Operations Calendar) is merged via PR #10 (`3309ba4`) and released to `main`.
 Next Action:
-- Complete production smoke check for Product & Spec (including the Spec Parameter Master UI from `e2e4d6d`) and optionally run multi-role RBAC production spot-checks.
-- Prepare Phase 7 (Operations Calendar) design specification and implementation plan.
+- Select and scope Phase 8 from the remaining backlog (Logistics Partners, Payment Status, or Commission Settlement).
+- Draft bounded design spec and implementation plan before coding.
 
 ---
 
-# 4. NEXT STEP — Phase 7 — Operations Calendar
+# 4. NEXT STEP — Phase 8 (Next Backlog Module)
 
 Next Action:
-- Draft bounded design spec and implementation plan for Phase 7 (Operations Calendar) backed by D1 Phase 5F POs and Phase 6 DIs/Shipments.
+- Confirm priority order between **Logistics Partners**, **Payment Status**, and **Commission Settlement**, then draft the bounded Phase 8 design spec and implementation plan.
 
 ---
 
@@ -519,6 +549,9 @@ Next Action:
   - Human-authenticated browser smoke passed; the legacy `GET_MASTER_DATA` bootstrap 501 is absent.
   - Final automated verification: 311 passed, 0 failed; legacy Phase 5E and Phase 5F data/schema preserved; no production test/commercial records created.
   - Limitation: comprehensive authenticated multi-role RBAC production smoke was not exercised. Tailwind CDN production warning remains known non-blocking technical debt.
+- [x] Phase 7 Operations Calendar — COMPLETE / MERGED / RELEASED
+  - PR #10 merge commit: `3309ba4e79ccd91d556e54bc0a15c85eb53d76ad`
+  - No D1 migration required (`0001`–`0007` preserved); automated verification: 334 passed, 0 failed.
 
 ---
 
@@ -537,6 +570,7 @@ Product & Spec Master Data
 Commercial & Shipment Control (Price Notes / Freight Quotes)
 PO Management
 Shipping / DI Integration
+Operations Calendar
 ```
 
 Production truth must come from:
@@ -559,13 +593,12 @@ must not appear to save unless persistence is actually implemented.
 
 # 7. Recommended Next Development Order
 
-After Phase 6 production release and housekeeping:
+After Phase 7 (Operations Calendar) release:
 
 ```text
-1. Operations Calendar (Phase 7)
-2. Logistics Partners
-3. Payment Status
-4. Commission Settlement
+1. Logistics Partners
+2. Payment Status
+3. Commission Settlement
 ```
 
 Continue using:
