@@ -2257,3 +2257,46 @@ test('renderDashboard uses live D1 dashboardSummary across all 6 roles with zero
     delete globalThis.lucide;
   }
 });
+
+test('Customers table & detail resolve live D1 owner (no Sarah Jenkins mock fallback)', () => {
+  assert.doesNotMatch(html, /Sarah Jenkins/, 'Mock user Sarah Jenkins must not exist in public/index.html');
+
+  const renderCustomersCode = extractFunction('renderCustomers(container)');
+  const renderCustomerDetailCode = extractFunction('renderCustomerDetail(container, id)');
+  assert.doesNotMatch(renderCustomersCode, /state\.users/, 'renderCustomers must not read mock state.users');
+  assert.doesNotMatch(renderCustomerDetailCode, /state\.users/, 'renderCustomerDetail must not read mock state.users');
+
+  const renderCustomersFn = new Function('container', `return (${renderCustomersCode.trim()})(container);`);
+
+  globalThis.state = {
+    currentUser: { id: 'USR-0001', name: 'Chiradet', role: 'ADMIN' },
+    users: [{ id: 'USR-0002', name: 'Stale Mock User', role: 'SALES_SUPPORT' }],
+    customerOwners: [{ id: 'USR-0002', name: 'Sira', role: 'EXTERNAL_SALES' }],
+    adminUsers: [],
+    externalSales: [],
+    customers: [
+      { id: 'CUST-0001', code: 'C-C-001', name: 'MEELUNIE B.V.', country: 'The Netherlands', source: 'EXTERNAL_SALES', ownerId: 'USR-0002', ownerName: 'Sira', ownerRole: 'EXTERNAL_SALES', ownershipType: 'ASSIGNED_SALES', status: 'ACTIVE_CUSTOMER' },
+      { id: 'CUST-0002', code: 'C-C-002', name: 'House Buyer', country: 'USA', source: 'DIRECT', ownerId: '', ownerName: '', ownerRole: '', ownershipType: 'HOUSE_ACCOUNT', status: 'ACTIVE_CUSTOMER' }
+    ]
+  };
+  globalThis.getScopedCustomers = () => globalThis.state.customers;
+  globalThis.canCreateCustomer = () => true;
+  globalThis.canEditCustomer = () => true;
+  globalThis.lucide = { createIcons() {} };
+
+  try {
+    const container = { innerHTML: '' };
+    renderCustomersFn(container);
+    assert.match(container.innerHTML, /MEELUNIE B\.V\./);
+    assert.match(container.innerHTML, /Sira/);
+    assert.match(container.innerHTML, /House Account/);
+    assert.doesNotMatch(container.innerHTML, /Stale Mock User/);
+    assert.doesNotMatch(container.innerHTML, /Sarah Jenkins/);
+  } finally {
+    delete globalThis.state;
+    delete globalThis.getScopedCustomers;
+    delete globalThis.canCreateCustomer;
+    delete globalThis.canEditCustomer;
+    delete globalThis.lucide;
+  }
+});

@@ -50,6 +50,8 @@ function rowToCustomer(row, contacts = []) {
     country: row.country || '',
     source: row.source || 'DIRECT',
     ownerId: row.owner_user_id || '',
+    ownerName: row.owner_name || '',
+    ownerRole: row.owner_role || '',
     ownershipType: row.ownership_type || 'HOUSE_ACCOUNT',
     status: row.status,
     notes: row.notes || '',
@@ -115,9 +117,12 @@ export function createCustomerRepository(dbBinding) {
 
     async findCustomerById(customerId) {
       const customerRow = await db.prepare(`
-        SELECT customer_id, customer_code, customer_name, country, source, owner_user_id, status, notes, ownership_type, created_at, updated_at
-        FROM customers
-        WHERE customer_id = ?
+        SELECT c.customer_id, c.customer_code, c.customer_name, c.country, c.source,
+               c.owner_user_id, u.full_name AS owner_name, u.role AS owner_role,
+               c.status, c.notes, c.ownership_type, c.created_at, c.updated_at
+        FROM customers c
+        LEFT JOIN users u ON u.user_id = c.owner_user_id
+        WHERE c.customer_id = ?
         LIMIT 1
       `).bind(customerId).first();
       
@@ -135,11 +140,13 @@ export function createCustomerRepository(dbBinding) {
     
     async listCustomers(filters = {}) {
       const sql = `
-        SELECT customer_id, customer_code, customer_name, country, source,
-               owner_user_id, status, notes, ownership_type, created_at, updated_at
-        FROM customers
-        WHERE (? IS NULL OR owner_user_id = ?)
-        ORDER BY customer_name COLLATE NOCASE;
+        SELECT c.customer_id, c.customer_code, c.customer_name, c.country, c.source,
+               c.owner_user_id, u.full_name AS owner_name, u.role AS owner_role,
+               c.status, c.notes, c.ownership_type, c.created_at, c.updated_at
+        FROM customers c
+        LEFT JOIN users u ON u.user_id = c.owner_user_id
+        WHERE (? IS NULL OR c.owner_user_id = ?)
+        ORDER BY c.customer_name COLLATE NOCASE;
       `;
       const ownerId = filters.ownerUserId || null;
       
