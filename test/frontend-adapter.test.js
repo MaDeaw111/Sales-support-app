@@ -2150,10 +2150,25 @@ test('renderDashboard uses live D1 dashboardSummary across all 6 roles with zero
   globalThis.getScopedCustomers = () => [];
   globalThis.lucide = { createIcons() {} };
 
+  const sharedTeamOverview = {
+    active_pos: {
+      active_po_count: 2,
+      total_contract_mt: 175,
+      product_breakdown: [
+        { product_id: 'P1', product_code: 'THP-65', product_name: 'Tapioca Pellet 65%', short_name: 'THP65', po_count: 1, contract_qty_mt: 100, shipped_qty_mt: 20, remaining_qty_mt: 80 },
+        { product_id: 'P2', product_code: 'THS-85', product_name: 'Tapioca Starch 85%', short_name: 'THS85', po_count: 2, contract_qty_mt: 75, shipped_qty_mt: 0, remaining_qty_mt: 75 }
+      ]
+    },
+    fulfillment: { total_contract_mt: 175, actual_shipped_mt: 20, remaining_contract_mt: 155, shipped_pct: 11.4 },
+    this_month: { month: '2026-11', total_mt: 35, total_containers: 3, shipment_count: 2, shipped_mt: 20, shipped_containers: 1, shipped_count: 1, remaining_mt: 15, remaining_containers: 2, remaining_count: 1 },
+    next_month: { month: '2026-12', planned_mt: 67, planned_containers: 4, shipment_count: 2, shipped_mt: 0, shipped_containers: 0, shipped_count: 0, remaining_mt: 67, remaining_containers: 4, remaining_count: 2 }
+  };
+
   const payloads = {
     ADMIN: {
       role: 'ADMIN',
       as_of_date: '2026-11-19',
+      team_overview: sharedTeamOverview,
       kpis: { active_users: 7, inactive_users: 1, customers_count: 4, active_customers_count: 4, total_products: 5, active_products: 5, total_logistics_partners: 3, active_logistics_partners: 3, open_pos: 2, payable_commissions_count: 1 },
       role_breakdown: [{ role: 'ADMIN', total_count: 1, active_count: 1 }],
       health: [{ key: 'PARTNER_CONTACT', label: 'Active Logistics Partners without Contact Info', count: 1, view: 'logistics_partners' }]
@@ -2161,6 +2176,7 @@ test('renderDashboard uses live D1 dashboardSummary across all 6 roles with zero
     MANAGER: {
       role: 'MANAGER',
       as_of_date: '2026-11-19',
+      team_overview: sharedTeamOverview,
       kpis: { active_customers_count: 4, total_customers_count: 4, open_pos_count: 2, active_contract_mt: 150, active_shipments_count: 3, completed_shipments_count: 1 },
       payments_summary: { paid_count: 1, partial_count: 1, unpaid_count: 1, totals_by_currency: [{ currency: 'USD', final_invoice_total: 10000, payment_total: 6000, outstanding_total: 4000 }] },
       commissions_summary: { pending_usd: 100, payable_usd: 200, paid_usd: 50, payable_count: 1 },
@@ -2170,6 +2186,7 @@ test('renderDashboard uses live D1 dashboardSummary across all 6 roles with zero
     SALES_SUPPORT: {
       role: 'SALES_SUPPORT',
       as_of_date: '2026-11-19',
+      team_overview: sharedTeamOverview,
       kpis: { active_customers_count: 4, open_pos_count: 2, draft_pos_count: 1, active_dis_count: 2, booking_pending_count: 1, payment_followup_count: 2 },
       payments_summary: { paid_count: 1, partial_count: 1, unpaid_count: 1, totals_by_currency: [] },
       upcoming_milestones: []
@@ -2177,6 +2194,7 @@ test('renderDashboard uses live D1 dashboardSummary across all 6 roles with zero
     EXTERNAL_SALES: {
       role: 'EXTERNAL_SALES',
       as_of_date: '2026-11-19',
+      team_overview: sharedTeamOverview,
       kpis: { my_customers_count: 2, my_active_customers_count: 2, my_open_pos_count: 1, my_active_shipments_count: 1, my_unpaid_shipments_count: 0, my_commission_pending_usd: 0, my_commission_payable_usd: 200, my_commission_paid_usd: 50 },
       recent_shipments: [{ di_no: 'DI-001', customer_name: 'Meelunie', customer_po_no: 'CPO-1', currency: 'USD', shipment_status: 'COMPLETED', etd: '2026-11-25', final_invoice_total: 10000, payment_total: 10000, outstanding_balance: 0, payment_status: 'PAID', commission_ready: true }],
       upcoming_milestones: []
@@ -2184,6 +2202,7 @@ test('renderDashboard uses live D1 dashboardSummary across all 6 roles with zero
     EXPORT: {
       role: 'EXPORT',
       as_of_date: '2026-11-19',
+      team_overview: sharedTeamOverview,
       kpis: { loading_today_count: 1, booking_pending_count: 1, awaiting_loading_count: 1, docs_pending_count: 1, awaiting_final_invoice_count: 1, payment_followup_count: 2, active_logistics_partners_count: 3 },
       upcoming_milestones: [],
       readiness_queue: [{ shipment_id: 'SHP-2', di_id: 'DI-2', di_no: 'DI-002', customer_name: 'EuroStarch', booking_no: 'BK-002', etd: '2026-11-25', planned_loading_date: '2026-11-21', shipment_status: 'BOOKED', invoice_readiness: 'NO_INVOICE', payment_status: 'UNPAID' }]
@@ -2191,6 +2210,7 @@ test('renderDashboard uses live D1 dashboardSummary across all 6 roles with zero
     PRODUCTION_WAREHOUSE: {
       role: 'PRODUCTION_WAREHOUSE',
       as_of_date: '2026-11-19',
+      team_overview: sharedTeamOverview,
       kpis: { loading_today_count: 1, due_next_7_days_count: 1, planned_shipments_count: 1, loaded_this_month_count: 2, upcoming_planned_mt: 15 },
       upcoming_loadings: [{ planned_loading_date: '2026-11-21', actual_loading_date: null, container_plan: '1 x 20GP', planned_qty_mt: 15, actual_container_count: 0, products: [{ product_code: 'THS-85', product_name: 'Tapioca Starch 85%', planned_qty_mt: 15, packing_snapshot: 'Jumbo Bag' }] }]
     }
@@ -2205,6 +2225,16 @@ test('renderDashboard uses live D1 dashboardSummary across all 6 roles with zero
       const container = { innerHTML: '' };
       renderDashboardFn(container);
       assert.ok(container.innerHTML.length > 100, `${role} dashboard should render live D1 content`);
+      if (['ADMIN', 'MANAGER', 'SALES_SUPPORT', 'EXPORT'].includes(role)) {
+        assert.match(container.innerHTML, /data-section="wcat-team-overview"/, `${role} must render WCAT Team Overview`);
+        assert.match(container.innerHTML, /WCAT Team Overview/);
+        assert.match(container.innerHTML, /THP-65/);
+        assert.match(container.innerHTML, /175/);
+        assert.match(container.innerHTML, /Nov 2026/);
+        assert.match(container.innerHTML, /Dec 2026/);
+      } else {
+        assert.doesNotMatch(container.innerHTML, /wcat-team-overview|WCAT Team Overview/, `${role} must NEVER render WCAT Team Overview`);
+      }
       if (role === 'PRODUCTION_WAREHOUSE') {
         assert.match(container.innerHTML, /THS-85/);
         assert.doesNotMatch(container.innerHTML, /Meelunie|EuroStarch|Commission|Outstanding/);

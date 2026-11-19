@@ -4,6 +4,7 @@ import { readFile } from 'node:fs/promises';
 import { DatabaseSync } from 'node:sqlite';
 import worker from '../src/index.js';
 import { hashSessionToken } from '../src/auth/crypto.js';
+import { createDashboardRepository } from '../src/dashboard/repository.js';
 
 async function setupTestDb() {
   const db = new DatabaseSync(':memory:');
@@ -213,4 +214,155 @@ test('GET /api/dashboard returns live D1 summaries with strict RBAC across all 6
   }
   assert.equal('payments_summary' in whData, false);
   assert.equal('commissions_summary' in whData, false);
+
+  // Shared WCAT Team Overview RBAC: identical across 4 internal roles, strictly omitted for EXTERNAL_SALES & PRODUCTION_WAREHOUSE
+  assert.ok(adminData.team_overview && typeof adminData.team_overview === 'object');
+  assert.deepEqual(mgrData.team_overview, adminData.team_overview);
+  assert.deepEqual(supData.team_overview, adminData.team_overview);
+  assert.deepEqual(expData.team_overview, adminData.team_overview);
+  assert.equal('team_overview' in extData, false, 'team_overview must never be returned to EXTERNAL_SALES');
+  assert.equal('team_overview' in whData, false, 'team_overview must never be returned to PRODUCTION_WAREHOUSE');
+});
+
+test('WCAT Team Overview calculates active POs, product breakdown, shipped vs remaining, this/next month shipments, and Dec->Jan rollover', async () => {
+  const { db, wrappedDb } = await setupTestDb();
+  await seedUserAndSession(db, 'U_ADMIN', 'ADMIN', 'admin-token');
+  await seedUserAndSession(db, 'U_MGR', 'MANAGER', 'mgr-token');
+  await seedUserAndSession(db, 'U_SUP', 'SALES_SUPPORT', 'sup-token');
+  await seedUserAndSession(db, 'U_EXP', 'EXPORT', 'exp-token');
+  await seedUserAndSession(db, 'U_WH', 'PRODUCTION_WAREHOUSE', 'wh-token');
+  await seedUserAndSession(db, 'U_SALES1', 'EXTERNAL_SALES', 'sales1-token');
+
+  db.prepare("INSERT INTO customers (customer_id, customer_code, customer_name, owner_user_id, ownership_type, status) VALUES ('C1', 'CUST1', 'Meelunie B.V.', 'U_SALES1', 'ASSIGNED_SALES', 'ACTIVE_CUSTOMER')").run();
+  db.prepare("INSERT INTO product_categories (category_id, category_code, category_name) VALUES ('CAT1', 'TAPIOCA', 'Tapioca')").run();
+  db.prepare("INSERT INTO product_forms (form_id, form_code, form_name) VALUES ('FRM1', 'PELLET', 'Pellet')").run();
+  db.prepare("INSERT INTO products (product_id, product_code, product_name, short_name, category_id, form_id, status) VALUES ('P1', 'THP-65', 'Tapioca Pellet 65%', 'THP65', 'CAT1', 'FRM1', 'ACTIVE')").run();
+  db.prepare("INSERT INTO products (product_id, product_code, product_name, short_name, category_id, form_id, status) VALUES ('P2', 'THS-85', 'Tapioca Starch 85%', 'THS85', 'CAT1', 'FRM1', 'ACTIVE')").run();
+
+  // Active PO1 (PARTIALLY_SHIPPED): P1 100 MT + P2 25 MT
+  db.prepare("INSERT INTO po_headers (po_id, customer_id, header_status, created_by) VALUES ('PO1', 'C1', 'PARTIALLY_SHIPPED', 'U_ADMIN')").run();
+  db.prepare("INSERT INTO po_revisions (revision_id, po_id, revision_no, status, customer_po_no, ownership_type_snapshot, sales_owner_user_id_snapshot, currency, incoterm, delivery_start, delivery_end, valid_until, created_by) VALUES ('REV1', 'PO1', 0, 'ACTIVE', 'CPO-1', 'ASSIGNED_SALES', 'U_SALES1', 'USD', 'FOB', '2026-11-01', '2026-12-31', '2027-01-31', 'U_ADMIN')").run();
+  db.prepare("UPDATE po_headers SET current_active_revision_id = 'REV1' WHERE po_id = 'PO1'").run();
+  db.prepare("INSERT INTO po_revision_lines (line_id, po_revision_id, line_no, product_id, spec_source, spec_revision_id, contract_qty_mt, tolerance_pct, min_qty_mt, max_qty_mt, unit_price, packaging, container_type, loading_pattern) VALUES ('L1', 'REV1', 10, 'P1', 'STANDARD', 'SPEC1', 100, 10, 90, 110, 500, 'Jumbo', '40HC', 'Floor')").run();
+  db.prepare("INSERT INTO po_revision_lines (line_id, po_revision_id, line_no, product_id, spec_source, spec_revision_id, contract_qty_mt, tolerance_pct, min_qty_mt, max_qty_mt, unit_price, packaging, container_type, loading_pattern) VALUES ('L1B', 'REV1', 20, 'P2', 'STANDARD', 'SPEC1', 25, 10, 22, 28, 420, 'Jumbo', '20GP', 'Floor')").run();
+
+  // Active PO2 (OPEN): P2 50 MT
+  db.prepare("INSERT INTO po_headers (po_id, customer_id, header_status, created_by) VALUES ('PO2', 'C1', 'OPEN', 'U_ADMIN')").run();
+  db.prepare("INSERT INTO po_revisions (revision_id, po_id, revision_no, status, customer_po_no, ownership_type_snapshot, sales_owner_user_id_snapshot, currency, incoterm, delivery_start, delivery_end, valid_until, created_by) VALUES ('REV2', 'PO2', 0, 'ACTIVE', 'CPO-2', 'ASSIGNED_SALES', 'U_SALES1', 'USD', 'FOB', '2026-11-01', '2026-12-31', '2027-01-31', 'U_ADMIN')").run();
+  db.prepare("UPDATE po_headers SET current_active_revision_id = 'REV2' WHERE po_id = 'PO2'").run();
+  db.prepare("INSERT INTO po_revision_lines (line_id, po_revision_id, line_no, product_id, spec_source, spec_revision_id, contract_qty_mt, tolerance_pct, min_qty_mt, max_qty_mt, unit_price, packaging, container_type, loading_pattern) VALUES ('L2', 'REV2', 10, 'P2', 'STANDARD', 'SPEC1', 50, 10, 45, 55, 400, 'Jumbo', '20GP', 'Floor')").run();
+
+  // Completed PO3 (must be excluded from Active POs)
+  db.prepare("INSERT INTO po_headers (po_id, customer_id, header_status, created_by) VALUES ('PO3', 'C1', 'COMPLETED', 'U_ADMIN')").run();
+  db.prepare("INSERT INTO po_revisions (revision_id, po_id, revision_no, status, customer_po_no, ownership_type_snapshot, sales_owner_user_id_snapshot, currency, incoterm, delivery_start, delivery_end, valid_until, created_by) VALUES ('REV3', 'PO3', 0, 'ACTIVE', 'CPO-3', 'ASSIGNED_SALES', 'U_SALES1', 'USD', 'FOB', '2026-10-01', '2026-10-31', '2026-11-30', 'U_ADMIN')").run();
+  db.prepare("UPDATE po_headers SET current_active_revision_id = 'REV3' WHERE po_id = 'PO3'").run();
+  db.prepare("INSERT INTO po_revision_lines (line_id, po_revision_id, line_no, product_id, spec_source, spec_revision_id, contract_qty_mt, tolerance_pct, min_qty_mt, max_qty_mt, unit_price, packaging, container_type, loading_pattern) VALUES ('L3', 'REV3', 10, 'P1', 'STANDARD', 'SPEC1', 40, 10, 36, 44, 500, 'Jumbo', '40HC', 'Floor')").run();
+
+  // Cancelled PO4 (must be excluded from Active POs)
+  db.prepare("INSERT INTO po_headers (po_id, customer_id, header_status, created_by) VALUES ('PO4', 'C1', 'CANCELLED', 'U_ADMIN')").run();
+  db.prepare("INSERT INTO po_revisions (revision_id, po_id, revision_no, status, customer_po_no, ownership_type_snapshot, sales_owner_user_id_snapshot, currency, incoterm, delivery_start, delivery_end, valid_until, created_by) VALUES ('REV4', 'PO4', 0, 'ACTIVE', 'CPO-4', 'ASSIGNED_SALES', 'U_SALES1', 'USD', 'FOB', '2026-11-01', '2026-12-31', '2027-01-31', 'U_ADMIN')").run();
+  db.prepare("UPDATE po_headers SET current_active_revision_id = 'REV4' WHERE po_id = 'PO4'").run();
+  db.prepare("INSERT INTO po_revision_lines (line_id, po_revision_id, line_no, product_id, spec_source, spec_revision_id, contract_qty_mt, tolerance_pct, min_qty_mt, max_qty_mt, unit_price, packaging, container_type, loading_pattern) VALUES ('L4', 'REV4', 10, 'P1', 'STANDARD', 'SPEC1', 30, 10, 27, 33, 500, 'Jumbo', '40HC', 'Floor')").run();
+
+  // Nov 2026 — SHP-1 (LOADED/COMPLETED): 20 MT actual in 1 active container (+ 1 cancelled container ignored)
+  db.prepare("INSERT INTO delivery_instructions (di_id, customer_id, po_id, po_revision_id, di_no, shipping_month, shipping_period, container_plan, status, created_by) VALUES ('DI-1', 'C1', 'PO1', 'REV1', 'DI-001', '2026-11', 'FIRST_HALF', '1 x 40HC', 'COMPLETED', 'U_EXP')").run();
+  db.prepare("INSERT INTO delivery_instruction_lines (di_line_id, di_id, po_id, po_revision_id, po_revision_line_id, product_id, planned_qty_mt, packing_snapshot, created_by) VALUES ('DIL-1', 'DI-1', 'PO1', 'REV1', 'L1', 'P1', 22, 'Jumbo Bag', 'U_EXP')").run();
+  db.prepare("INSERT INTO phase6_shipments (shipment_id, di_id, status, booking_no, planned_loading_date, actual_loading_date, created_by) VALUES ('SHP-1', 'DI-1', 'COMPLETED', 'BK-001', '2026-11-08', '2026-11-10', 'U_EXP')").run();
+  db.prepare("INSERT INTO shipment_containers (container_id, shipment_id, container_no, container_type, status, created_by) VALUES ('CNT-1', 'SHP-1', 'MSCU111', '40HC', 'LOADED', 'U_EXP')").run();
+  db.prepare("INSERT INTO shipment_container_lines (container_line_id, container_id, delivery_instruction_line_id, number_of_bags, qty_mt, created_by) VALUES ('CL-1', 'CNT-1', 'DIL-1', 20, 20, 'U_EXP')").run();
+  db.prepare("INSERT INTO shipment_containers (container_id, shipment_id, container_no, container_type, status, created_by) VALUES ('CNT-CAN', 'SHP-1', 'MSCU999', '40HC', 'CANCELLED', 'U_EXP')").run();
+  db.prepare("INSERT INTO shipment_container_lines (container_line_id, container_id, delivery_instruction_line_id, number_of_bags, qty_mt, created_by) VALUES ('CL-CAN', 'CNT-CAN', 'DIL-1', 10, 10, 'U_EXP')").run();
+
+  // Nov 2026 — SHP-2 (BOOKED, remaining to ship this month): 15 MT planned, '2 x 20GP'
+  db.prepare("INSERT INTO delivery_instructions (di_id, customer_id, po_id, po_revision_id, di_no, shipping_month, shipping_period, container_plan, status, created_by) VALUES ('DI-2', 'C1', 'PO2', 'REV2', 'DI-002', '2026-11', 'SECOND_HALF', '2 x 20GP', 'IN_PROGRESS', 'U_EXP')").run();
+  db.prepare("INSERT INTO delivery_instruction_lines (di_line_id, di_id, po_id, po_revision_id, po_revision_line_id, product_id, planned_qty_mt, packing_snapshot, created_by) VALUES ('DIL-2', 'DI-2', 'PO2', 'REV2', 'L2', 'P2', 15, 'Jumbo Bag', 'U_EXP')").run();
+  db.prepare("INSERT INTO phase6_shipments (shipment_id, di_id, status, booking_no, planned_loading_date, created_by) VALUES ('SHP-2', 'DI-2', 'BOOKED', 'BK-002', '2026-11-25', 'U_EXP')").run();
+
+  // Nov 2026 — SHP-3 (CANCELLED, must be excluded from both shipped & monthly totals)
+  db.prepare("INSERT INTO delivery_instructions (di_id, customer_id, po_id, po_revision_id, di_no, shipping_month, shipping_period, container_plan, status, created_by) VALUES ('DI-3', 'C1', 'PO1', 'REV1', 'DI-003', '2026-11', 'SECOND_HALF', '1 x 40HC', 'IN_PROGRESS', 'U_EXP')").run();
+  db.prepare("INSERT INTO delivery_instruction_lines (di_line_id, di_id, po_id, po_revision_id, po_revision_line_id, product_id, planned_qty_mt, packing_snapshot, created_by) VALUES ('DIL-3', 'DI-3', 'PO1', 'REV1', 'L1', 'P1', 18, 'Jumbo Bag', 'U_EXP')").run();
+  db.prepare("INSERT INTO phase6_shipments (shipment_id, di_id, status, booking_no, planned_loading_date, created_by) VALUES ('SHP-3', 'DI-3', 'CANCELLED', 'BK-003', '2026-11-28', 'U_EXP')").run();
+
+  // Dec 2026 (next month) — DI-4 (CONFIRMED, no shipment row yet): 45 MT, composite plan '2 x 40HC + 1 x 20GP' => 3 containers
+  db.prepare("INSERT INTO delivery_instructions (di_id, customer_id, po_id, po_revision_id, di_no, shipping_month, shipping_period, container_plan, status, created_by) VALUES ('DI-4', 'C1', 'PO1', 'REV1', 'DI-004', '2026-12', 'FIRST_HALF', '2 x 40HC + 1 x 20GP', 'CONFIRMED', 'U_EXP')").run();
+  db.prepare("INSERT INTO delivery_instruction_lines (di_line_id, di_id, po_id, po_revision_id, po_revision_line_id, product_id, planned_qty_mt, packing_snapshot, created_by) VALUES ('DIL-4', 'DI-4', 'PO1', 'REV1', 'L1', 'P1', 45, 'Jumbo Bag', 'U_EXP')").run();
+
+  // Dec 2026 (next month) — SHP-5 (BOOKED, planned_loading_date in Dec 2026): 22 MT, '1 x 40HC' => 1 container
+  db.prepare("INSERT INTO delivery_instructions (di_id, customer_id, po_id, po_revision_id, di_no, shipping_month, shipping_period, container_plan, status, created_by) VALUES ('DI-5', 'C1', 'PO2', 'REV2', 'DI-005', '2026-11', 'SECOND_HALF', '1 x 40HC', 'IN_PROGRESS', 'U_EXP')").run();
+  db.prepare("INSERT INTO delivery_instruction_lines (di_line_id, di_id, po_id, po_revision_id, po_revision_line_id, product_id, planned_qty_mt, packing_snapshot, created_by) VALUES ('DIL-5', 'DI-5', 'PO2', 'REV2', 'L2', 'P2', 22, 'Jumbo Bag', 'U_EXP')").run();
+  db.prepare("INSERT INTO phase6_shipments (shipment_id, di_id, status, booking_no, planned_loading_date, created_by) VALUES ('SHP-5', 'DI-5', 'BOOKED', 'BK-005', '2026-12-05', 'U_EXP')").run();
+
+  // Jan 2027 — DI-6 (to verify Dec->Jan rollover)
+  db.prepare("INSERT INTO delivery_instructions (di_id, customer_id, po_id, po_revision_id, di_no, shipping_month, shipping_period, container_plan, status, created_by) VALUES ('DI-6', 'C1', 'PO1', 'REV1', 'DI-006', '2027-01', 'FIRST_HALF', '3 x 20GP', 'CONFIRMED', 'U_EXP')").run();
+  db.prepare("INSERT INTO delivery_instruction_lines (di_line_id, di_id, po_id, po_revision_id, po_revision_line_id, product_id, planned_qty_mt, packing_snapshot, created_by) VALUES ('DIL-6', 'DI-6', 'PO1', 'REV1', 'L1B', 'P2', 25, 'Jumbo Bag', 'U_EXP')").run();
+
+  const repo = createDashboardRepository(wrappedDb);
+  const novDate = new Date('2026-11-15T00:00:00Z');
+  const [adminDash, mgrDash, supDash, expDash, extDash, whDash] = await Promise.all([
+    repo.getDashboardForCaller({ user_id: 'U_ADMIN', role: 'ADMIN' }, novDate),
+    repo.getDashboardForCaller({ user_id: 'U_MGR', role: 'MANAGER' }, novDate),
+    repo.getDashboardForCaller({ user_id: 'U_SUP', role: 'SALES_SUPPORT' }, novDate),
+    repo.getDashboardForCaller({ user_id: 'U_EXP', role: 'EXPORT' }, novDate),
+    repo.getDashboardForCaller({ user_id: 'U_SALES1', role: 'EXTERNAL_SALES' }, novDate),
+    repo.getDashboardForCaller({ user_id: 'U_WH', role: 'PRODUCTION_WAREHOUSE' }, novDate)
+  ]);
+
+  assert.deepEqual(mgrDash.team_overview, adminDash.team_overview);
+  assert.deepEqual(supDash.team_overview, adminDash.team_overview);
+  assert.deepEqual(expDash.team_overview, adminDash.team_overview);
+  assert.equal('team_overview' in extDash, false);
+  assert.equal('team_overview' in whDash, false);
+
+  const ov = adminDash.team_overview;
+  // 1. Active POs: PO1 (100 P1 + 25 P2) + PO2 (50 P2) = 175 MT across 2 active POs
+  assert.equal(ov.active_pos.active_po_count, 2);
+  assert.equal(ov.active_pos.total_contract_mt, 175);
+  assert.equal(ov.active_pos.product_breakdown.length, 2);
+  assert.deepEqual(
+    ov.active_pos.product_breakdown.map((p) => ({
+      code: p.product_code,
+      contract: p.contract_qty_mt,
+      shipped: p.shipped_qty_mt,
+      remaining: p.remaining_qty_mt,
+      po_count: p.po_count
+    })),
+    [
+      { code: 'THP-65', contract: 100, shipped: 20, remaining: 80, po_count: 1 },
+      { code: 'THS-85', contract: 75, shipped: 0, remaining: 75, po_count: 2 }
+    ]
+  );
+
+  // 2. Shipped vs Remaining across active POs
+  assert.equal(ov.fulfillment.total_contract_mt, 175);
+  assert.equal(ov.fulfillment.actual_shipped_mt, 20);
+  assert.equal(ov.fulfillment.remaining_contract_mt, 155);
+  assert.equal(ov.fulfillment.shipped_pct, 11.4);
+
+  // 3. This Month (2026-11): SHP-1 (20 MT, 1 cnt loaded) + SHP-2 (15 MT, 2 cnt remaining)
+  assert.equal(ov.this_month.month, '2026-11');
+  assert.equal(ov.this_month.total_mt, 35);
+  assert.equal(ov.this_month.total_containers, 3);
+  assert.equal(ov.this_month.shipment_count, 2);
+  assert.equal(ov.this_month.shipped_mt, 20);
+  assert.equal(ov.this_month.shipped_containers, 1);
+  assert.equal(ov.this_month.shipped_count, 1);
+  assert.equal(ov.this_month.remaining_mt, 15);
+  assert.equal(ov.this_month.remaining_containers, 2);
+  assert.equal(ov.this_month.remaining_count, 1);
+
+  // 4. Next Month (2026-12): DI-4 (45 MT, 3 cnt) + SHP-5 (22 MT, 1 cnt)
+  assert.equal(ov.next_month.month, '2026-12');
+  assert.equal(ov.next_month.planned_mt, 67);
+  assert.equal(ov.next_month.planned_containers, 4);
+  assert.equal(ov.next_month.shipment_count, 2);
+
+  // 5. Dec -> Jan year rollover
+  const decDash = await repo.getDashboardForCaller({ user_id: 'U_ADMIN', role: 'ADMIN' }, new Date('2026-12-15T00:00:00Z'));
+  assert.equal(decDash.team_overview.this_month.month, '2026-12');
+  assert.equal(decDash.team_overview.this_month.total_mt, 67);
+  assert.equal(decDash.team_overview.this_month.total_containers, 4);
+  assert.equal(decDash.team_overview.next_month.month, '2027-01');
+  assert.equal(decDash.team_overview.next_month.planned_mt, 25);
+  assert.equal(decDash.team_overview.next_month.planned_containers, 3);
+  assert.equal(decDash.team_overview.next_month.shipment_count, 1);
 });
