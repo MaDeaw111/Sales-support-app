@@ -11,50 +11,182 @@
         :root {
             --ui-radius-card: 14px;
             --ui-radius-control: 10px;
-            --ui-border: #e2e8f0;
-            --ui-surface: #ffffff;
-            --ui-surface-soft: #f8fafc;
-            --ui-page: #f6f8fb;
-            --ui-text: #0f172a;
-            --ui-muted: #64748b;
-            --ui-primary: #2563eb;
-            --ui-primary-hover: #1d4ed8;
+            /* 3-Color Palette: Ice White (#F4F8FA) · Deep Teal (#0F3D47) · Soft Peach (#F59E7B) */
+            --ui-page: #F4F8FA;
+            --ui-surface: #FFFFFF;
+            --ui-surface-soft: #EDF4F7;
+            --ui-border: #D9E5EA;
+            --ui-border-strong: #C2D4DC;
+            --ui-text: #0F3D47;
+            --ui-text-body: #1E3A42;
+            --ui-muted: #5C7680;
+            --ui-primary: #0F3D47;
+            --ui-primary-hover: #0B2E36;
+            --ui-primary-soft: #16525F;
+            --ui-accent: #F59E7B;
+            --ui-accent-hover: #EE8C66;
+            --ui-accent-soft: #FDF0EA;
+            --ui-accent-border: #F5C3AE;
+            --ui-accent-text: #0F3D47;
+            /* Preserved semantic status accents */
             --ui-success: #059669;
             --ui-success-hover: #047857;
-            --ui-shadow-card: 0 1px 2px rgba(15,23,42,.04), 0 8px 24px rgba(15,23,42,.035);
+            --ui-shadow-card: 0 1px 2px rgba(15,61,71,.05), 0 8px 24px rgba(15,61,71,.04);
         }
-        body { font-family: 'Sarabun', sans-serif; background: var(--ui-page); color: var(--ui-text); }
-        .app-header { box-shadow: 0 1px 0 rgba(255,255,255,.04), 0 8px 24px rgba(15,23,42,.12); }
-        .app-sidebar { min-width: 16rem; }
-        .app-main { background: var(--ui-page); }
+
+        /* Base & Ice White Canvas */
+        body { font-family: 'Sarabun', sans-serif; background-color: var(--ui-page) !important; color: var(--ui-text-body); }
+        .app-main { background-color: var(--ui-page) !important; }
+
+        /* Login Screen */
+        #loginScreen { background: radial-gradient(circle at top right, #16525F 0%, #0F3D47 45%, #09242B 100%) !important; }
+        #loginScreen > div { border-color: rgba(244,248,250,.18) !important; }
+        #loginScreen .bg-slate-900 { background-color: var(--ui-primary) !important; border-bottom: 3px solid var(--ui-accent); }
+        #loginScreen .bg-slate-900 p { color: rgba(244,248,250,.76) !important; }
+        #loginScreen .bg-blue-600 { background-color: var(--ui-accent) !important; color: var(--ui-accent-text) !important; }
+
+        /* Top App Header (Deep Teal + Soft Peach Accents) */
+        #appHeader, .app-header {
+            background-color: var(--ui-primary) !important;
+            border-bottom: 1px solid rgba(244,248,250,.10);
+            box-shadow: 0 1px 0 rgba(255,255,255,.05), 0 8px 24px rgba(15,61,71,.18);
+        }
+        #appHeader .bg-blue-600 { background-color: var(--ui-accent) !important; color: var(--ui-accent-text) !important; }
+        #appHeader p { color: rgba(244,248,250,.72) !important; }
+        #authUserRole { color: var(--ui-accent) !important; }
+        #userAvatar {
+            background-color: var(--ui-accent) !important;
+            color: var(--ui-accent-text) !important;
+            box-shadow: 0 0 0 2px rgba(245,158,123,.32);
+        }
+        #appHeader .ui-btn-secondary {
+            background-color: var(--ui-primary-soft) !important;
+            border-color: rgba(244,248,250,.18) !important;
+            color: var(--ui-page) !important;
+        }
+        #appHeader .ui-btn-secondary:hover {
+            background-color: #1D6474 !important;
+            border-color: rgba(245,158,123,.65) !important;
+            color: #FFFFFF !important;
+        }
+
+        /* Sidebar Navigation (Deep Teal + Soft Peach Active Highlight) */
+        .app-sidebar {
+            min-width: 16rem;
+            background-color: var(--ui-primary) !important;
+            border-right: 1px solid var(--ui-primary-hover) !important;
+            color: var(--ui-page);
+        }
+        .app-sidebar.custom-scrollbar::-webkit-scrollbar-track { background: var(--ui-primary-hover); }
+        .app-sidebar.custom-scrollbar::-webkit-scrollbar-thumb { background: #1E6373; border-radius: 4px; }
+        #sidebarNav [data-nav-section] > div:first-child { color: rgba(244,248,250,.56) !important; }
+        #sidebarNav button { color: rgba(244,248,250,.86) !important; }
+        #sidebarNav button:hover {
+            background-color: var(--ui-primary-soft) !important;
+            color: #FFFFFF !important;
+        }
+        #sidebarNav button.bg-blue-600 {
+            background-color: var(--ui-accent) !important;
+            color: var(--ui-accent-text) !important;
+            font-weight: 700 !important;
+            box-shadow: 0 4px 14px rgba(7,30,36,.28) !important;
+        }
+        #sidebarNav button.bg-blue-600:hover {
+            background-color: var(--ui-accent-hover) !important;
+            color: var(--ui-accent-text) !important;
+        }
+
+        /* Crisp White Cards & Cool-Gray Borders */
         .ui-card { background: var(--ui-surface); border: 1px solid var(--ui-border); border-radius: var(--ui-radius-card); box-shadow: var(--ui-shadow-card); }
+        [class~='bg-white'][class~='rounded-xl'][class~='border'][class~='border-slate-200'] {
+            border-color: var(--ui-border) !important;
+            box-shadow: var(--ui-shadow-card);
+        }
+        main .border-slate-200, .ui-modal-shell .border-slate-200 { border-color: var(--ui-border) !important; }
+        main .border-slate-100, .ui-modal-shell .border-slate-100 { border-color: #E7F0F4 !important; }
+        main .border-slate-300, .ui-modal-shell .border-slate-300 { border-color: var(--ui-border-strong) !important; }
+        main .bg-slate-50, .ui-modal-shell .bg-slate-50 { background-color: var(--ui-surface-soft) !important; }
+        main .bg-slate-100, .ui-modal-shell .bg-slate-100 { background-color: #E6EFF3 !important; }
+
+        /* Headings & Typography (Deep Teal Hierarchy) */
+        .ui-page-title { font-size:1.25rem; line-height:1.75rem; font-weight:800; color: var(--ui-text); letter-spacing:-.01em; }
+        .ui-page-subtitle { margin-top:.25rem; font-size:.75rem; color: var(--ui-muted); }
+        main h1:not(.text-white), main h2:not(.text-white), main h3:not(.text-white),
+        .ui-modal-shell h1:not(.text-white), .ui-modal-shell h2:not(.text-white), .ui-modal-shell h3:not(.text-white),
+        main .text-slate-900, .ui-modal-shell .text-slate-900 { color: var(--ui-text) !important; }
+        main .text-slate-500, .ui-modal-shell .text-slate-500 { color: var(--ui-muted) !important; }
+
+        /* Buttons & Primary / Dark Accents */
         .ui-btn { display:inline-flex; align-items:center; justify-content:center; gap:.5rem; min-height:36px; padding:.5rem .8rem; border-radius:var(--ui-radius-control); font-size:.75rem; font-weight:700; line-height:1; transition:background-color .15s ease,border-color .15s ease,color .15s ease,box-shadow .15s ease,transform .15s ease; }
         .ui-btn:hover { transform: translateY(-1px); }
-        .ui-btn-primary { background:var(--ui-primary); color:#fff; border:1px solid var(--ui-primary); }
-        .ui-btn-primary:hover { background:var(--ui-primary-hover); border-color:var(--ui-primary-hover); }
-        .ui-btn-secondary { background:#fff; color:#334155; border:1px solid var(--ui-border); }
-        .ui-btn-secondary:hover { background:var(--ui-surface-soft); border-color:#cbd5e1; }
+        .ui-btn-primary { background: var(--ui-primary); color: #FFFFFF; border: 1px solid var(--ui-primary); }
+        .ui-btn-primary:hover { background: var(--ui-primary-hover); border-color: var(--ui-primary-hover); }
+        .ui-btn-secondary { background: #FFFFFF; color: var(--ui-primary); border: 1px solid var(--ui-border); }
+        .ui-btn-secondary:hover { background: var(--ui-surface-soft); border-color: var(--ui-border-strong); }
         .ui-btn-success { display:inline-flex; align-items:center; justify-content:center; gap:.375rem; min-height:34px; padding:.45rem .75rem; border-radius:var(--ui-radius-control); background:var(--ui-success); color:#fff; font-size:.75rem; font-weight:700; transition:background-color .15s ease,transform .15s ease,box-shadow .15s ease; }
         .ui-btn-success:hover { background:var(--ui-success-hover); transform:translateY(-1px); }
-        .ui-input { width:100%; min-height:38px; border:1px solid var(--ui-border); border-radius:var(--ui-radius-control); background:#fff; padding:.55rem .7rem; font-size:.75rem; color:#0f172a; outline:none; transition:border-color .15s ease,box-shadow .15s ease; }
-        .ui-input:focus { border-color:#93c5fd; box-shadow:0 0 0 3px rgba(37,99,235,.10); }
-        .ui-select-dark { border:1px solid #334155; border-radius:8px; min-height:30px; padding:.25rem .5rem; }
+
+        main .bg-blue-600, .ui-modal-shell .bg-blue-600 { background-color: var(--ui-primary) !important; color: #FFFFFF !important; }
+        main .bg-blue-600:hover, .ui-modal-shell .bg-blue-600:hover,
+        main .hover\:bg-blue-700:hover, .ui-modal-shell .hover\:bg-blue-700:hover { background-color: var(--ui-primary-hover) !important; color: #FFFFFF !important; }
+        main .bg-blue-500, main .bg-blue-500\/80 { background-color: var(--ui-primary-soft) !important; }
+
+        main .bg-slate-900, .ui-modal-shell .bg-slate-900 {
+            background-color: var(--ui-primary) !important;
+            border-color: var(--ui-primary-soft) !important;
+        }
+        main button.bg-slate-900:hover, .ui-modal-shell button.bg-slate-900:hover {
+            background-color: var(--ui-primary-hover) !important;
+        }
+        main .bg-slate-900 .text-blue-300, .ui-modal-shell .bg-slate-900 .text-blue-300 { color: var(--ui-accent) !important; }
+
+        /* Soft Peach Secondary Accents, Badges, Callouts & Tabs (High Contrast #0F3D47 Text) */
+        main .bg-blue-100, .ui-modal-shell .bg-blue-100 {
+            background-color: var(--ui-accent) !important;
+            color: var(--ui-accent-text) !important;
+            border-color: #E88B66 !important;
+        }
+        main button.bg-blue-100:hover, .ui-modal-shell button.bg-blue-100:hover {
+            background-color: var(--ui-accent-hover) !important;
+            color: var(--ui-accent-text) !important;
+        }
+        main .bg-blue-50, .ui-modal-shell .bg-blue-50,
+        main .bg-blue-50\/50, main .bg-blue-50\/40,
+        main .hover\:bg-blue-50:hover, main .hover\:bg-blue-50\/40:hover, main .hover\:bg-blue-50\/50:hover {
+            background-color: var(--ui-accent-soft) !important;
+        }
+        main .border-blue-100, .ui-modal-shell .border-blue-100,
+        main .border-blue-200, .ui-modal-shell .border-blue-200 { border-color: var(--ui-accent-border) !important; }
+        main .border-blue-500, .ui-modal-shell .border-blue-500,
+        main .border-blue-600, .ui-modal-shell .border-blue-600,
+        main .hover\:border-blue-300:hover, .ui-modal-shell .hover\:border-blue-300:hover { border-color: var(--ui-accent) !important; }
+        main .text-blue-600, .ui-modal-shell .text-blue-600,
+        main .text-blue-700, .ui-modal-shell .text-blue-700,
+        main .text-blue-800, .ui-modal-shell .text-blue-800,
+        main .text-blue-900, .ui-modal-shell .text-blue-900,
+        main .text-blue-950, .ui-modal-shell .text-blue-950,
+        main .hover\:text-blue-600:hover, main .hover\:text-blue-800:hover { color: var(--ui-primary) !important; }
+
+        /* Inputs, Tables, Modals & Scrollbars */
+        .ui-input { width:100%; min-height:38px; border:1px solid var(--ui-border); border-radius:var(--ui-radius-control); background:#FFFFFF; padding:.55rem .7rem; font-size:.75rem; color: var(--ui-text); outline:none; transition:border-color .15s ease,box-shadow .15s ease; }
+        .ui-input:focus, main .focus\:border-blue-500:focus, .ui-modal-shell .focus\:border-blue-500:focus {
+            border-color: var(--ui-primary) !important;
+            box-shadow: 0 0 0 3px rgba(245,158,123,.32) !important;
+        }
+        .ui-select-dark { border:1px solid #1E6373; border-radius:8px; min-height:30px; padding:.25rem .5rem; }
         .ui-table { width:100%; border-collapse:separate; border-spacing:0; }
-        .ui-table thead th { white-space:nowrap; letter-spacing:.02em; }
+        .ui-table thead th { white-space:nowrap; letter-spacing:.02em; color: var(--ui-muted); }
         .ui-table tbody tr { transition:background-color .12s ease; }
-        .ui-table tbody tr:hover { background:#f8fafc; }
-        .ui-modal-backdrop { background:rgba(15,23,42,.64); backdrop-filter:blur(5px); }
-        .ui-modal-shell { background:#fff; border:1px solid rgba(226,232,240,.9); border-radius:16px; box-shadow:0 24px 80px rgba(15,23,42,.28); }
-        .ui-page-title { font-size:1.25rem; line-height:1.75rem; font-weight:800; color:#0f172a; letter-spacing:-.01em; }
-        .ui-page-subtitle { margin-top:.25rem; font-size:.75rem; color:#64748b; }
+        .ui-table tbody tr:hover { background: var(--ui-surface-soft); }
+        .ui-modal-backdrop { background: rgba(11,46,54,.64) !important; backdrop-filter: blur(5px); }
+        .ui-modal-shell { background: #FFFFFF; border: 1px solid var(--ui-border); border-radius: 16px; box-shadow: 0 24px 80px rgba(15,61,71,.30); }
         button, input, select, textarea { transition: border-color .15s ease, box-shadow .15s ease, background-color .15s ease, color .15s ease; }
-        button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible, a:focus-visible { outline:3px solid rgba(37,99,235,.22); outline-offset:2px; }
+        button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible, a:focus-visible { outline: 3px solid rgba(245,158,123,.55); outline-offset: 2px; }
         input:not([type='checkbox']):not([type='radio']), select, textarea { border-radius:var(--ui-radius-control); }
-        [class~='bg-white'][class~='rounded-xl'][class~='border'][class~='border-slate-200'] { box-shadow:var(--ui-shadow-card); }
         .custom-scrollbar::-webkit-scrollbar { width: 6px; height: 6px; }
-        .custom-scrollbar::-webkit-scrollbar-track { background: #f1f5f9; }
-        .custom-scrollbar::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 4px; }
-        .multi-day-bar { background: linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%); }
+        .custom-scrollbar::-webkit-scrollbar-track { background: #E6EFF3; }
+        .custom-scrollbar::-webkit-scrollbar-thumb { background: #B8CCD4; border-radius: 4px; }
+        .multi-day-bar { background: linear-gradient(135deg, #0F3D47 0%, #16525F 100%) !important; }
     </style>
 </head>
 <body class="bg-slate-100 text-slate-800 antialiased min-h-screen flex flex-col">
