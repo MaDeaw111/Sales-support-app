@@ -85,6 +85,31 @@ export function createProductHandler({ repo, resolveUser, db }) {
       }
     }
 
+    // PUT /api/product-categories/:id
+    const categoryMatch = path.match(/^\/api\/product-categories\/([^/]+)$/);
+    if (categoryMatch && method === 'PUT') {
+      if (!isAdmin && !isManager) {
+        return json({ status: 'ERROR', message: 'Permission denied.' }, 403);
+      }
+      const categoryId = categoryMatch[1];
+      const body = await readJson(request);
+      if (!body || typeof body !== 'object' || Array.isArray(body)) {
+        return json({ status: 'ERROR', message: 'Invalid request body.' }, 400);
+      }
+      try {
+        const category = await repo.updateCategory(categoryId, body);
+        return json({ status: 'SUCCESS', data: { category } });
+      } catch (err) {
+        if (err.message && err.message.includes('not found')) {
+          return json({ status: 'ERROR', message: 'Category not found.' }, 404);
+        }
+        if (err.code === 'UNIQUE') {
+          return json({ status: 'ERROR', message: err.message }, 409);
+        }
+        return json({ status: 'ERROR', message: err.message }, 400);
+      }
+    }
+
     // GET /api/product-forms
     if (path === '/api/product-forms' && method === 'GET') {
       const forms = await repo.listForms();
@@ -104,6 +129,31 @@ export function createProductHandler({ repo, resolveUser, db }) {
         const form = await repo.createForm(body);
         return json({ status: 'SUCCESS', data: { form } });
       } catch (err) {
+        if (err.code === 'UNIQUE') {
+          return json({ status: 'ERROR', message: err.message }, 409);
+        }
+        return json({ status: 'ERROR', message: err.message }, 400);
+      }
+    }
+
+    // PUT /api/product-forms/:id
+    const formMatch = path.match(/^\/api\/product-forms\/([^/]+)$/);
+    if (formMatch && method === 'PUT') {
+      if (!isAdmin && !isManager) {
+        return json({ status: 'ERROR', message: 'Permission denied.' }, 403);
+      }
+      const formId = formMatch[1];
+      const body = await readJson(request);
+      if (!body || typeof body !== 'object' || Array.isArray(body)) {
+        return json({ status: 'ERROR', message: 'Invalid request body.' }, 400);
+      }
+      try {
+        const form = await repo.updateForm(formId, body);
+        return json({ status: 'SUCCESS', data: { form } });
+      } catch (err) {
+        if (err.message && err.message.includes('not found')) {
+          return json({ status: 'ERROR', message: 'Form not found.' }, 404);
+        }
         if (err.code === 'UNIQUE') {
           return json({ status: 'ERROR', message: err.message }, 409);
         }

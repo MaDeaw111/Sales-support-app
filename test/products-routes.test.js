@@ -184,3 +184,56 @@ test('PUT /api/products/:id updates product successfully', async () => {
   assert.deepEqual(data.data.product.applications, ['PET_GRADE']);
   assert.equal(data.data.product.status, 'INACTIVE');
 });
+
+test('POST and PUT /api/product-categories and /api/product-forms enforce RBAC and update cleanly', async () => {
+  const { db, wrappedDb } = await setupTestDb();
+  await seedUserAndSession(db, 'USR-0001', 'Admin', 'admin@example.com', 'ADMIN', 'ALL', 'admin-token');
+  await seedUserAndSession(db, 'USR-0002', 'Manager', 'manager@example.com', 'MANAGER', 'ALL', 'manager-token');
+  await seedUserAndSession(db, 'USR-0003', 'Support', 'support@example.com', 'SALES_SUPPORT', 'ALL', 'support-token');
+
+  // Non-admin/manager blocked from POST
+  let res = await worker.fetch(makeRequest('/api/product-categories', 'POST', { code: 'TAPIOCA', name: 'Tapioca' }, 'support-token'), { DB: wrappedDb });
+  assert.equal(res.status, 403);
+  res = await worker.fetch(makeRequest('/api/product-forms', 'POST', { code: 'PELLET', name: 'Pellet' }, 'support-token'), { DB: wrappedDb });
+  assert.equal(res.status, 403);
+
+  // MANAGER creates category and form
+  res = await worker.fetch(makeRequest('/api/product-categories', 'POST', { code: 'TEST_TAPIOCA', name: 'Test Tapioca' }, 'manager-token'), { DB: wrappedDb });
+  assert.equal(res.status, 200);
+  const createdCat = (await res.json()).data.category;
+  assert.equal(createdCat.code, 'TEST_TAPIOCA');
+
+  res = await worker.fetch(makeRequest('/api/product-forms', 'POST', { code: 'TEST_PELLET', name: 'Test Pellet' }, 'manager-token'), { DB: wrappedDb });
+  assert.equal(res.status, 200);
+  const createdForm = (await res.json()).data.form;
+  assert.equal(createdForm.code, 'TEST_PELLET');
+
+  // Duplicate code returns 409
+  res = await worker.fetch(makeRequest('/api/product-categories', 'POST', { code: 'test_tapioca', name: 'Dup' }, 'admin-token'), { DB: wrappedDb });
+  assert.equal(res.status, 409);
+
+  // SALES_SUPPORT blocked from PUT
+  res = await worker.fetch(makeRequest(`/api/product-categories/${createdCat.id}`, 'PUT', { code: 'TAPIOCA', name: 'Tapioca', status: 'ACTIVE' }, 'support-token'), { DB: wrappedDb });
+  assert.equal(res.status, 403);
+  res = await worker.fetch(makeRequest(`/api/product-forms/${createdForm.id}`, 'PUT', { code: 'PELLET', name: 'Pellet', status: 'ACTIVE' }, 'support-token'), { DB: wrappedDb });
+  assert.equal(res.status, 403);
+
+  // ADMIN renames TEST_TAPIOCA -> TAPIOCA and TEST_PELLET -> PELLET via PUT
+  res = await worker.fetch(makeRequest(`/api/product-categories/${createdCat.id}`, 'PUT', { code: 'TAPIOCA', name: 'Tapioca', status: 'ACTIVE' }, 'admin-token'), { DB: wrappedDb });
+  assert.equal(res.status, 200);
+  const updatedCat = (await res.json()).data.category;
+  assert.equal(updatedCat.code, 'TAPIOCA');
+  assert.equal(updatedCat.name, 'Tapioca');
+
+  res = await worker.fetch(makeRequest(`/api/product-forms/${createdForm.id}`, 'PUT', { code: 'PELLET', name: 'Pellet', status: 'ACTIVE' }, 'admin-token'), { DB: wrappedDb });
+  assert.equal(res.status, 200);
+  const updatedForm = (await res.json()).data.form;
+  assert.equal(updatedForm.code, 'PELLET');
+  assert.equal(updatedForm.name, 'Pellet');
+
+  // Unknown ID returns 404
+  res = await worker.fetch(makeRequest('/api/product-categories/CAT-999', 'PUT', { name: 'Missing', status: 'ACTIVE' }, 'admin-token'), { DB: wrappedDb });
+  assert.equal(res.status, 404);
+  res = await worker.fetch(makeRequest('/api/product-forms/FRM-999', 'PUT', { name: 'Missing', status: 'ACTIVE' }, 'admin-token'), { DB: wrappedDb });
+  assert.equal(res.status, 404);
+});

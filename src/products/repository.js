@@ -113,15 +113,21 @@ export function createProductRepository(db) {
     },
 
     async createCategory(dto) {
-      if (!dto.code || !dto.name) {
+      const code = String(dto.code || '').trim().toUpperCase();
+      const name = String(dto.name || '').trim();
+      const status = dto.status || 'ACTIVE';
+      if (!code || !name) {
         throw new Error('Category code and name are required.');
+      }
+      if (!['ACTIVE', 'INACTIVE', 'ARCHIVED'].includes(status)) {
+        throw new Error('Invalid category status.');
       }
       const categoryId = await nextId(db, 'product_categories', 'category_id', 'CAT');
       try {
         await db.prepare(`
           INSERT INTO product_categories (category_id, category_code, category_name, status)
           VALUES (?, ?, ?, ?)
-        `).bind(categoryId, dto.code.trim().toUpperCase(), dto.name.trim(), dto.status || 'ACTIVE').run();
+        `).bind(categoryId, code, name, status).run();
       } catch (err) {
         wrapUniqueError(err, 'Category code already exists.');
       }
@@ -133,15 +139,26 @@ export function createProductRepository(db) {
       const existing = await this.findCategoryById(id);
       if (!existing) throw new Error('Category not found.');
 
-      if (!dto.name || !dto.status) {
-        throw new Error('Category name and status are required.');
+      const name = String(dto.name || '').trim();
+      const status = dto.status;
+      const code = dto.code !== undefined ? String(dto.code || '').trim().toUpperCase() : existing.code;
+
+      if (!code || !name || !status) {
+        throw new Error('Category code, name, and status are required.');
+      }
+      if (!['ACTIVE', 'INACTIVE', 'ARCHIVED'].includes(status)) {
+        throw new Error('Invalid category status.');
       }
 
-      await db.prepare(`
-        UPDATE product_categories
-        SET category_name = ?, status = ?, updated_at = CURRENT_TIMESTAMP
-        WHERE category_id = ?
-      `).bind(dto.name.trim(), dto.status, id).run();
+      try {
+        await db.prepare(`
+          UPDATE product_categories
+          SET category_code = ?, category_name = ?, status = ?, updated_at = CURRENT_TIMESTAMP
+          WHERE category_id = ?
+        `).bind(code, name, status, id).run();
+      } catch (err) {
+        wrapUniqueError(err, 'Category code already exists.');
+      }
 
       return this.findCategoryById(id);
     },
@@ -180,15 +197,21 @@ export function createProductRepository(db) {
     },
 
     async createForm(dto) {
-      if (!dto.code || !dto.name) {
+      const code = String(dto.code || '').trim().toUpperCase();
+      const name = String(dto.name || '').trim();
+      const status = dto.status || 'ACTIVE';
+      if (!code || !name) {
         throw new Error('Form code and name are required.');
+      }
+      if (!['ACTIVE', 'INACTIVE', 'ARCHIVED'].includes(status)) {
+        throw new Error('Invalid form status.');
       }
       const formId = await nextId(db, 'product_forms', 'form_id', 'FRM');
       try {
         await db.prepare(`
           INSERT INTO product_forms (form_id, form_code, form_name, status)
           VALUES (?, ?, ?, ?)
-        `).bind(formId, dto.code.trim().toUpperCase(), dto.name.trim(), dto.status || 'ACTIVE').run();
+        `).bind(formId, code, name, status).run();
       } catch (err) {
         wrapUniqueError(err, 'Form code already exists.');
       }
@@ -200,15 +223,26 @@ export function createProductRepository(db) {
       const existing = await this.findFormById(id);
       if (!existing) throw new Error('Form not found.');
 
-      if (!dto.name || !dto.status) {
-        throw new Error('Form name and status are required.');
+      const name = String(dto.name || '').trim();
+      const status = dto.status;
+      const code = dto.code !== undefined ? String(dto.code || '').trim().toUpperCase() : existing.code;
+
+      if (!code || !name || !status) {
+        throw new Error('Form code, name, and status are required.');
+      }
+      if (!['ACTIVE', 'INACTIVE', 'ARCHIVED'].includes(status)) {
+        throw new Error('Invalid form status.');
       }
 
-      await db.prepare(`
-        UPDATE product_forms
-        SET form_name = ?, status = ?, updated_at = CURRENT_TIMESTAMP
-        WHERE form_id = ?
-      `).bind(dto.name.trim(), dto.status, id).run();
+      try {
+        await db.prepare(`
+          UPDATE product_forms
+          SET form_code = ?, form_name = ?, status = ?, updated_at = CURRENT_TIMESTAMP
+          WHERE form_id = ?
+        `).bind(code, name, status, id).run();
+      } catch (err) {
+        wrapUniqueError(err, 'Form code already exists.');
+      }
 
       return this.findFormById(id);
     },
