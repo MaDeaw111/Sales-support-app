@@ -17,6 +17,8 @@ const DELIVERY_INSTRUCTION_PROPERTIES = [
 ];
 const SHIPMENT_BOOKING_PROPERTIES = [
   'bookingNo',
+  'blNo',
+  'bl_no',
   'forwarderPartnerId',
   'shippingLinePartnerId',
   'truckingPartnerId',
@@ -185,6 +187,13 @@ function optionalBookingText(value) {
   return value.trim();
 }
 
+function optionalBookingBlNo(value) {
+  if (value === undefined || value === null) return null;
+  if (typeof value !== 'string') throw codedError('SHIPMENT_BOOKING_VALUE_INVALID');
+  const trimmed = value.trim();
+  return trimmed ? trimmed : null;
+}
+
 function optionalBookingDate(value) {
   if (value === undefined || value === null) return null;
   if (typeof value !== 'string' || !/^\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$/.test(value)) {
@@ -237,8 +246,11 @@ export function validateShipmentBooking(dto) {
   const bookingNo = typeof dto.bookingNo === 'string' ? dto.bookingNo.trim() : '';
   if (!bookingNo) throw codedError('SHIPMENT_BOOKING_NUMBER_REQUIRED');
 
+  const rawBlNo = Object.hasOwn(dto, 'blNo') ? dto.blNo : dto.bl_no;
+
   return {
     bookingNo,
+    blNo: optionalBookingBlNo(rawBlNo),
     forwarderPartnerId: optionalId(dto.forwarderPartnerId, 'SHIPMENT_FORWARDER_INVALID'),
     shippingLinePartnerId: optionalId(dto.shippingLinePartnerId, 'SHIPMENT_SHIPPING_LINE_INVALID'),
     truckingPartnerId: optionalId(dto.truckingPartnerId, 'SHIPMENT_TRUCKING_INVALID'),

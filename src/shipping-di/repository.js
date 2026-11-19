@@ -78,9 +78,19 @@ async function findDeliveryInstruction(db, diId) {
   return { ...deliveryInstruction, lines: lines || [] };
 }
 
+async function hasPhase6ShipmentBlNoColumn(db) {
+  try {
+    const { results } = await db.prepare('PRAGMA table_info(phase6_shipments)').all();
+    return (results || []).some((col) => col.name === 'bl_no');
+  } catch {
+    return false;
+  }
+}
+
 async function findPhase6Shipment(db, identifier) {
+  const hasBlNo = await hasPhase6ShipmentBlNoColumn(db);
   return db.prepare(`
-    SELECT shipment_id, di_id, status, booking_no, forwarder_partner_id, shipping_line_partner_id,
+    SELECT shipment_id, di_id, status, booking_no, ${hasBlNo ? 'bl_no' : 'NULL AS bl_no'}, forwarder_partner_id, shipping_line_partner_id,
            trucking_partner_id, vessel, etd, eta, planned_loading_date, actual_loading_date,
            schedule_result, schedule_note, all_ship_docs_drive_url, digital_docs_sent_date,
            original_docs_required, dhl_sent_date, dhl_tracking_no, docs_note, cash_received_amount,
@@ -232,9 +242,10 @@ async function assertContainerPoLineCapacity(db, shipment, diLines, quantitiesBy
 }
 
 async function findPhase6ShipmentReadModel(db, identifier, lookupField) {
+  const hasBlNo = await hasPhase6ShipmentBlNoColumn(db);
   const shipment = await db.prepare(`
     SELECT shipment.shipment_id, shipment.di_id, instruction.customer_id, instruction.di_no, instruction.container_plan,
-           shipment.status, shipment.booking_no, shipment.forwarder_partner_id,
+           shipment.status, shipment.booking_no, ${hasBlNo ? 'shipment.bl_no' : 'NULL AS bl_no'}, shipment.forwarder_partner_id,
            shipment.shipping_line_partner_id, shipment.trucking_partner_id, shipment.vessel,
            shipment.etd, shipment.eta, shipment.planned_loading_date, shipment.actual_loading_date,
            shipment.schedule_result, shipment.schedule_note, shipment.all_ship_docs_drive_url,
@@ -1343,26 +1354,135 @@ export function createShippingDiRepository(db) {
       const booking = validateShipmentBooking(dto);
       const shipment = await findPhase6Shipment(db, shipmentId);
       if (!shipment || shipment.shipment_id !== shipmentId) throw codedError('SHIPMENT_NOT_FOUND');
-      if (shipment.status !== 'PLANNING') throw codedError('SHIPMENT_NOT_PLANNING');
+
+      const isInitialBooking = shipment.status === 'PLANNING';
+      const isEditableBooking = ['BOOKED', 'LOADED', 'DOCS_SENT'].includes(shipment.status);
+      if (!isInitialBooking && !isEditableBooking) throw codedError('SHIPMENT_NOT_PLANNING');
 
       const deliveryInstruction = await findDeliveryInstruction(db, shipment.di_id);
-      if (!deliveryInstruction || deliveryInstruction.status !== 'CONFIRMED') throw codedError('DI_NOT_CONFIRMED');
+      if (isInitialBooking && (!deliveryInstruction || deliveryInstruction.status !== 'CONFIRMED')) {
+        throw codedError('DI_NOT_CONFIRMED');
+      }
+      if (!isInitialBooking && (!deliveryInstruction || deliveryInstruction.status === 'CANCELLED')) {
+        throw codedError('DI_NOT_CONFIRMED');
+      }
       await validateSelectedPartner(db, booking.forwarderPartnerId, 'FORWARDER', 'SHIPMENT_FORWARDER_INVALID');
       await validateSelectedPartner(db, booking.shippingLinePartnerId, 'SHIPPING_LINE', 'SHIPMENT_SHIPPING_LINE_INVALID');
       await validateSelectedPartner(db, booking.truckingPartnerId, 'TRUCKING', 'SHIPMENT_TRUCKING_INVALID');
 
-      const results = await db.batch([
-        db.prepare(`
+      const hasBlNo = await hasPhase6ShipmentBlNoColumn(db);
+      if (!hasBlNo && booking.blNo !== null) {
+        throw codedError('MIGRATION_0010_BL_NO_REQUIRED');
+      }
+
+      const blNoProvided = Object.hasOwn(dto, 'blNo') || Object.hasOwn(dto, 'bl_no') || booking.blNo !== null;
+      const auditPayload = {
+        bookingNo: booking.bookingNo,
+        ...(blNoProvided ? { blNo: booking.blNo } : {}),
+        forwarderPartnerId: booking.forwarderPartnerId,
+        shippingLinePartnerId: booking.shippingLinePartnerId,
+        truckingPartnerId: booking.truckingPartnerId,
+        vessel: booking.vessel,
+        etd: booking.etd,
+        eta: booking.eta,
+        plannedLoadingDate: booking.plannedLoadingDate
+      };
+
+      if (isInitialBooking) {
+        const updateSql = hasBlNo
+          ? `
+            UPDATE phase6_shipments
+            SET status = 'BOOKED', booking_no = ?, bl_no = ?, forwarder_partner_id = ?, shipping_line_partner_id = ?,
+                trucking_partner_id = ?, vessel = ?, etd = ?, eta = ?, planned_loading_date = ?,
+                updated_by = ?, updated_at = CURRENT_TIMESTAMP
+            WHERE shipment_id = ? AND status = 'PLANNING'
+              AND EXISTS (
+                SELECT 1 FROM delivery_instructions
+                WHERE di_id = phase6_shipments.di_id AND status = 'CONFIRMED'
+              )
+          `
+          : `
+            UPDATE phase6_shipments
+            SET status = 'BOOKED', booking_no = ?, forwarder_partner_id = ?, shipping_line_partner_id = ?,
+                trucking_partner_id = ?, vessel = ?, etd = ?, eta = ?, planned_loading_date = ?,
+                updated_by = ?, updated_at = CURRENT_TIMESTAMP
+            WHERE shipment_id = ? AND status = 'PLANNING'
+              AND EXISTS (
+                SELECT 1 FROM delivery_instructions
+                WHERE di_id = phase6_shipments.di_id AND status = 'CONFIRMED'
+              )
+          `;
+        const updateParams = hasBlNo
+          ? [
+            booking.bookingNo,
+            booking.blNo,
+            booking.forwarderPartnerId,
+            booking.shippingLinePartnerId,
+            booking.truckingPartnerId,
+            booking.vessel,
+            booking.etd,
+            booking.eta,
+            booking.plannedLoadingDate,
+            actorId,
+            shipmentId
+          ]
+          : [
+            booking.bookingNo,
+            booking.forwarderPartnerId,
+            booking.shippingLinePartnerId,
+            booking.truckingPartnerId,
+            booking.vessel,
+            booking.etd,
+            booking.eta,
+            booking.plannedLoadingDate,
+            actorId,
+            shipmentId
+          ];
+
+        const results = await db.batch([
+          db.prepare(updateSql).bind(...updateParams),
+          db.prepare(`
+            UPDATE delivery_instructions
+            SET status = 'IN_PROGRESS', lifecycle_version = lifecycle_version + 1,
+                updated_by = ?, updated_at = CURRENT_TIMESTAMP
+            WHERE di_id = ? AND status = 'CONFIRMED' AND changes() = 1
+          `).bind(actorId, shipment.di_id),
+          auditAfterMutationStatement(db, 'SHIPMENT', shipmentId, 'BOOKING_RECORDED', actorId, auditPayload)
+        ]);
+        if (!mutationApplied(results[0]) || !mutationApplied(results[1])) throw codedError('SHIPMENT_NOT_PLANNING');
+        return findPhase6Shipment(db, shipmentId);
+      }
+
+      const updateExistingSql = hasBlNo
+        ? `
           UPDATE phase6_shipments
-          SET status = 'BOOKED', booking_no = ?, forwarder_partner_id = ?, shipping_line_partner_id = ?,
+          SET booking_no = ?, bl_no = ?, forwarder_partner_id = ?, shipping_line_partner_id = ?,
               trucking_partner_id = ?, vessel = ?, etd = ?, eta = ?, planned_loading_date = ?,
               updated_by = ?, updated_at = CURRENT_TIMESTAMP
-          WHERE shipment_id = ? AND status = 'PLANNING'
-            AND EXISTS (
-              SELECT 1 FROM delivery_instructions
-              WHERE di_id = phase6_shipments.di_id AND status = 'CONFIRMED'
-            )
-        `).bind(
+          WHERE shipment_id = ? AND status IN ('BOOKED', 'LOADED', 'DOCS_SENT')
+        `
+        : `
+          UPDATE phase6_shipments
+          SET booking_no = ?, forwarder_partner_id = ?, shipping_line_partner_id = ?,
+              trucking_partner_id = ?, vessel = ?, etd = ?, eta = ?, planned_loading_date = ?,
+              updated_by = ?, updated_at = CURRENT_TIMESTAMP
+          WHERE shipment_id = ? AND status IN ('BOOKED', 'LOADED', 'DOCS_SENT')
+        `;
+      const updateExistingParams = hasBlNo
+        ? [
+          booking.bookingNo,
+          booking.blNo,
+          booking.forwarderPartnerId,
+          booking.shippingLinePartnerId,
+          booking.truckingPartnerId,
+          booking.vessel,
+          booking.etd,
+          booking.eta,
+          booking.plannedLoadingDate,
+          actorId,
+          shipmentId
+        ]
+        : [
           booking.bookingNo,
           booking.forwarderPartnerId,
           booking.shippingLinePartnerId,
@@ -1373,16 +1493,13 @@ export function createShippingDiRepository(db) {
           booking.plannedLoadingDate,
           actorId,
           shipmentId
-        ),
-        db.prepare(`
-          UPDATE delivery_instructions
-          SET status = 'IN_PROGRESS', lifecycle_version = lifecycle_version + 1,
-              updated_by = ?, updated_at = CURRENT_TIMESTAMP
-          WHERE di_id = ? AND status = 'CONFIRMED' AND changes() = 1
-        `).bind(actorId, shipment.di_id),
-        auditAfterMutationStatement(db, 'SHIPMENT', shipmentId, 'BOOKING_RECORDED', actorId, booking)
+        ];
+
+      const results = await db.batch([
+        db.prepare(updateExistingSql).bind(...updateExistingParams),
+        auditAfterMutationStatement(db, 'SHIPMENT', shipmentId, 'SHIPMENT_UPDATED', actorId, auditPayload)
       ]);
-      if (!mutationApplied(results[0]) || !mutationApplied(results[1])) throw codedError('SHIPMENT_NOT_PLANNING');
+      if (!mutationApplied(results[0])) throw codedError('SHIPMENT_NOT_PLANNING');
       return findPhase6Shipment(db, shipmentId);
     },
 
@@ -2044,6 +2161,7 @@ export function createShippingDiRepository(db) {
     },
 
     async listDeliveryInstructionWorkspace(filters = {}) {
+      const hasBlNo = await hasPhase6ShipmentBlNoColumn(db);
       let query = `
         SELECT
           di.di_id, di.di_no, di.customer_id, customer.customer_name, di.po_id,
@@ -2052,7 +2170,7 @@ export function createShippingDiRepository(db) {
           COALESCE((SELECT SUM(line.planned_qty_mt) FROM delivery_instruction_lines line WHERE line.di_id = di.di_id), 0) AS planned_qty_mt,
           COALESCE((SELECT GROUP_CONCAT(product.product_name, ', ') FROM delivery_instruction_lines line JOIN products product ON product.product_id = line.product_id WHERE line.di_id = di.di_id), '') AS product_summary,
           COALESCE((SELECT GROUP_CONCAT(line.packing_snapshot, ', ') FROM delivery_instruction_lines line WHERE line.di_id = di.di_id), '') AS packing_summary,
-          shipment.shipment_id, shipment.booking_no, shipment.planned_loading_date, shipment.actual_loading_date,
+          shipment.shipment_id, shipment.booking_no, ${hasBlNo ? 'shipment.bl_no' : 'NULL AS bl_no'}, shipment.planned_loading_date, shipment.actual_loading_date,
           shipment.schedule_result, shipment.status AS shipment_status, shipment.payment_status
         FROM delivery_instructions di
         JOIN customers customer ON customer.customer_id = di.customer_id
@@ -2071,10 +2189,15 @@ export function createShippingDiRepository(db) {
         query += ` AND (
           di.di_no LIKE ? COLLATE NOCASE OR di.po_id LIKE ? COLLATE NOCASE OR revision.customer_po_no LIKE ? COLLATE NOCASE OR
           customer.customer_name LIKE ? COLLATE NOCASE OR shipment.booking_no LIKE ? COLLATE NOCASE OR
+          ${hasBlNo ? 'shipment.bl_no LIKE ? COLLATE NOCASE OR' : ''}
           EXISTS (SELECT 1 FROM shipment_invoices invoice WHERE invoice.shipment_id = shipment.shipment_id AND invoice.invoice_no LIKE ? COLLATE NOCASE) OR
           EXISTS (SELECT 1 FROM shipment_containers container WHERE container.shipment_id = shipment.shipment_id AND container.container_no LIKE ? COLLATE NOCASE)
         )`;
-        params.push(like, like, like, like, like, like, like);
+        if (hasBlNo) {
+          params.push(like, like, like, like, like, like, like, like);
+        } else {
+          params.push(like, like, like, like, like, like, like);
+        }
       }
       query += ' ORDER BY di.created_at DESC, di.di_id DESC';
       const { results } = await db.prepare(query).bind(...params).all();

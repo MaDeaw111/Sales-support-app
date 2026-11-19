@@ -18,7 +18,8 @@ async function setupRbacFixture() {
   for (const migration of [
     '0001_auth.sql', '0002_customers.sql', '0003_product_specs.sql',
     '0004_commercial_shipment_control.sql', '0005_po_management.sql',
-    '0006_customer_ownership_type.sql', '0007_shipping_di_integration.sql'
+    '0006_customer_ownership_type.sql', '0007_shipping_di_integration.sql',
+    '0010_booking_bl_no.sql'
   ]) {
     db.exec(await readFile(new URL(`../migrations/${migration}`, import.meta.url), 'utf8'));
   }
@@ -35,7 +36,7 @@ async function setupRbacFixture() {
   db.prepare("INSERT INTO po_revision_lines (line_id, po_revision_id, line_no, product_id, spec_source, spec_revision_id, contract_qty_mt, tolerance_pct, min_qty_mt, max_qty_mt, unit_price, packaging, container_type, loading_pattern) VALUES ('LINE1', 'REV1', 10, 'P1', 'STANDARD', 'SPEC1', 20, 0, 20, 20, 350, 'Jumbo Bag', '40HC', 'Floor loaded')").run();
   db.prepare("INSERT INTO delivery_instructions (di_id, customer_id, po_id, po_revision_id, di_no, shipping_month, shipping_period, container_plan, status, created_by) VALUES ('DI1', 'C1', 'PO1', 'REV1', 'CUSTOMER-DI-1', '2026-09', 'FIRST_HALF', '2 × 40''HC', 'IN_PROGRESS', 'U_EXPORT')").run();
   db.prepare("INSERT INTO delivery_instruction_lines (di_line_id, di_id, po_id, po_revision_id, po_revision_line_id, product_id, planned_qty_mt, packing_snapshot, created_by) VALUES ('DIL1', 'DI1', 'PO1', 'REV1', 'LINE1', 'P1', 20, 'Jumbo Bag', 'U_EXPORT')").run();
-  db.prepare("INSERT INTO phase6_shipments (shipment_id, di_id, status, booking_no, vessel, planned_loading_date, actual_loading_date, schedule_result, cash_received_amount, payment_status, payment_note, created_by, updated_by) VALUES ('S1', 'DI1', 'LOADED', 'BK-1', 'MV Internal', '2026-09-08', '2026-09-10', 'ON_PLAN', 7000, 'PAID', 'Internal payment note', 'U_EXPORT', 'U_EXPORT')").run();
+  db.prepare("INSERT INTO phase6_shipments (shipment_id, di_id, status, booking_no, bl_no, vessel, planned_loading_date, actual_loading_date, schedule_result, cash_received_amount, payment_status, payment_note, created_by, updated_by) VALUES ('S1', 'DI1', 'LOADED', 'BK-1', 'BL-SECRET-001', 'MV Internal', '2026-09-08', '2026-09-10', 'ON_PLAN', 7000, 'PAID', 'Internal payment note', 'U_EXPORT', 'U_EXPORT')").run();
   db.prepare("INSERT INTO shipment_containers (container_id, shipment_id, container_no, container_type, seal_no, status, created_by, updated_by) VALUES ('CONT1', 'S1', 'EGSU2548896', '20GP', 'SEAL-1', 'LOADED', 'U_EXPORT', 'U_EXPORT')").run();
   db.prepare("INSERT INTO shipment_container_lines (container_line_id, container_id, delivery_instruction_line_id, number_of_bags, qty_mt, created_by, updated_by) VALUES ('CONTL1', 'CONT1', 'DIL1', 10, 20, 'U_EXPORT', 'U_EXPORT')").run();
 
@@ -232,4 +233,33 @@ test('restricted opaque detail references cannot select a different customer wit
   assert.equal(response.status, 200);
   assert.equal((await response.json()).data.shipment.booking_no, 'BK-2');
   assert.equal((await handler(request('/api/delivery-instructions/CUSTOMER-DI-1/shipment'))).status, 404);
+});
+
+test('PRODUCTION_WAREHOUSE never receives bl_no or booking_no in shipment detail or workspace and cannot infer bl_no via search', async () => {
+  const { repo, wrappedDb } = await setupRbacFixture();
+  const warehouseHandler = createShippingDiHandler({
+    repo,
+    db: wrappedDb,
+    resolveUser: async () => ({ user_id: 'U_WAREHOUSE', role: 'PRODUCTION_WAREHOUSE' })
+  });
+
+  const detailRes = await warehouseHandler(request('/api/shipments-v2/S1'));
+  const detail = (await detailRes.json()).data.shipment;
+  assert.equal(detailRes.status, 200);
+  assertFieldsAbsent(detail, ['booking_no', 'bl_no']);
+
+  const wsRes = await warehouseHandler(request('/api/delivery-instructions/workspace?search=BL-SECRET-001'));
+  const wsRows = (await wsRes.json()).data.deliveryInstructions;
+  assert.equal(wsRes.status, 200);
+  assert.equal(wsRows.length, 1);
+  assertFieldsAbsent(wsRows[0], ['booking_no', 'bl_no']);
+
+  // Operational reader receives bl_no
+  const exportHandler = createShippingDiHandler({
+    repo,
+    db: wrappedDb,
+    resolveUser: async () => ({ user_id: 'U_EXPORT', role: 'EXPORT' })
+  });
+  const opDetail = (await (await exportHandler(request('/api/shipments-v2/S1'))).json()).data.shipment;
+  assert.equal(opDetail.bl_no, 'BL-SECRET-001');
 });

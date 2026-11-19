@@ -248,3 +248,22 @@ test('Phase 6 credit request keys are unique for idempotent creation and usage',
   assert.match(creditSql, /request_key\s+TEXT\s+NOT\s+NULL\s+UNIQUE/i);
   assert.match(usageSql, /request_key\s+TEXT\s+NOT\s+NULL\s+UNIQUE/i);
 });
+
+test('Migration 0010_booking_bl_no.sql is additive on top of 0001-0009 and adds bl_no + index', async () => {
+  const db = await setupThrough0006();
+  for (const name of [
+    '0007_shipping_di_integration.sql',
+    '0008_logistics_partners.sql',
+    '0009_commission_settlement.sql',
+    '0010_booking_bl_no.sql'
+  ]) {
+    db.exec(await readMigration(name));
+  }
+
+  const shipmentColumns = db.prepare('PRAGMA table_info(phase6_shipments)').all().map((column) => column.name);
+  assert.ok(shipmentColumns.includes('bl_no'), 'phase6_shipments must have bl_no column');
+  assert.ok(
+    db.prepare("SELECT name FROM sqlite_master WHERE type = 'index' AND name = 'idx_phase6_shipments_bl_no'").get(),
+    'idx_phase6_shipments_bl_no index must exist'
+  );
+});

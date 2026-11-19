@@ -446,3 +446,149 @@ test('optional customer DI numbers retain supplied whitespace while blank input 
     delete globalThis.document;
   }
 });
+
+test('Phase 6 booking UI displays BL No., submits trimmed blNo (or null), and hides BL No. from PRODUCTION_WAREHOUSE', async () => {
+  const renderDetail = extractFunction('renderPhase6DeliveryInstructionDetail(di)');
+  const submitBooking = extractFunction('submitPhase6Booking(shipmentId)');
+  const escape = new Function(`return (${extractFunction('escapePhase6Text(value)').trim()});`)();
+
+  globalThis.escapePhase6Text = escape;
+  globalThis.phase6PartnerOptions = () => '';
+  globalThis.canEditPhase6Shipping = () => true;
+  globalThis.state = {
+    currentUser: { role: 'EXPORT' },
+    selectedPhase6DeliveryInstructionId: 'DI1',
+    phase6ShipmentDetail: {
+      shipment_id: 'S1',
+      status: 'BOOKED',
+      booking_no: 'BK-2026-01',
+      bl_no: 'MSCU9988776',
+      vessel: 'MV Test',
+      containers: []
+    },
+    phase6PoBalances: [],
+    phase6ShipmentInvoices: [],
+    phase6ShipmentHistory: [],
+    phase6CustomerCredits: []
+  };
+
+  try {
+    const exportMarkup = new Function(`return (${renderDetail.trim()});`)()({ di_id: 'DI1', di_no: 'DI-001', di_status: 'IN_PROGRESS' });
+    assert.match(exportMarkup, /BL No\./);
+    assert.match(exportMarkup, /MSCU9988776/);
+    assert.match(exportMarkup, /id="phase6BlNo"/);
+    assert.match(exportMarkup, /data-phase6-action="update-booking"/);
+
+    // PRODUCTION_WAREHOUSE must not see BL No.
+    globalThis.state.currentUser = { role: 'PRODUCTION_WAREHOUSE' };
+    globalThis.canEditPhase6Shipping = () => false;
+    const warehouseMarkup = new Function(`return (${renderDetail.trim()});`)()({ di_id: 'DI1', di_no: 'DI-001' });
+    assert.doesNotMatch(warehouseMarkup, /MSCU9988776|BL No\./);
+
+    // submitPhase6Booking sends trimmed blNo or null when empty
+    const submitted = [];
+    const fields = {
+      phase6BookingNo: { value: 'BK-2026-01' },
+      phase6BlNo: { value: '  ONEY112233  ' },
+      phase6Forwarder: { value: '' },
+      phase6ShippingLine: { value: '' },
+      phase6Trucking: { value: '' },
+      phase6Vessel: { value: 'MV Test' },
+      phase6Etd: { value: '2026-11-25' },
+      phase6Eta: { value: '2026-12-10' },
+      phase6PlannedLoading: { value: '2026-11-22' }
+    };
+    globalThis.document = { getElementById: (id) => fields[id] || null };
+    globalThis.updatePhase6ShipmentSectionToApi = async (shipmentId, section, payload) => {
+      submitted.push({ shipmentId, section, payload });
+    };
+    globalThis.selectPhase6DeliveryInstruction = async () => {};
+    globalThis.alert = (msg) => { throw new Error(`Unexpected alert: ${msg}`); };
+
+    const submitFn = new Function(`return (${submitBooking.trim()});`)();
+    await submitFn('S1');
+    assert.equal(submitted[0].section, 'booking');
+    assert.equal(submitted[0].payload.blNo, 'ONEY112233');
+
+    fields.phase6BlNo.value = '   ';
+    await submitFn('S1');
+    assert.equal(submitted[1].payload.blNo, null);
+  } finally {
+    delete globalThis.escapePhase6Text;
+    delete globalThis.phase6PartnerOptions;
+    delete globalThis.canEditPhase6Shipping;
+    delete globalThis.state;
+    delete globalThis.document;
+    delete globalThis.updatePhase6ShipmentSectionToApi;
+    delete globalThis.selectPhase6DeliveryInstruction;
+    delete globalThis.alert;
+  }
+});
+
+test('Legacy Create/Update Booking modal includes BL No. paired with Vessel/Voyage and persists trimmed blNo', () => {
+  const openBooking = extractFunction('openBookingPrototype(diId, isRevision = false)');
+  const saveBooking = extractFunction('saveBookingPrototype(diId, isRevision)');
+  const escape = new Function(`return (${extractFunction('escapePhase6Text(value)').trim()});`)();
+
+  let modalMarkup = '';
+  const di = {
+    id: 'DIREC-1',
+    diNo: 'DI-2026-001',
+    poId: 'PO-1',
+    wcatNo: 'WCAT-26-001',
+    status: 'BOOKED',
+    booking: {
+      bookingNo: 'MSC-2608-001',
+      blNo: 'BL-OLD-001',
+      carrier: 'MSC',
+      vesselVoyage: 'MSC ARIES',
+      pol: 'Laem Chabang',
+      pod: 'Rotterdam',
+      etd: '2026-11-25',
+      eta: '2026-12-20',
+      revisionNo: 'Rev.0',
+      revisionNote: '',
+      status: 'ACTIVE'
+    }
+  };
+  globalThis.state = { diRecords: [di], pos: [{ id: 'PO-1', destinationPort: 'Rotterdam' }] };
+  globalThis.escapePhase6Text = escape;
+  globalThis.openModal = (markup) => { modalMarkup = markup; };
+  globalThis.closeModal = () => {};
+  globalThis.renderView = () => {};
+
+  const fields = {
+    protoBookingNo: { value: 'MSC-2608-001' },
+    protoBookingBlNo: { value: '  BL-NEW-777  ' },
+    protoBookingCarrier: { value: 'MSC' },
+    protoBookingVessel: { value: 'MSC ARIES' },
+    protoBookingPOL: { value: 'Laem Chabang' },
+    protoBookingPOD: { value: 'Rotterdam' },
+    protoBookingETD: { value: '2026-11-25' },
+    protoBookingETA: { value: '2026-12-20' },
+    protoBookingNote: { value: 'Added BL No.' }
+  };
+  globalThis.document = { getElementById: (id) => fields[id] || null };
+
+  try {
+    new Function(`return (${openBooking.trim()});`)()('DIREC-1', false);
+    assert.match(modalMarkup, /id="protoBookingVessel"/);
+    assert.match(modalMarkup, /id="protoBookingBlNo"/);
+    assert.match(modalMarkup, /value="BL-OLD-001"/);
+    assert.ok(modalMarkup.indexOf('protoBookingVessel') < modalMarkup.indexOf('protoBookingBlNo'));
+
+    new Function(`return (${saveBooking.trim()});`)()('DIREC-1', false);
+    assert.equal(di.booking.blNo, 'BL-NEW-777');
+
+    fields.protoBookingBlNo.value = '   ';
+    new Function(`return (${saveBooking.trim()});`)()('DIREC-1', false);
+    assert.equal(di.booking.blNo, null);
+  } finally {
+    delete globalThis.state;
+    delete globalThis.escapePhase6Text;
+    delete globalThis.openModal;
+    delete globalThis.closeModal;
+    delete globalThis.renderView;
+    delete globalThis.document;
+  }
+});
