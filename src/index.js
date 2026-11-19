@@ -111,6 +111,12 @@ export default {
       return createPaymentsHandlerFromEnv(env)(request);
     }
 
+    if (url.pathname === '/api/commissions' || url.pathname.startsWith('/api/commissions/')) {
+      if (!env.DB) return jsonResponse({ status: 'ERROR', message: 'D1 DB binding is not configured.' }, 503);
+      const { createCommissionsHandlerFromEnv } = await import('./commissions/routes.js');
+      return createCommissionsHandlerFromEnv(env)(request);
+    }
+
     if (url.pathname === '/api/gateway') {
       return jsonResponse({
         status: 'ERROR',

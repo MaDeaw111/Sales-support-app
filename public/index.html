@@ -749,6 +749,7 @@
                 state.selectedLogisticsProviderId = null;
                 state.logisticsPartners = { items: [], detail: null, loading: false, detailLoading: false, error: null, loaded: false, statusFilter: 'ALL', search: '' };
                 state.paymentsDashboard = { summary: null, items: [], customerCredits: [], detail: null, loading: false, detailLoading: false, error: null, loaded: false, activeTab: 'SHIPMENTS', filters: { paymentStatus: 'ALL', invoiceReadiness: 'ALL', shipmentStatus: 'ALL', currency: 'ALL', customerId: 'ALL', search: '' } };
+                state.commissionsDashboard = { summary: null, items: [], recipients: [], detail: null, loading: false, error: null, loaded: false, filters: { status: 'ALL', recipientUserId: 'ALL', customerId: 'ALL', paidDateFrom: '', paidDateTo: '', search: '' } };
                 showLoginScreen('Signed out successfully.');
                 const email = document.getElementById('loginEmail');
                 if (email) email.focus();
@@ -806,6 +807,7 @@
             providerTypeFilter: 'ALL',
             logisticsPartners: { items: [], detail: null, loading: false, detailLoading: false, error: null, loaded: false, statusFilter: 'ALL', search: '' },
             paymentsDashboard: { summary: null, items: [], customerCredits: [], detail: null, loading: false, detailLoading: false, error: null, loaded: false, activeTab: 'SHIPMENTS', filters: { paymentStatus: 'ALL', invoiceReadiness: 'ALL', shipmentStatus: 'ALL', currency: 'ALL', customerId: 'ALL', search: '' } },
+            commissionsDashboard: { summary: null, items: [], recipients: [], detail: null, loading: false, error: null, loaded: false, filters: { status: 'ALL', recipientUserId: 'ALL', customerId: 'ALL', paidDateFrom: '', paidDateTo: '', search: '' } },
             shippingFilter: 'ALL',
             poFilters: { search: '', customerId: 'ALL', productId: 'ALL', status: 'ALL', year: 'ALL' },
             poDocuments: {},
@@ -1097,6 +1099,7 @@
         function canManageLogisticsPartners() { return ['ADMIN','MANAGER','EXPORT'].includes(state.currentUser?.role); }
         function canManageShipmentPartners() { return ['ADMIN','EXPORT'].includes(state.currentUser.role); }
         function canViewPaymentDetail() { return ['ADMIN','MANAGER','SALES_SUPPORT','EXPORT'].includes(state.currentUser?.role); }
+        function canSettleCommission() { return ['ADMIN','MANAGER'].includes(state.currentUser?.role); }
         function canManageUsers() { return ['ADMIN'].includes(state.currentUser.role); }
         function canViewUsers() { return ['ADMIN','MANAGER'].includes(state.currentUser.role); }
         function canViewExternalSalesManagement() { return ['ADMIN','MANAGER','SALES_SUPPORT'].includes(state.currentUser.role); }
@@ -9259,67 +9262,446 @@
             }
         }
 
-        // --- COMMISSION ---
-        function getActualShippedMtForDI(di) {
-            return (state.loadingEvents || []).filter(ev => ev.diId === di.id).reduce((sum, ev) => sum + ((Number(ev.actualBags || 0) * Number(di.packageWeightKg || 0)) / 1000), 0);
+        // --- COMMISSION (Phase 10 D1-Backed Commission Settlement) ---
+        function escapeCommissionHtml(value) {
+            return String(value ?? '')
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;')
+                .replace(/'/g, '&#39;');
         }
-        function getPaymentStatusForDI(diId) {
-            const r = (state.paymentRecords || []).find(x => x.diId === diId);
-            return r ? derivePaymentStatus(r.invoiceAmount, r.receivedAmount) : 'UNPAID';
-        }
-        function getCommissionRows() {
-            const paidMap = Object.fromEntries((state.commissionPaidSnapshots || []).map(x => [x.diId, x]));
-            let rows = (state.diRecords || []).filter(di => di.status !== 'CANCELLED').map(di => {
-                const po = (state.pos || []).find(p => p.id === di.poId);
-                if (!po || !po.commissionRecipientId || Number(po.commissionRateUsdPerMt || 0) <= 0) return null;
-                const actualMt = getActualShippedMtForDI(di);
-                const paymentStatus = getPaymentStatusForDI(di.id);
-                const snap = paidMap[di.id];
-                const rate = snap ? Number(snap.rateSnapshotUsdPerMt || 0) : Number(po.commissionRateUsdPerMt || 0);
-                const amount = snap ? Number(snap.amountUsd || 0) : actualMt * rate;
-                const status = snap ? 'PAID' : (actualMt > 0 && paymentStatus === 'PAID' ? 'PAYABLE' : 'PENDING');
-                return { diId: di.id, diNo: di.diNo, wcatNo: di.wcatNo, poId: po.id, recipientId: po.commissionRecipientId, actualMt, rateUsdPerMt: rate, paymentStatus, amountUsd: amount, status, paidSnapshot: snap || null };
-            }).filter(Boolean);
-            if (state.currentUser.role === 'EXTERNAL_SALES') rows = rows.filter(r => r.recipientId === state.currentUser.id);
-            return rows;
-        }
+
         function commissionStatusBadge(status) {
-            if (status === 'PAID') return '<span class="px-2 py-1 rounded bg-emerald-100 text-emerald-700 font-bold text-[10px]">PAID</span>';
-            if (status === 'PAYABLE') return '<span class="px-2 py-1 rounded bg-blue-100 text-blue-700 font-bold text-[10px]">PAYABLE</span>';
+            const s = String(status || 'PENDING').toUpperCase();
+            if (s === 'PAID') return '<span class="px-2 py-1 rounded bg-emerald-100 text-emerald-700 font-bold text-[10px]">PAID</span>';
+            if (s === 'PAYABLE') return '<span class="px-2 py-1 rounded bg-blue-100 text-blue-700 font-bold text-[10px]">PAYABLE</span>';
             return '<span class="px-2 py-1 rounded bg-amber-100 text-amber-700 font-bold text-[10px]">PENDING</span>';
         }
+
+        function getCommissionRows() {
+            const items = state.commissionsDashboard?.items || [];
+            return items.map(r => ({
+                diId: r.di_id || null,
+                diNo: r.di_no,
+                poId: r.po_id || null,
+                recipientId: r.recipient_user_id || state.currentUser?.id || null,
+                actualMt: Number(r.actual_shipped_mt || 0),
+                rateUsdPerMt: Number(r.rate_usd_mt || 0),
+                paymentStatus: r.payment_status,
+                amountUsd: Number(r.commission_amount_usd || 0),
+                status: r.status
+            }));
+        }
+
+        async function loadCommissionsDashboardFromApi(options) {
+            const opts = options || {};
+            if (!state.commissionsDashboard) {
+                state.commissionsDashboard = {
+                    summary: null,
+                    items: [],
+                    recipients: [],
+                    detail: null,
+                    loading: false,
+                    error: null,
+                    loaded: false,
+                    filters: { status: 'ALL', recipientUserId: 'ALL', customerId: 'ALL', paidDateFrom: '', paidDateTo: '', search: '' }
+                };
+            }
+            const cd = state.commissionsDashboard;
+            if (cd.loading && !opts.force) return cd;
+            cd.loading = true;
+            cd.error = null;
+
+            const isExternal = state.currentUser?.role === 'EXTERNAL_SALES';
+            const f = cd.filters || {};
+            const params = new URLSearchParams();
+            if (f.status && f.status !== 'ALL') params.set('status', f.status);
+            if (!isExternal && f.recipientUserId && f.recipientUserId !== 'ALL') params.set('recipientUserId', f.recipientUserId);
+            if (!isExternal && f.customerId && f.customerId !== 'ALL') params.set('customerId', f.customerId);
+            if (String(f.paidDateFrom || '').trim()) params.set('paidDateFrom', String(f.paidDateFrom).trim());
+            if (String(f.paidDateTo || '').trim()) params.set('paidDateTo', String(f.paidDateTo).trim());
+            if (String(f.search || '').trim()) params.set('search', String(f.search).trim());
+
+            const qs = params.toString();
+            const url = qs ? `/api/commissions?${qs}` : '/api/commissions';
+
+            try {
+                const res = await fetch(url);
+                const body = await res.json().catch(() => null);
+                if (!res.ok || body?.status !== 'SUCCESS' || !body.data || !Array.isArray(body.data.items)) {
+                    cd.error = body?.message || 'Failed to load commission settlement data.';
+                    return cd;
+                }
+                cd.summary = body.data.summary || null;
+                cd.items = body.data.items;
+                cd.recipients = Array.isArray(body.data.recipients) ? body.data.recipients : [];
+                cd.loaded = true;
+                cd.error = null;
+                return cd;
+            } catch (err) {
+                cd.error = err?.message || 'Failed to load commission settlement data.';
+                return cd;
+            } finally {
+                cd.loading = false;
+                if (typeof renderView === 'function') renderView();
+            }
+        }
+
+        async function loadCommissionDetailFromApi(settlementId) {
+            const id = String(settlementId || '').trim();
+            if (!id) return null;
+            try {
+                const res = await fetch(`/api/commissions/${encodeURIComponent(id)}`);
+                const body = await res.json().catch(() => null);
+                if (!res.ok || body?.status !== 'SUCCESS' || !body.data?.settlement) return null;
+                if (state.commissionsDashboard) state.commissionsDashboard.detail = body.data;
+                return body.data;
+            } catch (err) {
+                console.error('Failed to load commission settlement detail:', err);
+                return null;
+            }
+        }
+
+        function setCommissionFilter(key, value) {
+            if (!state.commissionsDashboard) {
+                state.commissionsDashboard = { summary: null, items: [], recipients: [], detail: null, loading: false, error: null, loaded: false, filters: { status: 'ALL', recipientUserId: 'ALL', customerId: 'ALL', paidDateFrom: '', paidDateTo: '', search: '' } };
+            }
+            state.commissionsDashboard.filters = state.commissionsDashboard.filters || { status: 'ALL', recipientUserId: 'ALL', customerId: 'ALL', paidDateFrom: '', paidDateTo: '', search: '' };
+            state.commissionsDashboard.filters[key] = value;
+            loadCommissionsDashboardFromApi({ force: true });
+        }
+
+        function resetCommissionFilters() {
+            if (!state.commissionsDashboard) return;
+            state.commissionsDashboard.filters = { status: 'ALL', recipientUserId: 'ALL', customerId: 'ALL', paidDateFrom: '', paidDateTo: '', search: '' };
+            loadCommissionsDashboardFromApi({ force: true });
+        }
+
         function renderCommissions(container) {
-            const rows = getCommissionRows();
-            const sums = k => rows.filter(r=>r.status===k).reduce((a,r)=>a+r.amountUsd,0);
-            const requests = (state.commissionRateChangeRequests || []).filter(r=>r.status==='PENDING');
-            container.innerHTML = `<div class="space-y-5"><div class="flex justify-between items-center"><div><h2 class="text-xl font-bold text-slate-900">Commission</h2><p class="text-xs text-slate-500">Actual Shipped MT × approved PO rate; PAYABLE only after DI payment is PAID.</p></div></div>
-            <div class="grid grid-cols-3 gap-3"><div class="bg-white border border-amber-200 rounded-xl p-4"><div class="text-[10px] uppercase font-bold text-amber-600">Pending</div><div class="text-xl font-black">${formatMoney(sums('PENDING'))}</div></div><div class="bg-white border border-blue-200 rounded-xl p-4"><div class="text-[10px] uppercase font-bold text-blue-600">Payable</div><div class="text-xl font-black">${formatMoney(sums('PAYABLE'))}</div></div><div class="bg-white border border-emerald-200 rounded-xl p-4"><div class="text-[10px] uppercase font-bold text-emerald-600">Paid</div><div class="text-xl font-black">${formatMoney(sums('PAID'))}</div></div></div>
-            ${['MANAGER','ADMIN'].includes(state.currentUser.role) && requests.length ? `<div class="bg-white border border-fuchsia-200 rounded-xl overflow-hidden"><div class="p-3 font-bold text-fuchsia-900">Pending Rate Change Approval</div>${requests.map(r=>`<div class="p-3 border-t text-xs flex justify-between items-center"><div><strong>${r.poId}</strong> · USD ${Number(r.oldRate).toFixed(2)} → <strong>USD ${Number(r.requestedRate).toFixed(2)}</strong><div class="text-slate-500">${r.reason}</div></div><div class="flex gap-2"><button onclick="reviewCommissionRateChange('${r.id}','APPROVED')" class="px-3 py-1.5 bg-emerald-600 text-white rounded font-bold">Approve</button><button onclick="reviewCommissionRateChange('${r.id}','REJECTED')" class="px-3 py-1.5 bg-rose-600 text-white rounded font-bold">Reject</button></div></div>`).join('')}</div>`:''}
-            <div class="bg-white rounded-xl border border-slate-200 overflow-x-auto"><table class="ui-table w-full text-xs min-w-[1000px]"><thead class="bg-slate-100 text-[10px] uppercase text-slate-500"><tr><th class="p-3 text-left">Sales</th><th class="p-3 text-left">PO</th><th class="p-3 text-left">DI</th><th class="p-3 text-left">WCAT</th><th class="p-3 text-right">Actual MT</th><th class="p-3 text-right">Rate</th><th class="p-3 text-center">Payment</th><th class="p-3 text-right">Commission</th><th class="p-3 text-center">Status</th><th class="p-3 text-center">Action</th></tr></thead><tbody>${rows.map(r=>`<tr class="border-t"><td class="p-3">${(state.users||[]).find(u=>u.id===r.recipientId)?.name||r.recipientId}</td><td class="p-3 font-mono">${r.poId}</td><td class="p-3">${r.diNo||r.diId}</td><td class="p-3 font-mono">${r.wcatNo||'-'}</td><td class="p-3 text-right font-bold">${r.actualMt.toFixed(3)}</td><td class="p-3 text-right">$${r.rateUsdPerMt.toFixed(2)}</td><td class="p-3 text-center">${paymentStatusBadge(r.paymentStatus)}</td><td class="p-3 text-right font-black">${formatMoney(r.amountUsd)}</td><td class="p-3 text-center">${commissionStatusBadge(r.status)}</td><td class="p-3 text-center">${r.status==='PAYABLE' && ['MANAGER','ADMIN'].includes(state.currentUser.role) ? `<button onclick="markCommissionPaid('${r.diId}')" class="px-2 py-1 bg-emerald-600 text-white rounded font-bold">Mark as Paid</button>` : '-'}</td></tr>`).join('')}</tbody></table></div></div>`;
+            if (!state.commissionsDashboard) {
+                state.commissionsDashboard = {
+                    summary: null,
+                    items: [],
+                    recipients: [],
+                    detail: null,
+                    loading: false,
+                    error: null,
+                    loaded: false,
+                    filters: { status: 'ALL', recipientUserId: 'ALL', customerId: 'ALL', paidDateFrom: '', paidDateTo: '', search: '' }
+                };
+            }
+            const cd = state.commissionsDashboard;
+            if (!cd.loaded && !cd.loading && !cd.error) {
+                loadCommissionsDashboardFromApi();
+            }
+
+            const role = state.currentUser?.role || '';
+            const isExternal = role === 'EXTERNAL_SALES';
+            const canSettle = canSettleCommission();
+            const summary = cd.summary || { total_count: 0, pending_count: 0, payable_count: 0, paid_count: 0, pending_usd: 0, payable_usd: 0, paid_usd: 0, total_usd: 0 };
+            const items = Array.isArray(cd.items) ? cd.items : [];
+            const recipients = Array.isArray(cd.recipients) ? cd.recipients : [];
+            const filters = cd.filters || { status: 'ALL', recipientUserId: 'ALL', customerId: 'ALL', paidDateFrom: '', paidDateTo: '', search: '' };
+
+            const recipientStripHtml = (!isExternal && recipients.length)
+                ? `<div class="grid md:grid-cols-2 xl:grid-cols-4 gap-3">${recipients.map(rec => `
+                    <button onclick="setCommissionFilter('recipientUserId', '${escapeCommissionHtml(filters.recipientUserId === rec.user_id ? 'ALL' : rec.user_id)}')" class="text-left bg-white border rounded-xl p-3.5 hover:border-blue-300 transition-all ${filters.recipientUserId === rec.user_id ? 'border-blue-600 ring-1 ring-blue-600' : 'border-slate-200'}">
+                        <div class="font-black text-xs text-slate-900 truncate">${escapeCommissionHtml(rec.full_name)}</div>
+                        <div class="mt-2 flex items-center justify-between text-[11px]">
+                            <span class="text-blue-700 font-bold">Payable: ${escapeCommissionHtml(formatMoney(rec.payable_usd, 'USD'))}</span>
+                            <span class="text-emerald-700 font-bold">Paid: ${escapeCommissionHtml(formatMoney(rec.paid_usd, 'USD'))}</span>
+                        </div>
+                    </button>`).join('')}</div>`
+                : '';
+
+            const recipientOptions = recipients.map(rec => `<option value="${escapeCommissionHtml(rec.user_id)}" ${filters.recipientUserId === rec.user_id ? 'selected' : ''}>${escapeCommissionHtml(rec.full_name)}</option>`).join('');
+
+            const filterBarHtml = `<div class="bg-white rounded-xl border border-slate-200 p-3 flex flex-wrap items-center gap-2 text-xs">
+                <select onchange="setCommissionFilter('status', this.value)" class="border rounded-lg px-2.5 py-1.5 bg-white font-bold text-slate-700">
+                    <option value="ALL" ${filters.status === 'ALL' ? 'selected' : ''}>All Statuses</option>
+                    <option value="PAYABLE" ${filters.status === 'PAYABLE' ? 'selected' : ''}>PAYABLE</option>
+                    <option value="PENDING" ${filters.status === 'PENDING' ? 'selected' : ''}>PENDING</option>
+                    <option value="PAID" ${filters.status === 'PAID' ? 'selected' : ''}>PAID</option>
+                </select>
+                ${!isExternal ? `<select onchange="setCommissionFilter('recipientUserId', this.value)" class="border rounded-lg px-2.5 py-1.5 bg-white font-bold text-slate-700">
+                    <option value="ALL" ${filters.recipientUserId === 'ALL' ? 'selected' : ''}>All Salespeople</option>
+                    ${recipientOptions}
+                </select>` : ''}
+                <input type="date" value="${escapeCommissionHtml(filters.paidDateFrom || '')}" onchange="setCommissionFilter('paidDateFrom', this.value)" title="Paid Date From" class="border rounded-lg px-2.5 py-1.5 bg-white text-slate-700">
+                <input type="date" value="${escapeCommissionHtml(filters.paidDateTo || '')}" onchange="setCommissionFilter('paidDateTo', this.value)" title="Paid Date To" class="border rounded-lg px-2.5 py-1.5 bg-white text-slate-700">
+                <input type="search" value="${escapeCommissionHtml(filters.search || '')}" onchange="setCommissionFilter('search', this.value)" placeholder="Search DI, PO, invoice, ref..." class="border rounded-lg px-3 py-1.5 bg-white flex-1 min-w-[180px]">
+                <button onclick="resetCommissionFilters()" class="px-3 py-1.5 rounded-lg border text-slate-600 font-bold hover:bg-slate-50">Reset</button>
+            </div>`;
+
+            const tableRowsHtml = cd.loading && !cd.loaded
+                ? `<tr><td colspan="${isExternal ? 9 : 10}" class="p-8 text-center text-slate-400">Loading commission records...</td></tr>`
+                : items.length
+                    ? items.map(r => `<tr class="hover:bg-slate-50">
+                        ${!isExternal ? `<td class="p-3 font-bold text-slate-900">${escapeCommissionHtml(r.recipient_name || r.recipient_user_id)}</td>` : ''}
+                        <td class="p-3">
+                            <div class="font-bold text-slate-800">${escapeCommissionHtml(r.customer_name || '-')}</div>
+                            <div class="text-[10px] font-mono text-slate-400">${escapeCommissionHtml(r.customer_po_no || r.po_id || '-')}</div>
+                        </td>
+                        <td class="p-3">
+                            <div class="font-bold text-slate-900">${escapeCommissionHtml(r.di_no || '-')}</div>
+                            <div class="text-[10px] font-mono text-blue-700">${escapeCommissionHtml(r.final_invoice_nos || 'Awaiting Final Inv.')}</div>
+                        </td>
+                        <td class="p-3 text-right font-bold">
+                            ${Number(r.actual_shipped_mt || 0).toFixed(3)} MT
+                            ${Number(r.actual_shipped_mt || 0) === 0 && Number(r.planned_qty_mt || 0) > 0 ? `<div class="text-[10px] font-normal text-slate-400">Plan: ${Number(r.planned_qty_mt).toFixed(3)} MT</div>` : ''}
+                        </td>
+                        <td class="p-3 text-right font-mono">$${Number(r.rate_usd_mt || 0).toFixed(2)}</td>
+                        <td class="p-3 text-center">${paymentStatusBadge(r.payment_status)}</td>
+                        <td class="p-3 text-right font-black text-slate-900">${escapeCommissionHtml(formatMoney(r.commission_amount_usd, 'USD'))}</td>
+                        <td class="p-3 text-center">${commissionStatusBadge(r.status)}</td>
+                        <td class="p-3 text-xs">
+                            ${r.paid_date ? `<div class="font-mono font-bold text-emerald-700">${escapeCommissionHtml(r.paid_date)}</div>` : '<span class="text-slate-300">-</span>'}
+                            ${r.payment_reference ? `<div class="text-[10px] font-mono text-slate-500">${escapeCommissionHtml(r.payment_reference)}</div>` : ''}
+                        </td>
+                        <td class="p-3 text-right whitespace-nowrap space-x-1">
+                            ${r.status === 'PAYABLE' && canSettle ? `<button onclick="openSettleCommissionModal('${escapeCommissionHtml(r.shipment_id)}','${escapeCommissionHtml(r.recipient_user_id)}')" class="px-2.5 py-1 bg-emerald-600 text-white rounded text-[10px] font-bold hover:bg-emerald-700">Settle / Pay</button>` : ''}
+                            ${r.status === 'PAID' && r.settlement_id ? `<button onclick="openCommissionDetailModal('${escapeCommissionHtml(r.settlement_id)}')" class="px-2.5 py-1 border rounded text-[10px] font-bold hover:bg-slate-50">Receipt</button>` : ''}
+                            ${!isExternal && r.di_id ? `<button onclick="openPhase6ShipmentFromCalendar('${escapeCommissionHtml(r.di_id)}')" class="px-2 py-1 border rounded text-blue-700 text-[10px] font-bold hover:bg-blue-50">Shipment</button>` : ''}
+                        </td>
+                    </tr>`).join('')
+                    : `<tr><td colspan="${isExternal ? 9 : 10}" class="p-8 text-center text-slate-400">No commission records match the current filters.</td></tr>`;
+
+            container.innerHTML = `<div class="space-y-5">
+                <div class="flex flex-col md:flex-row md:items-center justify-between gap-3">
+                    <div>
+                        <div class="flex items-center gap-2">
+                            <h2 class="text-xl font-black text-slate-900">Commission Settlement</h2>
+                            ${isExternal ? '<span class="text-[10px] font-bold bg-blue-50 text-blue-700 px-2 py-1 rounded border border-blue-100">MY COMMISSIONS ONLY</span>' : ''}
+                        </div>
+                        <p class="text-xs text-slate-500 mt-1">Server-verified Actual Shipped MT × Approved PO Line Rate (USD); eligible for payout only after customer payment is PAID.</p>
+                    </div>
+                    <button onclick="loadCommissionsDashboardFromApi({ force: true })" class="px-3 py-2 rounded-lg border bg-white text-slate-600 text-xs font-bold hover:bg-slate-50">Refresh</button>
+                </div>
+
+                ${cd.error ? `<div class="bg-rose-50 border border-rose-200 text-rose-700 rounded-xl px-4 py-3 text-xs font-bold">${escapeCommissionHtml(cd.error)}</div>` : ''}
+
+                <div class="grid grid-cols-2 lg:grid-cols-4 gap-3">
+                    <div class="bg-white border border-amber-200 rounded-xl p-4"><div class="text-[10px] uppercase font-bold text-amber-600">Pending (${Number(summary.pending_count || 0)})</div><div class="text-xl font-black mt-1 text-amber-700">${escapeCommissionHtml(formatMoney(summary.pending_usd, 'USD'))}</div></div>
+                    <div class="bg-white border border-blue-200 rounded-xl p-4"><div class="text-[10px] uppercase font-bold text-blue-600">Payable (${Number(summary.payable_count || 0)})</div><div class="text-xl font-black mt-1 text-blue-700">${escapeCommissionHtml(formatMoney(summary.payable_usd, 'USD'))}</div></div>
+                    <div class="bg-white border border-emerald-200 rounded-xl p-4"><div class="text-[10px] uppercase font-bold text-emerald-600">Paid (${Number(summary.paid_count || 0)})</div><div class="text-xl font-black mt-1 text-emerald-700">${escapeCommissionHtml(formatMoney(summary.paid_usd, 'USD'))}</div></div>
+                    <div class="bg-slate-900 text-white rounded-xl p-4"><div class="text-[10px] uppercase font-bold text-slate-300">Total (${Number(summary.total_count || 0)})</div><div class="text-xl font-black mt-1">${escapeCommissionHtml(formatMoney(summary.total_usd, 'USD'))}</div></div>
+                </div>
+
+                ${recipientStripHtml}
+                ${filterBarHtml}
+
+                <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+                    <div class="overflow-x-auto">
+                        <table class="ui-table w-full text-left text-xs min-w-[1020px]">
+                            <thead class="bg-slate-100 border-b border-slate-200 text-[10px] uppercase text-slate-500 font-bold">
+                                <tr>
+                                    ${!isExternal ? '<th class="p-3">Salesperson</th>' : ''}
+                                    <th class="p-3">Customer / PO</th>
+                                    <th class="p-3">DI / Final Invoice</th>
+                                    <th class="p-3 text-right">Actual MT</th>
+                                    <th class="p-3 text-right">Rate</th>
+                                    <th class="p-3 text-center">Payment</th>
+                                    <th class="p-3 text-right">Commission</th>
+                                    <th class="p-3 text-center">Status</th>
+                                    <th class="p-3">Paid Date / Ref</th>
+                                    <th class="p-3 text-right">Action</th>
+                                </tr>
+                            </thead>
+                            <tbody class="divide-y divide-slate-100">${tableRowsHtml}</tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>`;
+            if (typeof lucide !== 'undefined' && lucide.createIcons) lucide.createIcons();
         }
-        function markCommissionPaid(diId) {
-            if (!['MANAGER','ADMIN'].includes(state.currentUser.role)) { alert('Permission denied.'); return; }
-            const row = getCommissionRows().find(r=>r.diId===diId);
-            if (!row || row.status !== 'PAYABLE') return;
-            const note = prompt('Commission payment note (optional):','') || '';
-            state.commissionPaidSnapshots.push({ diId, poId: row.poId, recipientId: row.recipientId, rateSnapshotUsdPerMt: row.rateUsdPerMt, actualMtSnapshot: row.actualMt, amountUsd: row.amountUsd, paidDate: getTodayIso(), paidBy: state.currentUser.id, note });
-            renderView();
+
+        function openSettleCommissionModal(shipmentId, recipientUserId) {
+            if (!canSettleCommission()) return alert('Permission denied: Only Manager or Admin can settle commissions.');
+            const item = (state.commissionsDashboard?.items || []).find(
+                x => x.shipment_id === shipmentId && x.recipient_user_id === recipientUserId
+            );
+            if (!item || item.status !== 'PAYABLE') return alert('Only PAYABLE commissions can be settled.');
+
+            const breakdownRows = (item.line_breakdown || []).map(l => `<tr>
+                <td class="p-2 font-bold">${escapeCommissionHtml(l.product_code || '')} ${escapeCommissionHtml(l.product_name || '')}</td>
+                <td class="p-2 text-right">${Number(l.actual_mt || 0).toFixed(3)} MT</td>
+                <td class="p-2 text-right font-mono">$${Number(l.rate_usd_mt || 0).toFixed(2)}</td>
+                <td class="p-2 text-right font-bold">${escapeCommissionHtml(formatMoney(l.amount_usd, 'USD'))}</td>
+            </tr>`).join('');
+
+            openModal(`<div class="space-y-4 text-xs">
+                <div class="flex items-start justify-between gap-4 border-b border-slate-100 pb-3">
+                    <div>
+                        <div class="text-[10px] font-black uppercase text-emerald-600">Settle Commission Payout</div>
+                        <h3 class="text-lg font-black text-slate-900 mt-0.5">${escapeCommissionHtml(item.recipient_name)} · ${escapeCommissionHtml(item.di_no)}</h3>
+                        <p class="text-slate-500 mt-0.5">${escapeCommissionHtml(item.customer_name)} · PO ${escapeCommissionHtml(item.customer_po_no || item.po_id || '-')}</p>
+                    </div>
+                    <button onclick="closeModal()" class="text-slate-400 hover:text-slate-700 font-bold">✕</button>
+                </div>
+
+                <div class="bg-emerald-50 border border-emerald-200 rounded-lg p-3 flex items-center justify-between">
+                    <div>
+                        <div class="text-[10px] uppercase font-bold text-emerald-700">Immutable Payout Snapshot (Server Computed)</div>
+                        <div class="text-slate-600 mt-0.5">${Number(item.actual_shipped_mt || 0).toFixed(3)} MT × $${Number(item.rate_usd_mt || 0).toFixed(2)} / MT</div>
+                    </div>
+                    <div class="text-xl font-black text-emerald-800">${escapeCommissionHtml(formatMoney(item.commission_amount_usd, 'USD'))}</div>
+                </div>
+
+                ${breakdownRows ? `<div class="border rounded-lg overflow-hidden"><table class="w-full text-xs"><thead class="bg-slate-50 text-slate-500"><tr><th class="p-2 text-left">Product</th><th class="p-2 text-right">Actual MT</th><th class="p-2 text-right">Rate</th><th class="p-2 text-right">Amount</th></tr></thead><tbody class="divide-y">${breakdownRows}</tbody></table></div>` : ''}
+
+                <div class="grid md:grid-cols-2 gap-3">
+                    <label class="block font-bold text-slate-700">Paid Date *
+                        <input id="commSettlePaidDate" type="date" value="${getTodayIso()}" class="mt-1 w-full border rounded-lg px-3 py-2 font-normal">
+                    </label>
+                    <label class="block font-bold text-slate-700">Payment Reference (Wire / Slip)
+                        <input id="commSettleRef" class="mt-1 w-full border rounded-lg px-3 py-2 font-normal" placeholder="e.g. WIRE-2026-1119">
+                    </label>
+                    <label class="md:col-span-2 block font-bold text-slate-700">Note
+                        <textarea id="commSettleNote" rows="2" class="mt-1 w-full border rounded-lg px-3 py-2 font-normal" placeholder="Optional settlement note"></textarea>
+                    </label>
+                </div>
+                <div id="commSettleFormError" class="hidden text-xs font-bold text-rose-700 bg-rose-50 border border-rose-200 rounded-lg px-3 py-2"></div>
+                <div class="flex justify-end gap-2">
+                    <button onclick="closeModal()" class="px-4 py-2 border rounded-lg font-bold">Cancel</button>
+                    <button onclick="submitCommissionSettlementToApi('${escapeCommissionHtml(shipmentId)}','${escapeCommissionHtml(recipientUserId)}')" class="px-4 py-2 bg-emerald-600 text-white rounded-lg font-bold hover:bg-emerald-700">Confirm &amp; Mark Paid</button>
+                </div>
+            </div>`);
         }
-        function requestCommissionRateChange(poId) {
-            if (state.currentUser.role !== 'SALES_SUPPORT') { alert('Only Sales Support can request a commission rate change.'); return; }
-            const po = (state.pos||[]).find(p=>p.id===poId); if (!po) return;
-            const requested = parseFloat(prompt(`Current rate USD ${Number(po.commissionRateUsdPerMt||0).toFixed(2)} / MT\nEnter requested new rate:`, Number(po.commissionRateUsdPerMt||0).toFixed(2)));
-            if (!Number.isFinite(requested) || requested < 0 || requested === Number(po.commissionRateUsdPerMt||0)) return;
-            const reason = (prompt('Reason for rate change:','') || '').trim(); if (!reason) { alert('Reason is required.'); return; }
-            state.commissionRateChangeRequests.push({ id:`COMRATE-${Date.now()}`, poId, oldRate:Number(po.commissionRateUsdPerMt||0), requestedRate:requested, requestedBy:state.currentUser.id, requestedDate:getTodayIso(), reason, status:'PENDING', reviewedBy:'', reviewedDate:'' });
-            alert('Rate change request submitted for Manager approval.'); renderView();
+
+        async function submitCommissionSettlementToApi(shipmentId, recipientUserId) {
+            if (!canSettleCommission()) return;
+            const errorEl = document.getElementById('commSettleFormError');
+            const showErr = (msg) => {
+                if (!errorEl) return;
+                errorEl.textContent = msg || '';
+                if (msg) errorEl.classList.remove('hidden');
+                else errorEl.classList.add('hidden');
+            };
+            showErr('');
+
+            const paidDate = String(document.getElementById('commSettlePaidDate')?.value || '').trim();
+            if (!paidDate) return showErr('Paid Date is required.');
+            const paymentReference = String(document.getElementById('commSettleRef')?.value || '').trim();
+            const note = String(document.getElementById('commSettleNote')?.value || '').trim();
+            const requestKey = (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function')
+                ? `comm-settle-${crypto.randomUUID()}`
+                : `comm-settle-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+
+            try {
+                const res = await fetch('/api/commissions/settle', {
+                    method: 'POST',
+                    headers: { 'content-type': 'application/json' },
+                    body: JSON.stringify({
+                        shipmentId,
+                        recipientUserId,
+                        paidDate,
+                        paymentReference: paymentReference || null,
+                        note: note || null,
+                        requestKey
+                    })
+                });
+                const body = await res.json().catch(() => null);
+                if (!res.ok || body?.status !== 'SUCCESS') {
+                    return showErr(body?.message || 'Failed to settle commission.');
+                }
+                closeModal();
+                await loadCommissionsDashboardFromApi({ force: true });
+            } catch (err) {
+                showErr(err?.message || 'Failed to settle commission.');
+            }
         }
-        function reviewCommissionRateChange(requestId, decision) {
-            if (!['MANAGER','ADMIN'].includes(state.currentUser.role)) { alert('Permission denied.'); return; }
-            const req=(state.commissionRateChangeRequests||[]).find(r=>r.id===requestId); if(!req || req.status!=='PENDING') return;
-            req.status=decision; req.reviewedBy=state.currentUser.id; req.reviewedDate=getTodayIso();
-            if (decision==='APPROVED') { const po=(state.pos||[]).find(p=>p.id===req.poId); if(po) po.commissionRateUsdPerMt=req.requestedRate; }
-            renderView();
+
+        async function openCommissionDetailModal(settlementId) {
+            openModal(`<div class="p-6 text-center text-xs text-slate-400">Loading settlement receipt...</div>`);
+            const detail = await loadCommissionDetailFromApi(settlementId);
+            if (!detail || !detail.settlement) {
+                openModal(`<div class="p-4 space-y-3 text-xs"><div class="font-bold text-rose-700">Unable to load settlement receipt.</div><div class="flex justify-end"><button onclick="closeModal()" class="px-3 py-1.5 border rounded-lg font-bold">Close</button></div></div>`);
+                return;
+            }
+            const s = detail.settlement;
+            const history = detail.auditHistory || [];
+            const canEditMeta = canSettleCommission();
+            const breakdownRows = (s.line_breakdown || []).map(l => `<tr>
+                <td class="p-2 font-bold">${escapeCommissionHtml(l.product_code || '')} ${escapeCommissionHtml(l.product_name || '')}</td>
+                <td class="p-2 text-right">${Number(l.actual_mt || 0).toFixed(3)} MT</td>
+                <td class="p-2 text-right font-mono">$${Number(l.rate_usd_mt || 0).toFixed(2)}</td>
+                <td class="p-2 text-right font-bold">${escapeCommissionHtml(formatMoney(l.amount_usd, 'USD'))}</td>
+            </tr>`).join('');
+
+            openModal(`<div class="space-y-4 text-xs">
+                <div class="flex items-start justify-between gap-4 border-b border-slate-100 pb-3">
+                    <div>
+                        <div class="text-[10px] font-black uppercase text-emerald-600">Commission Settlement Receipt</div>
+                        <h3 class="text-lg font-black text-slate-900 mt-0.5">${escapeCommissionHtml(s.settlement_id)} · ${escapeCommissionHtml(s.di_no)}</h3>
+                        <p class="text-slate-500 mt-0.5">${escapeCommissionHtml(s.customer_name)} · PO ${escapeCommissionHtml(s.customer_po_no || '-')} · Paid ${escapeCommissionHtml(s.paid_date)}</p>
+                    </div>
+                    <button onclick="closeModal()" class="text-slate-400 hover:text-slate-700 font-bold">✕</button>
+                </div>
+
+                <div class="grid grid-cols-3 gap-2">
+                    <div class="bg-slate-50 rounded-lg p-3"><div class="text-[10px] uppercase font-bold text-slate-400">Shipped MT Snapshot</div><div class="font-black text-slate-900 mt-1">${Number(s.actual_mt_snapshot || 0).toFixed(3)} MT</div></div>
+                    <div class="bg-slate-50 rounded-lg p-3"><div class="text-[10px] uppercase font-bold text-slate-400">Rate Snapshot</div><div class="font-black text-slate-900 mt-1">$${Number(s.rate_snapshot_usd_mt || 0).toFixed(2)} / MT</div></div>
+                    <div class="bg-emerald-600 text-white rounded-lg p-3"><div class="text-[10px] uppercase font-bold text-emerald-100">Settled Amount</div><div class="font-black text-lg mt-0.5">${escapeCommissionHtml(formatMoney(s.amount_usd_snapshot, 'USD'))}</div></div>
+                </div>
+
+                ${breakdownRows ? `<div><div class="font-black text-slate-800 mb-1.5">Frozen Line Breakdown</div><div class="border rounded-lg overflow-hidden"><table class="w-full text-xs"><thead class="bg-slate-50 text-slate-500"><tr><th class="p-2 text-left">Product</th><th class="p-2 text-right">Actual MT</th><th class="p-2 text-right">Rate</th><th class="p-2 text-right">Amount</th></tr></thead><tbody class="divide-y">${breakdownRows}</tbody></table></div></div>` : ''}
+
+                ${canEditMeta ? `<div class="space-y-3 border-t border-slate-100 pt-3">
+                    <div class="font-black text-slate-800">Payment Reference &amp; Note (Snapshot Amounts Are Immutable)</div>
+                    <label class="block font-bold text-slate-700">Payment Reference
+                        <input id="commDetailRef" value="${escapeCommissionHtml(s.payment_reference || '')}" class="mt-1 w-full border rounded-lg px-3 py-2 font-normal">
+                    </label>
+                    <label class="block font-bold text-slate-700">Note
+                        <textarea id="commDetailNote" rows="2" class="mt-1 w-full border rounded-lg px-3 py-2 font-normal">${escapeCommissionHtml(s.note || '')}</textarea>
+                    </label>
+                    <div id="commDetailFormError" class="hidden text-xs font-bold text-rose-700 bg-rose-50 border border-rose-200 rounded-lg px-3 py-2"></div>
+                </div>` : `<div class="bg-slate-50 rounded-lg p-3 space-y-1">
+                    <div><span class="text-slate-400 font-bold">Payment Reference:</span> <span class="font-mono font-bold text-slate-800">${escapeCommissionHtml(s.payment_reference || '-')}</span></div>
+                    <div><span class="text-slate-400 font-bold">Note:</span> <span class="text-slate-700">${escapeCommissionHtml(s.note || '-')}</span></div>
+                </div>`}
+
+                ${history.length ? `<div><div class="font-black text-slate-800 mb-1.5">Audit Trail</div><div class="border rounded-lg divide-y max-h-36 overflow-y-auto">${history.map(h => `<div class="p-2 flex items-center justify-between gap-2"><div><span class="font-bold text-slate-800">${escapeCommissionHtml(h.event_type)}</span> <span class="text-slate-400">by ${escapeCommissionHtml(h.actor_name || h.actor_id)}</span></div><span class="font-mono text-[10px] text-slate-400">${escapeCommissionHtml(h.created_at)}</span></div>`).join('')}</div></div>` : ''}
+
+                <div class="flex justify-end gap-2 pt-2 border-t border-slate-100">
+                    ${canEditMeta ? `<button onclick="updateCommissionNoteToApi('${escapeCommissionHtml(s.settlement_id)}')" class="px-4 py-2 bg-blue-600 text-white rounded-lg font-bold hover:bg-blue-700">Update Reference / Note</button>` : ''}
+                    <button onclick="closeModal()" class="px-4 py-2 border rounded-lg font-bold">Close</button>
+                </div>
+            </div>`);
+        }
+
+        async function updateCommissionNoteToApi(settlementId) {
+            if (!canSettleCommission()) return;
+            const errorEl = document.getElementById('commDetailFormError');
+            const showErr = (msg) => {
+                if (!errorEl) return;
+                errorEl.textContent = msg || '';
+                if (msg) errorEl.classList.remove('hidden');
+                else errorEl.classList.add('hidden');
+            };
+            showErr('');
+
+            const paymentReference = String(document.getElementById('commDetailRef')?.value || '').trim();
+            const note = String(document.getElementById('commDetailNote')?.value || '').trim();
+
+            try {
+                const res = await fetch(`/api/commissions/${encodeURIComponent(settlementId)}`, {
+                    method: 'PATCH',
+                    headers: { 'content-type': 'application/json' },
+                    body: JSON.stringify({
+                        paymentReference: paymentReference || null,
+                        note: note || null
+                    })
+                });
+                const body = await res.json().catch(() => null);
+                if (!res.ok || body?.status !== 'SUCCESS') {
+                    return showErr(body?.message || 'Failed to update settlement metadata.');
+                }
+                closeModal();
+                await loadCommissionsDashboardFromApi({ force: true });
+            } catch (err) {
+                showErr(err?.message || 'Failed to update settlement metadata.');
+            }
         }
 
         // --- CALENDAR ---

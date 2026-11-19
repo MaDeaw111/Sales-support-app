@@ -1820,3 +1820,260 @@ test('renderPayments enforces role-aware UI for EXTERNAL_SALES, SALES_SUPPORT, a
     delete globalThis.lucide;
   }
 });
+
+test('Phase 10 Commission Settlement renderers use D1 state and never read mock commissionPaidSnapshots or commissionRateChangeRequests', () => {
+  const renderCode = extractFunction('renderCommissions');
+  const settleModalCode = extractFunction('openSettleCommissionModal');
+  const detailModalCode = extractFunction('openCommissionDetailModal');
+  const combined = [renderCode, settleModalCode, detailModalCode].join('\n');
+
+  assert.doesNotMatch(combined, /state\.commissionPaidSnapshots/);
+  assert.doesNotMatch(combined, /state\.commissionRateChangeRequests/);
+  assert.doesNotMatch(combined, /reviewCommissionRateChange/);
+  assert.doesNotMatch(combined, /prompt\(/);
+  assert.match(renderCode, /state\.commissionsDashboard/);
+  assert.match(renderCode, /openSettleCommissionModal/);
+  assert.match(renderCode, /openCommissionDetailModal/);
+});
+
+test('loadCommissionsDashboardFromApi fetches /api/commissions, omits hidden params for EXTERNAL_SALES, and updates state', async () => {
+  const code = extractFunction('loadCommissionsDashboardFromApi');
+  const capturedUrls = [];
+  let rendered = 0;
+
+  globalThis.state = {
+    currentUser: { id: 'U_SALES1', role: 'EXTERNAL_SALES' },
+    commissionsDashboard: {
+      summary: null,
+      items: [],
+      recipients: [],
+      detail: null,
+      loading: false,
+      error: null,
+      loaded: false,
+      filters: { status: 'PAYABLE', recipientUserId: 'U_SALES2', customerId: 'C2', paidDateFrom: '', paidDateTo: '', search: 'DI-001' }
+    }
+  };
+  globalThis.renderView = () => { rendered++; };
+  globalThis.fetch = async (url) => {
+    capturedUrls.push(url);
+    return {
+      ok: true,
+      async json() {
+        return {
+          status: 'SUCCESS',
+          data: {
+            summary: { total_count: 1, pending_count: 0, payable_count: 1, paid_count: 0, pending_usd: 0, payable_usd: 200, paid_usd: 0, total_usd: 200 },
+            items: [{ di_no: 'DI-001', status: 'PAYABLE', commission_amount_usd: 200 }],
+            recipients: []
+          }
+        };
+      }
+    };
+  };
+
+  try {
+    const load = new Function(`return (${code.trim()});`)();
+    await load();
+    assert.equal(capturedUrls.length, 1);
+    assert.match(capturedUrls[0], /^\/api\/commissions\?/);
+    assert.match(capturedUrls[0], /status=PAYABLE/);
+    assert.match(capturedUrls[0], /search=DI-001/);
+    assert.doesNotMatch(capturedUrls[0], /recipientUserId=/, 'EXTERNAL_SALES must not send recipientUserId');
+    assert.doesNotMatch(capturedUrls[0], /customerId=/, 'EXTERNAL_SALES must not send customerId');
+    assert.equal(globalThis.state.commissionsDashboard.loaded, true);
+    assert.equal(globalThis.state.commissionsDashboard.items.length, 1);
+    assert.ok(rendered >= 1);
+  } finally {
+    delete globalThis.state;
+    delete globalThis.renderView;
+    delete globalThis.fetch;
+  }
+});
+
+test('submitCommissionSettlementToApi posts to /api/commissions/settle with requestKey and reloads dashboard', async () => {
+  const code = extractFunction('submitCommissionSettlementToApi');
+  const calls = [];
+  let closed = 0;
+  let reloaded = 0;
+
+  const fields = {
+    commSettlePaidDate: { value: '2026-11-19' },
+    commSettleRef: { value: 'WIRE-2026-1119' },
+    commSettleNote: { value: 'Settled November payout' },
+    commSettleFormError: { textContent: '', classList: { add() {}, remove() {} } }
+  };
+
+  globalThis.state = { currentUser: { role: 'MANAGER' } };
+  globalThis.canSettleCommission = () => true;
+  globalThis.document = { getElementById: (id) => fields[id] || null };
+  globalThis.closeModal = () => { closed++; };
+  globalThis.loadCommissionsDashboardFromApi = async () => { reloaded++; };
+  globalThis.fetch = async (url, init) => {
+    calls.push({ url, method: init.method, body: JSON.parse(init.body) });
+    return { ok: true, async json() { return { status: 'SUCCESS', data: { settlement: { settlement_id: 'CS-0001' } } }; } };
+  };
+
+  try {
+    const submit = new Function(`return (${code.trim()});`)();
+    await submit('SHP-1', 'U_SALES1');
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0].url, '/api/commissions/settle');
+    assert.equal(calls[0].method, 'POST');
+    assert.equal(calls[0].body.shipmentId, 'SHP-1');
+    assert.equal(calls[0].body.recipientUserId, 'U_SALES1');
+    assert.equal(calls[0].body.paidDate, '2026-11-19');
+    assert.equal(calls[0].body.paymentReference, 'WIRE-2026-1119');
+    assert.equal(calls[0].body.note, 'Settled November payout');
+    assert.ok(typeof calls[0].body.requestKey === 'string' && calls[0].body.requestKey.length > 0);
+    assert.equal(closed, 1);
+    assert.equal(reloaded, 1);
+  } finally {
+    delete globalThis.state;
+    delete globalThis.canSettleCommission;
+    delete globalThis.document;
+    delete globalThis.closeModal;
+    delete globalThis.loadCommissionsDashboardFromApi;
+    delete globalThis.fetch;
+  }
+});
+
+test('updateCommissionNoteToApi patches /api/commissions/:settlementId and reloads dashboard', async () => {
+  const code = extractFunction('updateCommissionNoteToApi');
+  const calls = [];
+  let closed = 0;
+  let reloaded = 0;
+
+  const fields = {
+    commDetailRef: { value: 'WIRE-REV-2' },
+    commDetailNote: { value: 'Verified receipt' },
+    commDetailFormError: { textContent: '', classList: { add() {}, remove() {} } }
+  };
+
+  globalThis.state = { currentUser: { role: 'ADMIN' } };
+  globalThis.canSettleCommission = () => true;
+  globalThis.document = { getElementById: (id) => fields[id] || null };
+  globalThis.closeModal = () => { closed++; };
+  globalThis.loadCommissionsDashboardFromApi = async () => { reloaded++; };
+  globalThis.fetch = async (url, init) => {
+    calls.push({ url, method: init.method, body: JSON.parse(init.body) });
+    return { ok: true, async json() { return { status: 'SUCCESS', data: { settlement: { settlement_id: 'CS-0001' } } }; } };
+  };
+
+  try {
+    const update = new Function(`return (${code.trim()});`)();
+    await update('CS-0001');
+    assert.deepEqual(calls, [{
+      url: '/api/commissions/CS-0001',
+      method: 'PATCH',
+      body: { paymentReference: 'WIRE-REV-2', note: 'Verified receipt' }
+    }]);
+    assert.equal(closed, 1);
+    assert.equal(reloaded, 1);
+  } finally {
+    delete globalThis.state;
+    delete globalThis.canSettleCommission;
+    delete globalThis.document;
+    delete globalThis.closeModal;
+    delete globalThis.loadCommissionsDashboardFromApi;
+    delete globalThis.fetch;
+  }
+});
+
+test('renderCommissions hides settle controls and recipient strip for EXTERNAL_SALES and shows them for ADMIN/MANAGER', () => {
+  const escapeFn = new Function(`return (${extractFunction('escapeCommissionHtml').trim()});`)();
+  const canSettleFn = new Function(`return (${extractFunction('canSettleCommission').trim()});`)();
+  const statusBadgeFn = new Function(`return (${extractFunction('commissionStatusBadge').trim()});`)();
+  const payBadgeFn = new Function(`return (${extractFunction('paymentStatusBadge').trim()});`)();
+  const formatFn = new Function(`return (${extractFunction('formatMoney').trim()});`)();
+  const renderFn = new Function(`return (${extractFunction('renderCommissions').trim()});`)();
+
+  globalThis.escapeCommissionHtml = escapeFn;
+  globalThis.canSettleCommission = canSettleFn;
+  globalThis.commissionStatusBadge = statusBadgeFn;
+  globalThis.paymentStatusBadge = payBadgeFn;
+  globalThis.formatMoney = formatFn;
+  globalThis.loadCommissionsDashboardFromApi = async () => {};
+  globalThis.lucide = { createIcons() {} };
+
+  const sampleDashboard = {
+    summary: { total_count: 2, pending_count: 0, payable_count: 1, paid_count: 1, pending_usd: 0, payable_usd: 200, paid_usd: 150, total_usd: 350 },
+    items: [
+      {
+        settlement_id: null,
+        shipment_id: 'SHP-1',
+        di_id: 'DI-1',
+        di_no: 'DI-001',
+        customer_po_no: 'CPO-1',
+        customer_name: 'Meelunie',
+        recipient_user_id: 'U_SALES1',
+        recipient_name: 'Sira TTPagro',
+        final_invoice_nos: 'WCAT-001',
+        actual_shipped_mt: 20,
+        planned_qty_mt: 20,
+        rate_usd_mt: 10,
+        commission_amount_usd: 200,
+        currency: 'USD',
+        payment_status: 'PAID',
+        shipment_status: 'COMPLETED',
+        status: 'PAYABLE',
+        can_settle: true
+      },
+      {
+        settlement_id: 'CS-0001',
+        shipment_id: 'SHP-2',
+        di_id: 'DI-2',
+        di_no: 'DI-002',
+        customer_po_no: 'CPO-2',
+        customer_name: 'Meelunie',
+        recipient_user_id: 'U_SALES1',
+        recipient_name: 'Sira TTPagro',
+        final_invoice_nos: 'WCAT-002',
+        actual_shipped_mt: 15,
+        planned_qty_mt: 15,
+        rate_usd_mt: 10,
+        commission_amount_usd: 150,
+        currency: 'USD',
+        payment_status: 'PAID',
+        shipment_status: 'COMPLETED',
+        status: 'PAID',
+        paid_date: '2026-11-19',
+        payment_reference: 'WIRE-001',
+        can_settle: false
+      }
+    ],
+    recipients: [{ user_id: 'U_SALES1', full_name: 'Sira TTPagro', pending_usd: 0, payable_usd: 200, paid_usd: 150, payable_count: 1, total_count: 2 }],
+    detail: null,
+    loading: false,
+    error: null,
+    loaded: true,
+    filters: { status: 'ALL', recipientUserId: 'ALL', customerId: 'ALL', paidDateFrom: '', paidDateTo: '', search: '' }
+  };
+
+  try {
+    for (const [role, expectSettle, expectRecipientStrip] of [
+      ['EXTERNAL_SALES', false, false],
+      ['MANAGER', true, true],
+      ['ADMIN', true, true]
+    ]) {
+      globalThis.state = {
+        currentUser: { role },
+        commissionsDashboard: structuredClone(sampleDashboard)
+      };
+      const container = { innerHTML: '' };
+      renderFn(container);
+      assert.equal(container.innerHTML.includes('Settle / Pay'), expectSettle, `${role} Settle / Pay visibility`);
+      assert.equal(container.innerHTML.includes('All Salespeople'), expectRecipientStrip, `${role} recipient filter visibility`);
+      assert.match(container.innerHTML, /Receipt/, `${role} should see Receipt action on PAID row`);
+    }
+  } finally {
+    delete globalThis.state;
+    delete globalThis.escapeCommissionHtml;
+    delete globalThis.canSettleCommission;
+    delete globalThis.commissionStatusBadge;
+    delete globalThis.paymentStatusBadge;
+    delete globalThis.formatMoney;
+    delete globalThis.loadCommissionsDashboardFromApi;
+    delete globalThis.lucide;
+  }
+});
