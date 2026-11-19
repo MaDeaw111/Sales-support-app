@@ -75,6 +75,12 @@ test('production shell omits obsolete Sheets sync controls and prototype brandin
   assert.match(visibleShell, /WCAT · Sales & Export Operations/);
 });
 
+test('frontend contains no dead legacy /api/gateway callBackend invocations', () => {
+  assert.doesNotMatch(html, /callBackend\(\s*['"]UPDATE_PO['"]/);
+  assert.doesNotMatch(html, /callBackend\(\s*['"]SEED_ALL_MASTER_DATA['"]/);
+  assert.doesNotMatch(html, /(?<!function\s)callBackend\(/);
+});
+
 test('D1-backed PO Manage detail uses a defined renderer with revision, lines, documents, and history', () => {
   const engine = functionBlock('renderPOEngine(container)', 'renderRealPOListTable');
   const detail = extractFunction('renderRealPODetailCard(po)');

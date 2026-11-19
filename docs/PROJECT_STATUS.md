@@ -1,6 +1,6 @@
 # WCAT Sales Support App — Project Status
 
-**Last updated:** 2026-08-24  
+**Last updated:** 2026-11-19  
 **Repository:** `MaDeaw111/Sales-support-app`  
 **Production:** Cloudflare Worker — `wcat-sales-support`  
 **Database:** Cloudflare D1 — `wcat-sales-db`
@@ -420,20 +420,64 @@ SUCCESS (170 regression tests passed; production frontend inline script syntax a
 
 ---
 
-# 3. CURRENT CHECKPOINT
+### Phase 6 — Shipping / DI Integration
 
-## STOPPED HERE — 2026-08-28
+**Status:** COMPLETE / MERGED / DEPLOYED / PRODUCTION VERIFIED
 
-Phase 5F PO Management is fully deployed and production-verified.
-Next Action:
-- Prepare Phase 6 (Shipping/DI Integration) design specifications and implementation plans.
+Implemented:
+- D1 schema migration (`migrations/0007_shipping_di_integration.sql`) adding Delivery Instructions (`delivery_instructions`, `delivery_instruction_lines`), Shipments v2 (`shipments_v2`, `shipment_containers`, `shipment_invoices`, `shipment_payments`, `shipment_audit_events`), Service Partners master (`service_partners`), and Customer Credits (`customer_credits`).
+- Delivery Instruction lifecycle (DRAFT → CONFIRMED → IN_PROGRESS → COMPLETED / CANCELLED) bound to exact Phase 5F PO Revision Lines, with atomic PO balance/availability reservation and persisted container plan validation.
+- Shipment v2 workflow: Booking, Surveyor/Forwarder selection (with returning-Customer suggestions), Planned vs Actual Loading Dates (`ON_PLAN` / `OUT_OF_PLAN`), Actual Containers/Seals/Net Weight, Preliminary & Final Invoices, All Ship Docs Drive folder & Email/DHL delivery tracking, Customer Credits, Payments, and automatic Shipment completion.
+- Strict server-side & UI RBAC projections for restricted roles (`EXTERNAL_SALES`, `PRODUCTION_WAREHOUSE`) and explicit Shipment-ID vs DI-ID read boundaries.
+
+Production release:
+```text
+Original Phase 6 merge: 67d8be70d7a1ad61861d02a21997215de31c5597
+Release hotfix:         e8ffb52dc6c36f6e4bca07f6116f830cdc9b27c4 (remove legacy GET_MASTER_DATA bootstrap 501)
+Verification docs:      a95f6bfbfd6dad996dcd5261d999427b0317e7e5
+Migration applied:      0007_shipping_di_integration.sql
+Worker version:         859fe84f-9a7f-4232-a5e9-2ae92141976e
+Cloudflare build:       a7483865-94e5-4b4f-8f6f-e5cdceec8cbe
+```
+
+Production Verification:
+```text
+SUCCESS (311 tests passed at release; human-authenticated browser smoke passed; legacy GET_MASTER_DATA 501 absent; Phase 5E/5F data preserved. Limitation: comprehensive authenticated multi-role RBAC production smoke was not exercised; Tailwind CDN production warning remains known non-blocking technical debt.)
+```
 
 ---
 
-# 4. NEXT STEP — Phase 6 — Shipping/DI Integration
+### Post-Phase 6 Maintenance (`a95f6bf` → `e2e4d6d`)
+
+**Status:** COMPLETE / PUSHED TO `main`
+
+Commits on `main` after `a95f6bf`:
+- `8d9fc02e2b012cb05560ff43713251c5f685aee5` — `fix: restore D1 PO detail renderer`
+- `f8a74edbabb2e34481f2e8d846ab8c9209d52eb2` — `ui: remove legacy sheets prototype labels`
+- `8c167513c4f20b0ddafba0b76a91c7171b299b7c` — `ui: remove remaining prototype title`
+- `e2e4d6d2cec8baa8a442e21868e12898fa92ea9d` — `feat: expose spec parameter master UI`
+
+Follow-up housekeeping (local working copy):
+- Removed remaining dead `/api/gateway` (501) callers (`UPDATE_PO`, `SEED_ALL_MASTER_DATA`) from `public/index.html` and added a regression guard in `test/frontend-adapter.test.js`.
+- Refreshed `docs/PROJECT_STATUS.md` checkpoint and backlog sections.
+
+---
+
+# 3. CURRENT CHECKPOINT
+
+## STOPPED HERE — 2026-11-19
+
+Phase 6 (Shipping / DI Integration) is deployed and production-verified, and post-release `main` maintenance through `e2e4d6d` (plus dead `/api/gateway` caller cleanup) is complete.
+Next Action:
+- Complete production smoke check for Product & Spec (including the Spec Parameter Master UI from `e2e4d6d`) and optionally run multi-role RBAC production spot-checks.
+- Prepare Phase 7 (Operations Calendar) design specification and implementation plan.
+
+---
+
+# 4. NEXT STEP — Phase 7 — Operations Calendar
 
 Next Action:
-- Plan the next DI / Shipment integration phase.
+- Draft bounded design spec and implementation plan for Phase 7 (Operations Calendar) backed by D1 Phase 5F POs and Phase 6 DIs/Shipments.
 
 ---
 
@@ -490,7 +534,9 @@ Detailed Customer Edit
 External Sales
 Users / Roles Management
 Product & Spec Master Data
+Commercial & Shipment Control (Price Notes / Freight Quotes)
 PO Management
+Shipping / DI Integration
 ```
 
 Production truth must come from:
@@ -513,14 +559,13 @@ must not appear to save unless persistence is actually implemented.
 
 # 7. Recommended Next Development Order
 
-After Phase 5F production smoke test passes:
+After Phase 6 production release and housekeeping:
 
 ```text
-1. Shipping / DI Integration
-2. Operations Calendar
-3. Logistics Partners
-4. Payment Status
-5. Commission Settlement
+1. Operations Calendar (Phase 7)
+2. Logistics Partners
+3. Payment Status
+4. Commission Settlement
 ```
 
 Continue using:

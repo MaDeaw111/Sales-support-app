@@ -4275,52 +4275,7 @@
             }
         }
 
-        function saveEditPO(e, poId) {
-            e.preventDefault();
-            const po = (state.pos || []).find(p => p.id === poId);
-            if (!po) return;
-            const pkgSelect = document.getElementById('editPoPackagingSelect').value;
-            const pkgCustom = document.getElementById('editPoPackagingCustom').value;
-            let finalPackaging = pkgSelect;
-            if (pkgSelect === 'CUSTOM') finalPackaging = pkgCustom.trim() || 'Custom Package';
-            else if (pkgSelect === 'NONE') finalPackaging = 'ไม่มีบรรจุภัณฑ์ (In Bulk)';
-            const contractQty = parseFloat(document.getElementById('editPoQty').value) || 0;
-            const tolerancePct = parseFloat(document.getElementById('editPoTolerancePct').value) || 0;
-            const maxInvQty = parseFloat(document.getElementById('editPoMaxInvQty').value) || (contractQty * 1.05);
-            const draft = {
-                customerPoNo: document.getElementById('editPoNo').value,
-                poDate: document.getElementById('editPoDate').value,
-                customerId: document.getElementById('editPoCustomerId').value,
-                productId: document.getElementById('editPoProductId').value,
-                contractQtyMt: contractQty,
-                tolerancePct,
-                maxInvoiceQtyMt: maxInvQty,
-                shipmentType: document.getElementById('editPoShipmentType').value,
-                packaging: finalPackaging,
-                packageWeightKg: pkgSelect === 'NONE' ? 0 : (parseFloat(document.getElementById('editPoPackageWeightKg').value) || 0),
-                unitsPerContainer: pkgSelect === 'NONE' ? 0 : (parseFloat(document.getElementById('editPoUnitsPerCont').value) || 0),
-                totalWeightPerContainerMt: parseFloat(document.getElementById('editPoTotalWeightMt').value) || 0,
-                sellingPrice: parseFloat(document.getElementById('editPoPrice').value) || 0,
-                incoterm: document.getElementById('editPoIncoterm').value,
-                destinationPort: document.getElementById('editPoPort').value,
-                poStatus: document.getElementById('editPoStatus').value
-            };
-            draft.containerType = draft.shipmentType === 'Container' ? document.getElementById('editPoContainerType').value : '-';
-
-            callBackend('UPDATE_PO', {
-                action_type: 'UPDATE', po_id: po.id, customerId: draft.customerId, customerPoNo: draft.customerPoNo,
-                poDate: draft.poDate, productId: draft.productId, contractQtyMt: draft.contractQtyMt, tolerancePct: draft.tolerancePct,
-                maxInvoiceQtyMt: draft.maxInvoiceQtyMt, incoterm: draft.incoterm, destinationPort: draft.destinationPort,
-                shipmentType: draft.shipmentType, containerType: draft.containerType, packaging: draft.packaging,
-                packageWeightKg: draft.packageWeightKg, unitsPerContainer: draft.unitsPerContainer,
-                totalWeightPerContainerMt: draft.totalWeightPerContainerMt, poCurrency: po.poCurrency || 'USD',
-                sellingPrice: draft.sellingPrice, commercialApprovalStatus: po.commercialApprovalStatus || 'APPROVED', poStatus: draft.poStatus
-            }, () => {
-                Object.assign(po, draft);
-                closeModal();
-                renderView();
-            }, msg => alert('Save PO failed: ' + msg));
-        }
+        // Obsolete legacy UPDATE_PO gateway handler removed.
 
         // --- SHIPPING & TRACKING FRONTEND PROTOTYPE (DI-CENTRIC) ---
         function calculateDIPlannedQty(di) {
@@ -8626,19 +8581,7 @@
         }
         function closeModal() { document.getElementById('modalBackdrop').classList.add('hidden'); }
         
-        function masterSyncAllSheets() {
-            const btn = document.getElementById('btnMasterSync');
-            if (btn) btn.innerHTML = `<i data-lucide="refresh-cw" class="w-3.5 h-3.5 animate-spin"></i><span>Syncing...</span>`;
-            callBackend('SEED_ALL_MASTER_DATA', { users: state.users, customers: state.customers, products: state.products, pos: state.pos, shipments: state.shipments }, res => {
-                hydrateData(res);
-                if (btn) btn.innerHTML = `<i data-lucide="check" class="w-3.5 h-3.5"></i><span>Done!</span>`;
-                setTimeout(() => { if (btn) btn.innerHTML = `<i data-lucide="refresh-cw" class="w-3.5 h-3.5"></i><span>Sync ทุกเมนู + Sheet</span>`; lucide.createIcons(); }, 2000);
-            }, msg => {
-                if (btn) btn.innerHTML = `<i data-lucide="refresh-cw" class="w-3.5 h-3.5"></i><span>Sync ทุกเมนู + Sheet</span>`;
-                alert('Sync failed: ' + msg);
-                lucide.createIcons();
-            });
-        }
+        // Obsolete legacy SEED_ALL_MASTER_DATA gateway handler removed.
 
         function hydrateData(data) {
             if(!data) return;
