@@ -1257,3 +1257,308 @@ test('saveCalendarPlannedLoadingDate submits to Phase 6 PUT /api/shipments-v2/:i
 });
 
 
+
+test('Phase 8 Logistics Partners renderers use D1 state and never read mock logisticsProviders arrays', () => {
+  const listCode = extractFunction('renderLogisticsPartners');
+  const detailCode = extractFunction('renderLogisticsPartnerDetail');
+  const editorCode = extractFunction('openProviderEditor');
+  const rateEditorCode = extractFunction('openProviderPriceEditor');
+  const combined = [listCode, detailCode, editorCode, rateEditorCode].join('\n');
+
+  assert.doesNotMatch(combined, /state\.logisticsProviders/);
+  assert.doesNotMatch(combined, /state\.providerPrices/);
+  assert.doesNotMatch(combined, /state\.providerUsageRecords/);
+  assert.doesNotMatch(combined, /FREIGHT_FORWARDER/);
+  assert.match(listCode, /state\.logisticsPartners/);
+  assert.match(listCode, /FORWARDER/);
+  assert.match(listCode, /SHIPPING_LINE/);
+  assert.match(listCode, /TRUCKING/);
+  assert.match(listCode, /SURVEYOR/);
+  assert.match(detailCode, /openPhase6ShipmentFromCalendar/);
+});
+
+test('canManageLogisticsPartners allows ADMIN, MANAGER, EXPORT and denies SALES_SUPPORT', () => {
+  const fn = new Function(`return (${extractFunction('canManageLogisticsPartners').trim()});`)();
+  try {
+    for (const role of ['ADMIN', 'MANAGER', 'EXPORT']) {
+      globalThis.state = { currentUser: { role } };
+      assert.equal(fn(), true, `${role} should be allowed to manage logistics partners`);
+    }
+    for (const role of ['SALES_SUPPORT', 'EXTERNAL_SALES', 'PRODUCTION_WAREHOUSE']) {
+      globalThis.state = { currentUser: { role } };
+      assert.equal(fn(), false, `${role} should not be allowed to manage logistics partners`);
+    }
+  } finally {
+    delete globalThis.state;
+  }
+});
+
+test('loadLogisticsPartnersFromApi fetches /api/logistics-partners and populates state.logisticsPartners', async () => {
+  const code = extractFunction('loadLogisticsPartnersFromApi');
+  const capturedUrls = [];
+  let rendered = 0;
+
+  globalThis.state = {
+    providerTypeFilter: 'ALL',
+    logisticsPartners: { items: [], detail: null, loading: false, detailLoading: false, error: null, loaded: false, statusFilter: 'ALL', search: '' }
+  };
+  globalThis.renderView = () => { rendered++; };
+  globalThis.fetch = async (url) => {
+    capturedUrls.push(url);
+    return {
+      ok: true,
+      async json() {
+        return {
+          status: 'SUCCESS',
+          data: {
+            partners: [
+              { partner_id: 'SP-001', partner_type: 'TRUCKING', partner_name: 'Siam Truck', status: 'ACTIVE', active_rate_count: 2, usage_count: 3 }
+            ]
+          }
+        };
+      }
+    };
+  };
+
+  try {
+    const load = new Function(`return (${code.trim()});`)();
+    await load();
+    assert.deepEqual(capturedUrls, ['/api/logistics-partners']);
+    assert.equal(globalThis.state.logisticsPartners.loaded, true);
+    assert.equal(globalThis.state.logisticsPartners.items.length, 1);
+    assert.equal(globalThis.state.logisticsPartners.items[0].partner_id, 'SP-001');
+    assert.ok(rendered >= 1);
+  } finally {
+    delete globalThis.state;
+    delete globalThis.renderView;
+    delete globalThis.fetch;
+  }
+});
+
+test('saveLogisticsPartnerToApi submits POST for create and PUT for edit and syncs Phase 6 partners', async () => {
+  const code = extractFunction('saveLogisticsPartnerToApi');
+  const calls = [];
+  let phase6Synced = 0;
+  let closed = 0;
+  let listReloaded = 0;
+  let detailReloaded = 0;
+
+  const fields = {
+    lgpName: { value: 'Kerry Ocean' },
+    lgpType: { value: 'FORWARDER' },
+    lgpStatus: { value: 'ACTIVE' },
+    lgpContact: { value: 'Malee' },
+    lgpPhone: { value: '081-000-0001' },
+    lgpEmail: { value: 'malee@kerry.co.th' },
+    lgpTax: { value: '0105551111111' },
+    lgpAddress: { value: 'Bangkok' },
+    lgpNote: { value: 'Preferred' },
+    lgpFormError: { textContent: '', classList: { add() {}, remove() {} } }
+  };
+
+  globalThis.state = { currentUser: { role: 'MANAGER' }, selectedLogisticsProviderId: null };
+  globalThis.canManageLogisticsPartners = () => true;
+  globalThis.document = { getElementById: (id) => fields[id] || null };
+  globalThis.closeModal = () => { closed++; };
+  globalThis.loadLogisticsPartnersFromApi = async () => { listReloaded++; };
+  globalThis.loadLogisticsPartnerDetailFromApi = async () => { detailReloaded++; };
+  globalThis.loadPhase6ServicePartnersFromApi = async () => { phase6Synced++; };
+  globalThis.fetch = async (url, init) => {
+    calls.push({ url, method: init.method, body: JSON.parse(init.body) });
+    return {
+      ok: true,
+      async json() {
+        return { status: 'SUCCESS', data: { partner: { partner_id: 'SP-001' } } };
+      }
+    };
+  };
+
+  try {
+    const save = new Function(`return (${code.trim()});`)();
+    await save('');
+    assert.equal(calls[0].url, '/api/logistics-partners');
+    assert.equal(calls[0].method, 'POST');
+    assert.equal(calls[0].body.partnerType, 'FORWARDER');
+    assert.equal(calls[0].body.partnerName, 'Kerry Ocean');
+
+    await save('SP-001');
+    assert.equal(calls[1].url, '/api/logistics-partners/SP-001');
+    assert.equal(calls[1].method, 'PUT');
+    assert.equal('partnerType' in calls[1].body, false, 'PUT edit payload should omit immutable partnerType');
+    assert.equal(phase6Synced, 2);
+    assert.equal(closed, 2);
+    assert.equal(listReloaded, 2);
+    assert.equal(detailReloaded, 2);
+  } finally {
+    delete globalThis.state;
+    delete globalThis.canManageLogisticsPartners;
+    delete globalThis.document;
+    delete globalThis.closeModal;
+    delete globalThis.loadLogisticsPartnersFromApi;
+    delete globalThis.loadLogisticsPartnerDetailFromApi;
+    delete globalThis.loadPhase6ServicePartnersFromApi;
+    delete globalThis.fetch;
+  }
+});
+
+test('saveLogisticsPartnerRateToApi submits POST for create and PATCH for edit', async () => {
+  const code = extractFunction('saveLogisticsPartnerRateToApi');
+  const calls = [];
+  let closed = 0;
+  let listReloaded = 0;
+  let detailReloaded = 0;
+
+  const fields = {
+    lgpRateService: { value: 'Trucking' },
+    lgpRateRoute: { value: 'Factory -> LCB' },
+    lgpRateContainer: { value: '40HC' },
+    lgpRateUnit: { value: 'THB / Container' },
+    lgpRatePrice: { value: '8500' },
+    lgpRateCurrency: { value: 'THB' },
+    lgpRateEffective: { value: '2026-11-01' },
+    lgpRateValidUntil: { value: '2026-12-31' },
+    lgpRateStatus: { value: 'ACTIVE' },
+    lgpRateNote: { value: 'Standard' },
+    lgpRateFormError: { textContent: '', classList: { add() {}, remove() {} } }
+  };
+
+  globalThis.state = { currentUser: { role: 'EXPORT' }, providerDetailTab: 'PROFILE' };
+  globalThis.canManageLogisticsPartners = () => true;
+  globalThis.document = { getElementById: (id) => fields[id] || null };
+  globalThis.closeModal = () => { closed++; };
+  globalThis.loadLogisticsPartnersFromApi = async () => { listReloaded++; };
+  globalThis.loadLogisticsPartnerDetailFromApi = async () => { detailReloaded++; };
+  globalThis.fetch = async (url, init) => {
+    calls.push({ url, method: init.method, body: JSON.parse(init.body) });
+    return {
+      ok: true,
+      async json() {
+        return { status: 'SUCCESS', data: { rate: { rate_id: 'SPR-0001' } } };
+      }
+    };
+  };
+
+  try {
+    const saveRate = new Function(`return (${code.trim()});`)();
+    await saveRate('SP-001', '');
+    assert.equal(calls[0].url, '/api/logistics-partners/SP-001/rates');
+    assert.equal(calls[0].method, 'POST');
+    assert.equal(calls[0].body.price, 8500);
+    assert.equal(calls[0].body.currency, 'THB');
+    assert.equal(calls[0].body.containerSize, '40HC');
+
+    await saveRate('SP-001', 'SPR-0001');
+    assert.equal(calls[1].url, '/api/logistics-partners/SP-001/rates/SPR-0001');
+    assert.equal(calls[1].method, 'PATCH');
+    assert.equal(closed, 2);
+    assert.equal(listReloaded, 2);
+    assert.equal(detailReloaded, 2);
+  } finally {
+    delete globalThis.state;
+    delete globalThis.canManageLogisticsPartners;
+    delete globalThis.document;
+    delete globalThis.closeModal;
+    delete globalThis.loadLogisticsPartnersFromApi;
+    delete globalThis.loadLogisticsPartnerDetailFromApi;
+    delete globalThis.fetch;
+  }
+});
+
+test('Logistics Partners directory and detail hide write controls for SALES_SUPPORT and show them for ADMIN/MANAGER/EXPORT', () => {
+  const escapeFn = new Function(`return (${extractFunction('escapeLogisticsPartnerHtml').trim()});`)();
+  const canManageFn = new Function(`return (${extractFunction('canManageLogisticsPartners').trim()});`)();
+  const renderList = new Function(`return (${extractFunction('renderLogisticsPartners').trim()});`)();
+  const renderDetail = new Function(`return (${extractFunction('renderLogisticsPartnerDetail').trim()});`)();
+
+  globalThis.escapeLogisticsPartnerHtml = escapeFn;
+  globalThis.canManageLogisticsPartners = canManageFn;
+  globalThis.getTodayIso = () => '2026-11-19';
+  globalThis.loadLogisticsPartnersFromApi = async () => {};
+  globalThis.loadLogisticsPartnerDetailFromApi = async () => {};
+
+  const samplePartner = {
+    partner_id: 'SP-001',
+    partner_type: 'FORWARDER',
+    partner_name: 'Kerry Ocean',
+    contact_name: 'Malee',
+    contact_phone: '081-000-0001',
+    contact_email: 'malee@kerry.co.th',
+    tax_id: '010555',
+    address: 'Bangkok',
+    status: 'ACTIVE',
+    note: 'Preferred',
+    active_rate_count: 1,
+    usage_count: 1
+  };
+  const sampleDetail = {
+    partner: samplePartner,
+    rates: [{
+      rate_id: 'SPR-0001',
+      partner_id: 'SP-001',
+      service_type: 'Export Clearance',
+      route_scope: 'LCB -> Hamburg',
+      container_size: '40HC',
+      unit: 'USD / Container',
+      price: 1850,
+      currency: 'USD',
+      effective_date: '2026-10-01',
+      valid_until: '2026-11-01',
+      status: 'ACTIVE',
+      note: 'Expired test'
+    }],
+    usage: [{
+      di_id: 'DI-1',
+      shipment_id: 'SHP-1',
+      di_no: 'DI-2026-001',
+      customer_name: 'Acme',
+      booking_no: 'BK-001',
+      vessel: 'EVER GIVEN',
+      container_plan: '2 x 40HC',
+      usage_date: '2026-11-12',
+      partner_role: 'FORWARDER',
+      di_status: 'IN_PROGRESS',
+      shipment_status: 'LOADED',
+      actual_container_count: 2
+    }]
+  };
+
+  try {
+    // Directory: SALES_SUPPORT cannot see + Add Partner; MANAGER/ADMIN/EXPORT can
+    for (const [role, expectWrite] of [['SALES_SUPPORT', false], ['ADMIN', true], ['MANAGER', true], ['EXPORT', true]]) {
+      globalThis.state = {
+        currentUser: { role },
+        selectedLogisticsProviderId: null,
+        providerTypeFilter: 'ALL',
+        providerDetailTab: 'PRICE',
+        logisticsPartners: {
+          items: [samplePartner],
+          detail: sampleDetail,
+          loading: false,
+          detailLoading: false,
+          error: null,
+          loaded: true,
+          statusFilter: 'ALL',
+          search: ''
+        }
+      };
+
+      const listContainer = { innerHTML: '' };
+      renderList(listContainer);
+      assert.equal(listContainer.innerHTML.includes('+ Add Partner'), expectWrite, `${role} directory + Add Partner visibility`);
+
+      const detailContainer = { innerHTML: '' };
+      renderDetail(detailContainer);
+      assert.equal(detailContainer.innerHTML.includes('Edit Profile'), expectWrite, `${role} detail Edit Profile visibility`);
+      assert.equal(detailContainer.innerHTML.includes('+ Add Rate'), expectWrite, `${role} detail + Add Rate visibility`);
+      assert.equal(detailContainer.innerHTML.includes('Deactivate'), expectWrite, `${role} detail Deactivate visibility`);
+      assert.match(detailContainer.innerHTML, /Expired/, 'expired rate badge should render when valid_until < today');
+    }
+  } finally {
+    delete globalThis.state;
+    delete globalThis.escapeLogisticsPartnerHtml;
+    delete globalThis.canManageLogisticsPartners;
+    delete globalThis.getTodayIso;
+    delete globalThis.loadLogisticsPartnersFromApi;
+    delete globalThis.loadLogisticsPartnerDetailFromApi;
+  }
+});
