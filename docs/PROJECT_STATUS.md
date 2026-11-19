@@ -609,14 +609,35 @@ SUCCESS (383 automated tests passed; remote D1 migration 0009 applied and commis
 
 ---
 
+### Post-Migration Cleanup — D1 Role Dashboard (`GET /api/dashboard`)
+
+**Status:** COMPLETE / MERGED / DEPLOYED / PRODUCTION VERIFIED
+
+Implemented:
+- Zero new D1 migrations required (`0001`–`0009` preserved).
+- Added `src/dashboard/repository.js` and `src/dashboard/routes.js` wired to `GET /api/dashboard` in `src/index.js`, returning strictly role-projected live D1 KPIs and actionable queues for all 6 roles (`ADMIN`, `MANAGER`, `SALES_SUPPORT`, `EXTERNAL_SALES`, `EXPORT`, `PRODUCTION_WAREHOUSE`) by reusing Phase 9 payment summaries and Phase 10 commission calculations.
+- Wired `renderDashboard(container)`, `startAuthenticatedApp()`, and `signOut()` in `public/index.html` to `loadDashboardSummaryFromApi()` with zero leftover mock array reads or hardcoded dates on the main dashboard.
+
+Release details:
+```text
+Merge commit:        e9acfd52ab4ceee8688878554b76116a2262137e
+Feature commit:      3950808 (branch: feature/d1-dashboard-summary — deleted after merge)
+Migrations required: None (0001–0009 unchanged)
+Worker version:      6e071e82-d792-4429-ad61-f14c5cf8c1d9 (2026-11-19T12:47:19.081Z)
+Workers URL:         https://wcat-sales-support.deono111.workers.dev
+Automated tests:     387 passed, 0 failed
+```
+
+---
+
 # 3. CURRENT CHECKPOINT
 
 ## FULL D1 MIGRATION COMPLETE — 2026-11-19
 
-**All 10 phases of the Cloudflare Worker + D1 migration are COMPLETE / MERGED / DEPLOYED / PRODUCTION VERIFIED.**
-- Production Worker: `wcat-sales-support` (`https://wcat-sales-support.deono111.workers.dev`), Version `9e6c851a-6702-45ab-aa88-60bd204465bb`.
+**All 10 phases + the D1-backed Role Dashboard are COMPLETE / MERGED / DEPLOYED / PRODUCTION VERIFIED.**
+- Production Worker: `wcat-sales-support` (`https://wcat-sales-support.deono111.workers.dev`), Version `6e071e82-d792-4429-ad61-f14c5cf8c1d9`.
 - Production D1: `wcat-sales-db`, migrations `0001`–`0009` applied and verified.
-- Full automated regression suite: **383 passed, 0 failed**.
+- Full automated regression suite: **387 passed, 0 failed**.
 
 ---
 
@@ -624,7 +645,7 @@ SUCCESS (383 automated tests passed; remote D1 migration 0009 applied and commis
 
 Next Action:
 - Conduct an authenticated multi-role browser walkthrough across all 6 roles (`ADMIN`, `MANAGER`, `SALES_SUPPORT`, `EXPORT`, `EXTERNAL_SALES`, `PRODUCTION_WAREHOUSE`) on production.
-- Optional future enhancements (out of migration scope): migrate legacy dashboard overview widgets (`renderDashboard`) to D1 summary APIs, replace Tailwind CDN with a compiled CSS bundle, or add itemized bank-receipt / batch commission payout exports if requested by Finance.
+- Optional future enhancements (out of migration scope): replace Tailwind CDN with a compiled CSS bundle, or add itemized bank-receipt / batch commission payout exports if requested by Finance.
 
 ---
 
@@ -680,6 +701,9 @@ Next Action:
   - Merge commit: `4178c0c16456d4e8d506a933169f5d4fc92a27d7`
   - Migration `0009_commission_settlement.sql` applied to production `wcat-sales-db`; `commission_settlements`, `commission_audit_events`, and all 3 indexes verified.
   - Worker version `9e6c851a-6702-45ab-aa88-60bd204465bb`; `/api/health` (200), `/api/commissions` (401 unauthenticated), and live frontend (`loadCommissionsDashboardFromApi`) verified; automated verification: 383 passed, 0 failed.
+- [x] Post-Migration Cleanup: D1 Role Dashboard (`GET /api/dashboard`) — COMPLETE / MERGED / DEPLOYED / PRODUCTION VERIFIED
+  - Merge commit: `e9acfd52ab4ceee8688878554b76116a2262137e`
+  - Zero D1 migrations required (`0001`–`0009` preserved); Worker version `6e071e82-d792-4429-ad61-f14c5cf8c1d9`; `/api/health` (200), `/api/dashboard` (401 unauthenticated), and live frontend (`loadDashboardSummaryFromApi`) verified; automated verification: 387 passed, 0 failed.
 
 ---
 
@@ -702,6 +726,7 @@ Operations Calendar
 Logistics Partners
 Payment Status
 Commission Settlement
+Role Dashboards (/api/dashboard)
 ```
 
 Production truth must come from:
@@ -739,6 +764,7 @@ All core modules COMPLETE (Phases 1–10)
 - Logistics Partners & Reference Rates
 - Payment Status (Finance Dashboard)
 - Commission Settlement
+- Role Dashboards (All 6 Roles via /api/dashboard)
 ```
 
 Continue using:
