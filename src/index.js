@@ -117,6 +117,12 @@ export default {
       return createCommissionsHandlerFromEnv(env)(request);
     }
 
+    if (url.pathname === '/api/dashboard') {
+      if (!env.DB) return jsonResponse({ status: 'ERROR', message: 'D1 DB binding is not configured.' }, 503);
+      const { createDashboardHandlerFromEnv } = await import('./dashboard/routes.js');
+      return createDashboardHandlerFromEnv(env)(request);
+    }
+
     if (url.pathname === '/api/gateway') {
       return jsonResponse({
         status: 'ERROR',
