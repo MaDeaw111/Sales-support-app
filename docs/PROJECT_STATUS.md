@@ -570,21 +570,61 @@ SUCCESS (368 automated tests passed; zero D1 migrations required; live Worker /a
 
 ---
 
-# 3. CURRENT CHECKPOINT
+### Phase 10 — Commission Settlement (Final Migration Phase)
 
-## STOPPED HERE — 2026-11-19
+**Status:** COMPLETE / MERGED / DEPLOYED / PRODUCTION VERIFIED
 
-Phase 9 (Payment Status) is merged to `main` (`28a9dcd`), deployed to production Worker `wcat-sales-support` (`e2dc5942-161c-4cfb-ba36-383b714375f7`), and verified live.
-Next Action:
-- Scope the final migration phase: **Phase 10 — Commission Settlement**.
-- Draft bounded design spec and implementation plan before coding.
+Implemented backend:
+- Additive D1 migration (`migrations/0009_commission_settlement.sql`) creating `commission_settlements` (immutable payout snapshots with `UNIQUE(shipment_id, recipient_user_id)` double-payout protection, `UNIQUE(request_key)` idempotency, positive MT/rate/amount checks, `USD` currency, `PAID` status, and `line_breakdown_json`) and `commission_audit_events` (`COMMISSION_SETTLED`, `COMMISSION_NOTE_UPDATED`), plus lookup indexes `idx_commission_settlements_recipient_status`, `idx_commission_settlements_shipment`, and `idx_commission_audit_events_settlement`. Existing migrations `0001`–`0008` remain unaltered.
+- Dedicated module (`src/commissions/validation.js`, `src/commissions/repository.js`, `src/commissions/routes.js`) wired to `/api/commissions` in `src/index.js`:
+  - `GET /api/commissions`: server-computed line-accurate `SUM(actual_mt * po_revision_lines.commission_rate_usd_mt)` per `(shipment_id, recipient_user_id)`, excluding cancelled shipments/DIs/containers and zero-rate lines; 3-state lifecycle (`PENDING` → `PAYABLE` → `PAID`) with KPI totals and per-recipient breakdown.
+  - `GET /api/commissions/:settlementId`: frozen payout snapshot, line breakdown, and audit trail.
+  - `POST /api/commissions/settle`: `ADMIN`/`MANAGER` only; server-side eligibility & USD amount calculation (rejects client-supplied amounts), idempotent `requestKey`, atomic `CS-XXXX` snapshot + `COMMISSION_SETTLED` audit log.
+  - `PATCH /api/commissions/:settlementId`: `ADMIN`/`MANAGER` only; metadata-only (`paymentReference`, `note`) updates with `COMMISSION_NOTE_UPDATED` audit log; snapshot MT/rate/amount remain immutable.
+- Strict RBAC & recipient isolation:
+  - `ADMIN`, `MANAGER`: full read across all recipients + settle payouts + update payment reference/note.
+  - `EXTERNAL_SALES`: strictly own commissions (`recipient_user_id = caller.user_id`) and own settlement receipts (`404` for other recipients), projected allowlist (omitting internal IDs & audit actor IDs), anti-inference filter hardening (`recipientUserId`/`customerId` ignored), and `403` on writes.
+  - `SALES_SUPPORT`, `EXPORT`, `PRODUCTION_WAREHOUSE`: `403` on all `/api/commissions` endpoints; unauthenticated: `401`.
+
+Implemented frontend:
+- Replaced prototype `state.commissionPaidSnapshots`, `state.commissionRateChangeRequests`, and `prompt()` handlers in `public/index.html` with `state.commissionsDashboard`, `loadCommissionsDashboardFromApi()`, recipient summary strip, filter bar, Settle Payout modal (`POST /api/commissions/settle` with generated `requestKey`), and Settlement Receipt modal (`GET` / `PATCH /api/commissions/:settlementId`).
+
+Release details:
+```text
+Merge commit:        4178c0c16456d4e8d506a933169f5d4fc92a27d7
+Feature commit:      0626b2f (branch: feature/phase10-commission-settlement — deleted after merge)
+Migration applied:   0009_commission_settlement.sql (remote wcat-sales-db)
+Verified D1 objects: commission_settlements, commission_audit_events, idx_commission_settlements_recipient_status, idx_commission_settlements_shipment, idx_commission_audit_events_settlement
+Worker version:      9e6c851a-6702-45ab-aa88-60bd204465bb (2026-11-19T12:29:58.549Z)
+Workers URL:         https://wcat-sales-support.deono111.workers.dev
+Automated tests:     383 passed, 0 failed
+Design spec:         docs/superpowers/specs/2026-11-19-phase10-commission-settlement-design.md
+Implementation plan: docs/superpowers/plans/2026-11-19-phase10-commission-settlement-implementation-plan.md
+```
+
+Production Verification:
+```text
+SUCCESS (383 automated tests passed; remote D1 migration 0009 applied and commission_settlements + commission_audit_events + indexes verified; live Worker /api/health 200, /api/commissions 401 unauthenticated, and live frontend serves loadCommissionsDashboardFromApi. Limitation: authenticated multi-role browser smoke was not exercised in this automated check.)
+```
 
 ---
 
-# 4. NEXT STEP — Phase 10 (Commission Settlement)
+# 3. CURRENT CHECKPOINT
+
+## FULL D1 MIGRATION COMPLETE — 2026-11-19
+
+**All 10 phases of the Cloudflare Worker + D1 migration are COMPLETE / MERGED / DEPLOYED / PRODUCTION VERIFIED.**
+- Production Worker: `wcat-sales-support` (`https://wcat-sales-support.deono111.workers.dev`), Version `9e6c851a-6702-45ab-aa88-60bd204465bb`.
+- Production D1: `wcat-sales-db`, migrations `0001`–`0009` applied and verified.
+- Full automated regression suite: **383 passed, 0 failed**.
+
+---
+
+# 4. NEXT STEP — Post-Migration Operations & Optional Enhancements
 
 Next Action:
-- Draft the bounded Phase 10 (**Commission Settlement**) design spec and implementation plan (reconciling PO commission rates, Phase 6 actual shipped MT, Phase 9 `PAID` eligibility, approval/settlement snapshots, and strict `EXTERNAL_SALES` / `MANAGER` / `ADMIN` RBAC).
+- Conduct an authenticated multi-role browser walkthrough across all 6 roles (`ADMIN`, `MANAGER`, `SALES_SUPPORT`, `EXPORT`, `EXTERNAL_SALES`, `PRODUCTION_WAREHOUSE`) on production.
+- Optional future enhancements (out of migration scope): migrate legacy dashboard overview widgets (`renderDashboard`) to D1 summary APIs, replace Tailwind CDN with a compiled CSS bundle, or add itemized bank-receipt / batch commission payout exports if requested by Finance.
 
 ---
 
@@ -636,6 +676,10 @@ Next Action:
 - [x] Phase 9 Payment Status — COMPLETE / MERGED / DEPLOYED / PRODUCTION VERIFIED
   - Merge commit: `28a9dcd8b6643758dc0d8b5ff4353cae9cbec74d`
   - Zero D1 migrations required (`0001`–`0008` preserved); Worker version `e2dc5942-161c-4cfb-ba36-383b714375f7`; `/api/health` (200), `/api/payments` (401 unauthenticated), and live frontend (`loadPaymentsDashboardFromApi`) verified; automated verification: 368 passed, 0 failed.
+- [x] Phase 10 Commission Settlement (Final Migration Phase) — COMPLETE / MERGED / DEPLOYED / PRODUCTION VERIFIED
+  - Merge commit: `4178c0c16456d4e8d506a933169f5d4fc92a27d7`
+  - Migration `0009_commission_settlement.sql` applied to production `wcat-sales-db`; `commission_settlements`, `commission_audit_events`, and all 3 indexes verified.
+  - Worker version `9e6c851a-6702-45ab-aa88-60bd204465bb`; `/api/health` (200), `/api/commissions` (401 unauthenticated), and live frontend (`loadCommissionsDashboardFromApi`) verified; automated verification: 383 passed, 0 failed.
 
 ---
 
@@ -657,6 +701,7 @@ Shipping / DI Integration
 Operations Calendar
 Logistics Partners
 Payment Status
+Commission Settlement
 ```
 
 Production truth must come from:
@@ -677,12 +722,23 @@ must not appear to save unless persistence is actually implemented.
 
 ---
 
-# 7. Recommended Next Development Order
+# 7. Migration Status Summary
 
-After Phase 9 (Payment Status) release:
+All planned core modules (Phases 1–10) are migrated to Cloudflare Workers + D1 (`0001`–`0009`), deployed, and verified in production:
 
 ```text
-1. Commission Settlement (Final Migration Phase)
+All core modules COMPLETE (Phases 1–10)
+- Auth & Sessions
+- Customer CRM & Owner Directory
+- External Sales & Users / Roles Admin
+- Product & Spec Master Data
+- Commercial & Shipment Control (Price Notes / Freight Quotes)
+- PO Management
+- Shipping / DI Integration
+- Operations Calendar
+- Logistics Partners & Reference Rates
+- Payment Status (Finance Dashboard)
+- Commission Settlement
 ```
 
 Continue using:
