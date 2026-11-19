@@ -351,3 +351,186 @@ test('filterPnCustomerDropdown filters pnCustomer select element based on select
     delete globalThis.document;
   }
 });
+
+test('frontend contains zero leftover mock standard/special prices or Apps Script pricing banner', () => {
+  assert.doesNotMatch(html, /STD-2026-001|STD-2026-004|SPR-2026-0012|PRD-005|PRD-007/);
+  assert.doesNotMatch(html, /when the Apps Script layer is connected/);
+});
+
+test('loadPricingFromApi hydrates state.standardPrices and state.specialPrices from /api/pricing', async () => {
+  const code = extractFunction('loadPricingFromApi()');
+  const mockState = { standardPrices: [], specialPrices: [], pricingLoaded: false };
+  let renders = 0;
+  globalThis.state = mockState;
+  globalThis.renderView = () => { renders += 1; };
+  globalThis.fetch = async (url) => {
+    assert.equal(url, '/api/pricing');
+    return {
+      ok: true,
+      async json() {
+        return {
+          status: 'SUCCESS',
+          data: {
+            standardPrices: [{ productId: 'PRD-001', productCode: 'THP65', hasActivePrice: true, id: 'STD-0001', pricePerMt: 190, fobUsdPerMt: 190, status: 'ACTIVE' }],
+            specialPrices: [{ id: 'SPR-0001', customerId: 'CUST-001', productId: 'PRD-001', approvedPriceUsd: 182, approvalStatus: 'APPROVED' }]
+          }
+        };
+      }
+    };
+  };
+
+  try {
+    await new Function(`return (${code.trim()});`)()();
+    assert.equal(renders, 1);
+    assert.equal(mockState.pricingLoaded, true);
+    assert.equal(mockState.standardPrices.length, 1);
+    assert.equal(mockState.specialPrices.length, 1);
+  } finally {
+    delete globalThis.state;
+    delete globalThis.renderView;
+    delete globalThis.fetch;
+  }
+});
+
+test('renderPricing lists active D1 products with Set/Edit actions and restricts History button to MANAGER and ADMIN', () => {
+  const renderPricing = new Function(`return (${extractFunction('renderPricing(container)').trim()});`)();
+  const pricingStatusBadge = new Function(`return (${extractFunction('pricingStatusBadge(status)').trim()});`)();
+  const canManagePricing = new Function(`return (${extractFunction('canManagePricing()').trim()});`)();
+
+  globalThis.pricingStatusBadge = pricingStatusBadge;
+  globalThis.canManagePricing = canManagePricing;
+  globalThis.canWriteFreightQuotes = () => false;
+  globalThis.getScopedCustomers = () => [];
+
+  const renderForRole = (role) => {
+    globalThis.state = {
+      currentUser: { role },
+      pricingTab: 'STANDARD',
+      products: [
+        { id: 'PRD-001', code: 'THP65', shortName: 'THP65', name: 'Tapioca Pellet 65%', status: 'ACTIVE' },
+        { id: 'PRD-002', code: 'THP70', shortName: 'THP70', name: 'Tapioca Pellet 70%', status: 'ACTIVE' }
+      ],
+      standardPrices: [
+        { productId: 'PRD-001', productCode: 'THP65', shortName: 'THP65', productName: 'Tapioca Pellet 65%', hasActivePrice: true, id: 'STD-0001', revisionNo: 2, pricePerMt: 190, fobUsdPerMt: 190, currency: 'USD', effectiveFrom: '2026-11-01', validUntil: '2026-12-31', status: 'ACTIVE' },
+        { productId: 'PRD-002', productCode: 'THP70', shortName: 'THP70', productName: 'Tapioca Pellet 70%', hasActivePrice: false, id: null, revisionNo: 0, pricePerMt: null, fobUsdPerMt: null, currency: 'USD', effectiveFrom: null, validUntil: null, status: 'NOT_SET' }
+      ],
+      specialPrices: [],
+      priceNotes: [],
+      freightQuotes: [],
+      adminUsers: []
+    };
+    const container = { innerHTML: '' };
+    renderPricing(container);
+    return container.innerHTML;
+  };
+
+  try {
+    for (const role of ['MANAGER', 'ADMIN']) {
+      const markup = renderForRole(role);
+      assert.match(markup, /Edit Standard Price/);
+      assert.match(markup, /Set Standard Price/);
+      assert.match(markup, /Not Set/);
+      assert.match(markup, /openProductPriceHistoryModal\('PRD-001'\)/);
+      assert.match(markup, /openProductPriceHistoryModal\('PRD-002'\)/);
+      assert.match(markup, />History</);
+    }
+
+    for (const role of ['SALES_SUPPORT', 'EXTERNAL_SALES']) {
+      const markup = renderForRole(role);
+      assert.match(markup, /USD 190\.00/);
+      assert.match(markup, /Not Set/);
+      assert.doesNotMatch(markup, /Set Standard Price|Edit Standard Price|openProductPriceHistoryModal/);
+    }
+  } finally {
+    delete globalThis.pricingStatusBadge;
+    delete globalThis.canManagePricing;
+    delete globalThis.canWriteFreightQuotes;
+    delete globalThis.getScopedCustomers;
+    delete globalThis.state;
+  }
+});
+
+test('saveStandardPrice and openProductPriceHistoryModal call D1 pricing endpoints and render history', async () => {
+  const saveStandardPrice = new Function(`return (${extractFunction('saveStandardPrice(productId)').trim()});`)();
+  const openProductPriceHistoryModal = new Function(`return (${extractFunction('openProductPriceHistoryModal(productId)').trim()});`)();
+  const canManagePricing = new Function(`return (${extractFunction('canManagePricing()').trim()});`)();
+  const escapePricingHtml = new Function(`return (${extractFunction('escapePricingHtml(value)').trim()});`)();
+
+  const fields = {
+    stdPriceValue: { value: '195.50' },
+    stdPriceCurrency: { value: 'USD' },
+    stdPriceEffective: { value: '2026-11-20' },
+    stdPriceValid: { value: '2026-12-31' },
+    stdPriceReason: { value: 'Market revision' },
+    stdPriceFormError: { textContent: '', classList: { add() {}, remove() {} } }
+  };
+
+  const calls = [];
+  let modalHtml = '';
+  let reloaded = 0;
+  let closed = 0;
+
+  globalThis.state = { currentUser: { role: 'MANAGER' } };
+  globalThis.canManagePricing = canManagePricing;
+  globalThis.escapePricingHtml = escapePricingHtml;
+  globalThis.document = { getElementById: (id) => fields[id] || null };
+  globalThis.openModal = (markup) => { modalHtml = markup; };
+  globalThis.closeModal = () => { closed += 1; };
+  globalThis.loadPricingFromApi = async () => { reloaded += 1; };
+  globalThis.fetch = async (url, options = {}) => {
+    calls.push({ url, method: options.method || 'GET', body: options.body ? JSON.parse(options.body) : null });
+    if (url === '/api/pricing/standard/PRD-001' && options.method === 'PUT') {
+      return { ok: true, status: 200, async json() { return { status: 'SUCCESS', data: { standardPrice: { id: 'STD-0002' } } }; } };
+    }
+    if (url === '/api/pricing/products/PRD-001/history') {
+      return {
+        ok: true,
+        status: 200,
+        async json() {
+          return {
+            status: 'SUCCESS',
+            data: {
+              product: { id: 'PRD-001', code: 'THP65', shortName: 'THP65', name: 'Tapioca Pellet 65%' },
+              standardPriceHistory: [
+                { id: 'STD-0002', revisionNo: 2, previousPricePerMt: 185, pricePerMt: 195.5, currency: 'USD', effectiveFrom: '2026-11-20', validUntil: '2026-12-31', status: 'ACTIVE', changedByName: 'Manager User', changedAt: '2026-11-20 00:10:00', changeReason: 'Market revision' }
+              ],
+              approvedSpecialPriceHistory: [
+                { id: 'SPR-0001', customerName: 'Meelunie B.V.', approvedPriceUsd: 188, validUntil: '2026-12-15', reviewedByName: 'Manager User', reason: 'Volume deal' }
+              ]
+            }
+          };
+        }
+      };
+    }
+    throw new Error(`Unexpected fetch: ${options.method} ${url}`);
+  };
+
+  try {
+    await saveStandardPrice('PRD-001');
+    assert.equal(calls[0].url, '/api/pricing/standard/PRD-001');
+    assert.equal(calls[0].method, 'PUT');
+    assert.equal(calls[0].body.pricePerMt, 195.5);
+    assert.equal(calls[0].body.changeReason, 'Market revision');
+    assert.equal(reloaded, 1);
+    assert.equal(closed, 1);
+
+    await openProductPriceHistoryModal('PRD-001');
+    assert.equal(calls[1].url, '/api/pricing/products/PRD-001/history');
+    assert.match(modalHtml, /Rev\.2/);
+    assert.match(modalHtml, /185\.00/);
+    assert.match(modalHtml, /195\.50/);
+    assert.match(modalHtml, /\+10\.50/);
+    assert.match(modalHtml, /Manager User/);
+    assert.match(modalHtml, /Market revision/);
+    assert.match(modalHtml, /Meelunie B\.V\./);
+  } finally {
+    delete globalThis.state;
+    delete globalThis.canManagePricing;
+    delete globalThis.escapePricingHtml;
+    delete globalThis.document;
+    delete globalThis.openModal;
+    delete globalThis.closeModal;
+    delete globalThis.loadPricingFromApi;
+    delete globalThis.fetch;
+  }
+});
