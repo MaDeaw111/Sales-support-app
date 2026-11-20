@@ -2928,3 +2928,92 @@ test('saveCategoryMaster and saveFormMaster use POST for create and PUT for edit
     delete globalThis.fetch;
   }
 });
+
+test('PO Management removes hardcoded mock POs and loads live D1 POs from GET /api/pos', async () => {
+  const stateBlockStart = html.indexOf('const state = {');
+  const stateBlockEnd = html.indexOf('shipments: [', stateBlockStart);
+  assert.ok(stateBlockStart >= 0 && stateBlockEnd > stateBlockStart);
+  const stateInitPrefix = html.slice(stateBlockStart, stateBlockEnd);
+
+  assert.match(stateInitPrefix, /pos:\s*\[\s*\]/);
+  assert.match(stateInitPrefix, /customers:\s*\[\s*\]/);
+  assert.doesNotMatch(stateInitPrefix, /PO-2026-001|PO-2026-002|PO-2026-003|PO-MEEL-2601|PO-MEEL-2608|PO-LKO-2604/);
+  assert.doesNotMatch(stateInitPrefix, /CUST-001|CUST-002/);
+
+  const bootstrapCode = functionBlock('startAuthenticatedApp()', 'openChangePasswordModal');
+  assert.match(bootstrapCode, /loadPOsFromApi\(\)/);
+
+  const changeViewCode = functionBlock('changeView(id)', 'goToPODetail');
+  assert.match(changeViewCode, /po_engine[\s\S]*?loadPOsFromApi\(\)/);
+
+  const loadPOsCode = extractFunction('loadPOsFromApi()');
+  const renderListCode = extractFunction('renderRealPOListTable()');
+  const loadPOsFn = new Function(`return (${loadPOsCode.trim()});`)();
+  const renderListFn = new Function(`return (${renderListCode.trim()});`)();
+
+  let renderCount = 0;
+  globalThis.state = {
+    pos: [],
+    posLoaded: false,
+    posLoading: false,
+    posError: '',
+    poFilters: { search: '', customerId: 'ALL', status: 'ALL' },
+    customers: [{ id: 'CUST-0001', code: 'C-C-001', name: 'MEELUNIE B.V.', ownershipType: 'ASSIGNED_SALES' }],
+    products: [{ id: 'PRD-002', code: 'WCAT_PRO_001', shortName: 'TRP_45', name: 'Tapioca Residue Pellet' }],
+    currentUser: { id: 'USR-0001', role: 'ADMIN' }
+  };
+  globalThis.getScopedCustomers = () => globalThis.state.customers;
+  globalThis.renderView = () => { renderCount++; };
+
+  try {
+    // 1. Live D1 returns empty array -> clean empty state, no mock POs
+    globalThis.fetch = async (url) => {
+      assert.equal(url, '/api/pos');
+      return { ok: true, async json() { return { status: 'SUCCESS', data: { pos: [] } }; } };
+    };
+    await loadPOsFn();
+    assert.equal(globalThis.state.posLoaded, true);
+    assert.equal(globalThis.state.posLoading, false);
+    assert.equal(globalThis.state.pos.length, 0);
+    assert.equal(renderCount, 1);
+
+    const emptyHtml = renderListFn();
+    assert.match(emptyHtml, /No POs yet/);
+    assert.doesNotMatch(emptyHtml, /PO-2026-001|PO-2026-002|PO-2026-003|CUST-001|CUST-002/);
+
+    // 2. Live D1 returns real PO -> renders live D1 PO cleanly and ignores legacy flat mock objects
+    globalThis.fetch = async () => ({
+      ok: true,
+      async json() {
+        return {
+          status: 'SUCCESS',
+          data: {
+            pos: [{
+              header: { po_id: 'PO-2026-010', customer_id: 'CUST-0001', header_status: 'OPEN' },
+              revisions: [{
+                revision_id: 'REV-1',
+                revision_no: 1,
+                status: 'ACTIVE',
+                customer_po_no: 'MEEL-LIVE-01',
+                po_date: '2026-09-01',
+                lines: [{ product_id: 'PRD-002', contract_qty_mt: 540 }]
+              }]
+            }]
+          }
+        };
+      }
+    });
+    await loadPOsFn();
+    const liveHtml = renderListFn();
+    assert.match(liveHtml, /PO-2026-010/);
+    assert.match(liveHtml, /MEEL-LIVE-01/);
+    assert.match(liveHtml, /MEELUNIE B\.V\./);
+    assert.match(liveHtml, /TRP_45/);
+    assert.match(liveHtml, /540 MT/);
+  } finally {
+    delete globalThis.state;
+    delete globalThis.getScopedCustomers;
+    delete globalThis.renderView;
+    delete globalThis.fetch;
+  }
+});
