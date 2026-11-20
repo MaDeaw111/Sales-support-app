@@ -1714,7 +1714,24 @@
                 'docs.countdownSettled': 'ชำระแล้ว / แนบสลิปเรียบร้อย',
                 'docs.countdownWaitingDocs': 'รออัปโหลด All Ship Doc เพื่อเริ่มนับ 30 วัน',
                 'docs.allShipDocDate': 'อัปโหลด All Ship Doc: {date}',
-                'docs.slipsCount': '{count} สลิป'
+                'docs.slipsCount': '{count} สลิป',
+                'po.attachTitle': 'แนบไฟล์ใบ PO (Attach Customer PO)',
+                'po.attachSub': 'อัปโหลดอัตโนมัติทันทีหลังสร้างสัญญา PO (ไม่บังคับ)',
+                'po.attachChooseBtn': 'เลือกไฟล์ PO',
+                'po.attachClearAll': 'ล้างทั้งหมด',
+                'po.attachRemoveFile': 'ลบไฟล์',
+                'po.attachNoneSelected': 'ยังไม่ได้เลือกไฟล์แนบ (สามารถแนบภายหลังในหน้า PO Detail ได้)',
+                'po.attachReviewLabel': 'ไฟล์แนบ PO',
+                'po.attachReviewNone': 'ไม่มีไฟล์แนบ',
+                'po.attachErrInvalidType': 'ไฟล์ "{name}" ไม่รองรับ (รองรับเฉพาะ PDF, JPG, PNG, WEBP)',
+                'po.attachErrTooLarge': 'ไฟล์ "{name}" มีขนาดเกิน 10 MB',
+                'po.attachErrEmpty': 'ไฟล์ "{name}" ไม่มีข้อมูล (0 bytes)',
+                'po.creatingStatus': 'กำลังสร้าง PO...',
+                'po.uploadingAttachStatus': 'กำลังอัปโหลดไฟล์แนบ PO...',
+                'po.errCreateFailed': 'ไม่สามารถสร้างสัญญา PO ได้',
+                'po.createSuccess': 'สร้างสัญญา PO {poId} เรียบร้อยแล้ว',
+                'po.createSuccessWithDocs': 'สร้างสัญญา PO {poId} และอัปโหลดไฟล์แนบ {count} ไฟล์เรียบร้อยแล้ว',
+                'po.createSavedUploadFailed': 'บันทึก PO {poId} เรียบร้อยแล้ว แต่อัปโหลดไฟล์แนบไม่สำเร็จ ({reason}) กรุณาลองอัปโหลดอีกครั้งในหน้า PO Detail'
             },
             EN: {
                 // Common
@@ -2887,7 +2904,24 @@
                 'docs.countdownSettled': 'Cleared (Paid / Slip Attached)',
                 'docs.countdownWaitingDocs': 'Starts once All Ship Doc is uploaded',
                 'docs.allShipDocDate': 'All Ship Doc uploaded: {date}',
-                'docs.slipsCount': '{count} slip(s)'
+                'docs.slipsCount': '{count} slip(s)',
+                'po.attachTitle': 'Attach Customer PO File(s)',
+                'po.attachSub': 'Uploaded automatically right after PO creation (optional)',
+                'po.attachChooseBtn': 'Choose PO File(s)',
+                'po.attachClearAll': 'Clear all',
+                'po.attachRemoveFile': 'Remove',
+                'po.attachNoneSelected': 'No file selected (you can also attach later in PO Detail)',
+                'po.attachReviewLabel': 'Attached PO File(s)',
+                'po.attachReviewNone': 'None',
+                'po.attachErrInvalidType': 'Unsupported file type for "{name}". Allowed: PDF, JPG, PNG, WEBP.',
+                'po.attachErrTooLarge': 'File "{name}" exceeds the 10 MB size limit.',
+                'po.attachErrEmpty': 'File "{name}" is empty (0 bytes).',
+                'po.creatingStatus': 'Creating PO...',
+                'po.uploadingAttachStatus': 'Uploading PO attachment(s)...',
+                'po.errCreateFailed': 'Unable to create PO.',
+                'po.createSuccess': 'PO {poId} created successfully.',
+                'po.createSuccessWithDocs': 'PO {poId} created and {count} attachment(s) uploaded successfully.',
+                'po.createSavedUploadFailed': 'PO {poId} was saved, but uploading the attachment(s) failed ({reason}). You can retry uploading the file(s) in PO Detail.'
             }
         };
 
@@ -7099,6 +7133,13 @@
                         </div>
                     </div>
 
+                    ${state.poNotice?.message ? `
+                        <div data-po-notice="${state.poNotice.tone || 'success'}" class="rounded-xl border px-4 py-3 text-xs font-semibold flex items-start justify-between gap-3 ${state.poNotice.tone === 'warning' ? 'bg-amber-50 border-amber-300 text-amber-900' : 'bg-emerald-50 border-emerald-200 text-emerald-900'}">
+                            <span>${typeof escapeDocHtml === 'function' ? escapeDocHtml(state.poNotice.message) : state.poNotice.message}</span>
+                            <button type="button" onclick="state.poNotice=null; renderView();" class="text-slate-500 hover:text-slate-800 font-bold leading-none">&times;</button>
+                        </div>
+                    ` : ''}
+
                     ${selectedPo ? renderRealPODetailCard(selectedPo) : renderRealPOListTable()}
                 </div>
             `;
@@ -7326,6 +7367,7 @@
 
         function openNewPOModal() {
             const tr = (k, fb, p) => (typeof t === 'function' ? t(k, p) : fb);
+            resetNewPOPendingFiles();
             const autoPoId = getNextPOCode();
             const todayStr = new Date().toISOString().split('T')[0];
 
@@ -7508,6 +7550,31 @@
                             </div>
                         </div>
 
+                        <!-- Attach Customer PO File(s) (R2 Upload) -->
+                        <div data-section="new-po-attachments" class="rounded-xl border border-blue-200 bg-blue-50/40 p-3 space-y-2">
+                            <div class="flex flex-wrap items-center justify-between gap-2">
+                                <div>
+                                    <div class="font-bold text-blue-950 flex items-center space-x-1.5">
+                                        <i data-lucide="paperclip" class="w-4 h-4 text-blue-600"></i>
+                                        <span>${tr('po.attachTitle', 'แนบไฟล์ใบ PO (Attach Customer PO)')}</span>
+                                    </div>
+                                    <div class="text-[10px] text-blue-700 mt-0.5">${tr('po.attachSub', 'อัปโหลดอัตโนมัติทันทีหลังสร้างสัญญา PO (ไม่บังคับ)')}</div>
+                                </div>
+                                <div class="flex items-center gap-2">
+                                    <label class="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-md border border-blue-300 bg-white hover:bg-blue-50 text-blue-700 text-[11px] font-bold cursor-pointer shadow-sm">
+                                        <i data-lucide="upload" class="w-3.5 h-3.5"></i>
+                                        <span>${tr('po.attachChooseBtn', 'เลือกไฟล์ PO')}</span>
+                                        <input id="newPoAttachmentsInput" type="file" multiple accept=".pdf,application/pdf,image/jpeg,image/png,image/webp" class="hidden" onchange="handleNewPOFilesSelected(this)">
+                                    </label>
+                                </div>
+                            </div>
+                            <div id="newPoAttachError" class="hidden rounded-lg border border-rose-200 bg-rose-50 px-2.5 py-1.5 text-[11px] font-bold text-rose-700"></div>
+                            <div id="newPoAttachSelectedList" class="space-y-1.5">
+                                <div class="text-[11px] text-slate-500 italic">${tr('po.attachNoneSelected', 'ยังไม่ได้เลือกไฟล์แนบ (สามารถแนบภายหลังในหน้า PO Detail ได้)')}</div>
+                            </div>
+                            <div class="text-[10px] text-slate-500">${tr('docs.uploadHint', 'รองรับ PDF, JPG, PNG, WEBP (สูงสุด 10 MB ต่อไฟล์)')}</div>
+                        </div>
+
                         <div class="rounded-xl border border-slate-300 bg-slate-50 p-3">
                             <div class="flex items-center justify-between mb-2">
                                 <div class="font-black text-slate-900">${tr('po.reviewTitle', 'Review PO')}</div>
@@ -7516,11 +7583,13 @@
                             <div id="newPoReviewBox" class="text-[11px] text-slate-700">${tr('po.reviewEmpty', 'กรอกข้อมูล PO เพื่อดูสรุป')}</div>
                         </div>
 
+                        <div id="newPoSubmitError" class="hidden rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-bold text-rose-700"></div>
+
                         <div class="pt-4 flex justify-end space-x-2 border-t border-slate-200">
                             <button type="button" onclick="closeModal()" class="px-4 py-2 border rounded font-semibold text-slate-600 hover:bg-slate-50">${tr('common.cancel', 'ยกเลิก')}</button>
-                            <button type="submit" class="px-4 py-2 bg-blue-600 text-white rounded font-semibold hover:bg-blue-700 shadow-sm flex items-center space-x-1.5">
+                            <button id="newPoSubmitBtn" type="submit" class="px-4 py-2 bg-blue-600 text-white rounded font-semibold hover:bg-blue-700 shadow-sm flex items-center space-x-1.5 disabled:opacity-50 disabled:cursor-not-allowed">
                                 <i data-lucide="plus-circle" class="w-4 h-4"></i>
-                                <span>${tr('po.createSubmit', 'สร้างสัญญา PO')}</span>
+                                <span id="newPoSubmitLabel">${tr('po.createSubmit', 'สร้างสัญญา PO')}</span>
                             </button>
                         </div>
                     </form>
@@ -7593,6 +7662,8 @@
         }
 
         function renderNewPOReview() {
+            const tr = (k, fb, p) => (typeof t === 'function' ? t(k, p) : (p ? String(fb).replace(/\{(\w+)\}/g, (_, m) => p[m] ?? '') : fb));
+            const esc = (v) => (typeof escapeDocHtml === 'function' ? escapeDocHtml(v) : String(v ?? ''));
             const customerId = document.getElementById('newPoCustomerId')?.value || '';
             const productId = document.getElementById('newPoProductId')?.value || '';
             const customer = (state.customers || []).find(c => c.id === customerId);
@@ -7611,19 +7682,24 @@
             const perLoad = parseFloat(document.getElementById('newPoTotalWeightMt')?.value) || 0;
             const start = document.getElementById('newPoDeliveryStart')?.value || '';
             const end = document.getElementById('newPoDeliveryEnd')?.value || '';
+            const pendingFiles = Array.isArray(state.newPoPendingFiles) ? state.newPoPendingFiles : [];
+            const attachedSummary = pendingFiles.length > 0
+                ? pendingFiles.map((f) => `${esc(f.name)} (${typeof formatAttachmentSize === 'function' ? formatAttachmentSize(f.size) : `${Number(f.size || 0)} B`})`).join(', ')
+                : esc(tr('po.attachReviewNone', 'ไม่มีไฟล์แนบ'));
             return `
                 <div class="grid grid-cols-2 gap-x-4 gap-y-1">
-                    <span>Customer</span><strong class="text-right">${customer?.name || '-'}</strong>
-                    <span>Product</span><strong class="text-right">${product?.shortName || product?.name || '-'}</strong>
-                    <span>Delivery Period</span><strong class="text-right">${formatDeliveryPeriod(start, end)}</strong>
+                    <span>Customer</span><strong class="text-right">${esc(customer?.name || '-')}</strong>
+                    <span>Product</span><strong class="text-right">${esc(product?.shortName || product?.name || '-')}</strong>
+                    <span>Delivery Period</span><strong class="text-right">${esc(formatDeliveryPeriod(start, end))}</strong>
                     <span>Contract</span><strong class="text-right">${qty.toFixed(3)} MT ±${tol}%</strong>
                     <span>Maximum Allowed</span><strong class="text-right">${max.toFixed(3)} MT</strong>
                     <span>Price</span><strong class="text-right">USD ${price.toFixed(2)} / MT</strong>
-                    <span>Price Source</span><strong class="text-right">${priceSuggestion.source}${priceSuggestion.reference ? ' · '+priceSuggestion.reference : ''}</strong>
+                    <span>Price Source</span><strong class="text-right">${esc(priceSuggestion.source)}${priceSuggestion.reference ? ' · ' + esc(priceSuggestion.reference) : ''}</strong>
                     <span>Price Approval</span><strong class="text-right ${priceApproval === 'NEEDS_APPROVAL' ? 'text-amber-700' : 'text-emerald-700'}">${priceApproval}</strong>
-                    <span>Shipment</span><strong class="text-right">${shipmentType}${containerType !== '-' ? ' · '+containerType : ''}</strong>
-                    <span>Packaging</span><strong class="text-right">${packaging}${bagKg ? ` · ${bagKg} kg` : ''}${units ? ` · ${units} units` : ''}</strong>
+                    <span>Shipment</span><strong class="text-right">${esc(shipmentType)}${containerType !== '-' ? ' · ' + esc(containerType) : ''}</strong>
+                    <span>Packaging</span><strong class="text-right">${esc(packaging)}${bagKg ? ` · ${bagKg} kg` : ''}${units ? ` · ${units} units` : ''}</strong>
                     <span>MT / Load</span><strong class="text-right">${perLoad.toFixed(3)} MT</strong>
+                    <span>${esc(tr('po.attachReviewLabel', 'ไฟล์แนบ PO'))}</span><strong data-review-po-attachments class="text-right ${pendingFiles.length > 0 ? 'text-blue-700' : 'text-slate-400 font-normal'}">${attachedSummary}</strong>
                 </div>`;
         }
 
@@ -7659,7 +7735,257 @@
             updateNewPOReview();
         }
 
-        // Obsolete mock PO functions removed.
+        const NEW_PO_ALLOWED_MIME_TYPES = ['application/pdf', 'image/jpeg', 'image/png', 'image/webp'];
+        const NEW_PO_ALLOWED_EXT_REGEX = /\.(pdf|jpe?g|png|webp)$/i;
+        const NEW_PO_MAX_FILE_BYTES = 10 * 1024 * 1024;
+
+        function resetNewPOPendingFiles() {
+            state.newPoPendingFiles = [];
+            const input = typeof document !== 'undefined' ? document.getElementById('newPoAttachmentsInput') : null;
+            if (input) input.value = '';
+            const errEl = typeof document !== 'undefined' ? document.getElementById('newPoAttachError') : null;
+            if (errEl) {
+                errEl.textContent = '';
+                errEl.classList.add('hidden');
+            }
+            if (typeof document !== 'undefined' && document.getElementById('newPoAttachSelectedList')) {
+                renderNewPOSelectedFilesList();
+            }
+        }
+
+        function validateNewPOAttachmentFile(file) {
+            const tr = (k, fb, p) => (typeof t === 'function' ? t(k, p) : (p ? String(fb).replace(/\{(\w+)\}/g, (_, m) => p[m] ?? '') : fb));
+            const name = String(file?.name || 'file');
+            const mime = String(file?.type || '').toLowerCase().trim();
+            const size = Number(file?.size ?? 0);
+            const mimeValid = mime ? NEW_PO_ALLOWED_MIME_TYPES.includes(mime) : NEW_PO_ALLOWED_EXT_REGEX.test(name);
+            if (!mimeValid) {
+                return { valid: false, message: tr('po.attachErrInvalidType', 'Unsupported file type for "{name}". Allowed: PDF, JPG, PNG, WEBP.', { name }) };
+            }
+            if (size <= 0) {
+                return { valid: false, message: tr('po.attachErrEmpty', 'File "{name}" is empty (0 bytes).', { name }) };
+            }
+            if (size > NEW_PO_MAX_FILE_BYTES) {
+                return { valid: false, message: tr('po.attachErrTooLarge', 'File "{name}" exceeds the 10 MB size limit.', { name }) };
+            }
+            return { valid: true, message: '' };
+        }
+
+        function renderNewPOSelectedFilesList() {
+            const tr = (k, fb, p) => (typeof t === 'function' ? t(k, p) : (p ? String(fb).replace(/\{(\w+)\}/g, (_, m) => p[m] ?? '') : fb));
+            const esc = (v) => (typeof escapeDocHtml === 'function' ? escapeDocHtml(v) : String(v ?? ''));
+            const container = typeof document !== 'undefined' ? document.getElementById('newPoAttachSelectedList') : null;
+            if (!container) return;
+            const files = Array.isArray(state.newPoPendingFiles) ? state.newPoPendingFiles : [];
+            if (files.length === 0) {
+                container.innerHTML = `<div class="text-[11px] text-slate-500 italic">${esc(tr('po.attachNoneSelected', 'ยังไม่ได้เลือกไฟล์แนบ (สามารถแนบภายหลังในหน้า PO Detail ได้)'))}</div>`;
+                return;
+            }
+            const badges = files.map((file, idx) => {
+                const isPdf = String(file.type || '').toLowerCase() === 'application/pdf' || /\.pdf$/i.test(String(file.name || ''));
+                const sizeText = typeof formatAttachmentSize === 'function' ? formatAttachmentSize(file.size) : `${Number(file.size || 0)} B`;
+                return `<div data-pending-po-file="${idx}" class="flex items-center justify-between gap-2 rounded-lg border border-blue-200 bg-white px-2.5 py-1.5 text-[11px]">
+                    <div class="min-w-0 flex items-center gap-2">
+                        <span class="shrink-0 px-1.5 py-0.5 rounded text-[9px] font-black ${isPdf ? 'bg-rose-50 text-rose-700 border border-rose-200' : 'bg-blue-50 text-blue-700 border border-blue-200'}">${isPdf ? 'PDF' : 'IMG'}</span>
+                        <span class="font-bold text-slate-800 truncate">${esc(file.name)}</span>
+                        <span class="shrink-0 px-1.5 py-0.5 rounded-full bg-slate-100 text-slate-600 text-[10px] font-semibold">${esc(sizeText)}</span>
+                    </div>
+                    <button type="button" onclick="removeNewPOPendingFile(${idx})" class="shrink-0 px-2 py-0.5 rounded border border-rose-200 text-rose-600 hover:bg-rose-50 text-[10px] font-bold">${esc(tr('po.attachRemoveFile', 'ลบไฟล์'))}</button>
+                </div>`;
+            }).join('');
+            const clearRow = `<div class="flex justify-end pt-0.5"><button type="button" onclick="clearNewPOPendingFiles()" class="text-[10px] font-bold text-slate-500 hover:text-rose-600 underline">${esc(tr('po.attachClearAll', 'ล้างทั้งหมด'))}</button></div>`;
+            container.innerHTML = badges + clearRow;
+        }
+
+        function handleNewPOFilesSelected(inputEl) {
+            const incoming = inputEl && inputEl.files ? Array.from(inputEl.files) : [];
+            const errEl = typeof document !== 'undefined' ? document.getElementById('newPoAttachError') : null;
+            if (!Array.isArray(state.newPoPendingFiles)) state.newPoPendingFiles = [];
+            const errors = [];
+            for (const file of incoming) {
+                const check = validateNewPOAttachmentFile(file);
+                if (!check.valid) {
+                    errors.push(check.message);
+                    continue;
+                }
+                const dup = state.newPoPendingFiles.some((existing) =>
+                    existing.name === file.name && Number(existing.size) === Number(file.size) && existing.lastModified === file.lastModified
+                );
+                if (!dup) state.newPoPendingFiles.push(file);
+            }
+            if (errEl) {
+                if (errors.length > 0) {
+                    errEl.textContent = errors.join(' ');
+                    errEl.classList.remove('hidden');
+                } else {
+                    errEl.textContent = '';
+                    errEl.classList.add('hidden');
+                }
+            }
+            if (inputEl) inputEl.value = '';
+            renderNewPOSelectedFilesList();
+            if (typeof updateNewPOReview === 'function') updateNewPOReview();
+        }
+
+        function removeNewPOPendingFile(index) {
+            if (!Array.isArray(state.newPoPendingFiles)) state.newPoPendingFiles = [];
+            if (index >= 0 && index < state.newPoPendingFiles.length) {
+                state.newPoPendingFiles.splice(index, 1);
+            }
+            renderNewPOSelectedFilesList();
+            if (typeof updateNewPOReview === 'function') updateNewPOReview();
+        }
+
+        function clearNewPOPendingFiles() {
+            resetNewPOPendingFiles();
+            if (typeof updateNewPOReview === 'function') updateNewPOReview();
+        }
+
+        function handleNewShipmentTypeChange(shipmentType) {
+            const wrapper = typeof document !== 'undefined' ? document.getElementById('newContainerTypeWrapper') : null;
+            const pkgSelect = typeof document !== 'undefined' ? document.getElementById('newPoPackagingSelect') : null;
+            if (wrapper) {
+                if (shipmentType === 'Container') wrapper.classList.remove('hidden');
+                else wrapper.classList.add('hidden');
+            }
+            if ((shipmentType === 'Bulk Vessel' || shipmentType === 'Truck') && pkgSelect) {
+                pkgSelect.value = 'NONE';
+                if (typeof handleNewPackagingSelectChange === 'function') handleNewPackagingSelectChange('NONE');
+            }
+        }
+
+        async function handleNewPOSubmit(event, autoPoId) {
+            if (event && typeof event.preventDefault === 'function') event.preventDefault();
+            const tr = (k, fb, p) => (typeof t === 'function' ? t(k, p) : (p ? String(fb).replace(/\{(\w+)\}/g, (_, m) => p[m] ?? '') : fb));
+            const errEl = typeof document !== 'undefined' ? document.getElementById('newPoSubmitError') : null;
+            const submitBtn = typeof document !== 'undefined' ? document.getElementById('newPoSubmitBtn') : null;
+            const submitLabel = typeof document !== 'undefined' ? document.getElementById('newPoSubmitLabel') : null;
+
+            const showSubmitError = (msg) => {
+                if (errEl) {
+                    errEl.textContent = msg;
+                    errEl.classList.remove('hidden');
+                } else if (typeof alert === 'function') {
+                    alert(msg);
+                }
+            };
+            if (errEl) {
+                errEl.textContent = '';
+                errEl.classList.add('hidden');
+            }
+
+            const customerId = String(document.getElementById('newPoCustomerId')?.value || '').trim();
+            const customerPoNo = String(document.getElementById('newPoNo')?.value || '').trim();
+            const poDate = String(document.getElementById('newPoDate')?.value || '').trim();
+            const deliveryStart = String(document.getElementById('newPoDeliveryStart')?.value || '').trim();
+            const deliveryEnd = String(document.getElementById('newPoDeliveryEnd')?.value || '').trim();
+            const incoterm = String(document.getElementById('newPoIncoterm')?.value || 'FOB').trim();
+            const destination = String(document.getElementById('newPoPort')?.value || '').trim();
+
+            const deliveryCheck = validateNewPODeliveryPeriod(deliveryStart, deliveryEnd);
+            if (!deliveryCheck.valid) {
+                showSubmitError(deliveryCheck.message);
+                return { ok: false, error: deliveryCheck.message };
+            }
+            if (!customerId || !customerPoNo) {
+                const msg = tr('po.errCreateFailed', 'Unable to create PO.');
+                showSubmitError(msg);
+                return { ok: false, error: msg };
+            }
+
+            const pendingFiles = Array.isArray(state.newPoPendingFiles) ? [...state.newPoPendingFiles] : [];
+            const originalLabel = submitLabel ? submitLabel.textContent : tr('po.createSubmit', 'สร้างสัญญา PO');
+            if (submitBtn) submitBtn.disabled = true;
+            if (submitLabel) submitLabel.textContent = tr('po.creatingStatus', 'กำลังสร้าง PO...');
+
+            let createdPoId = '';
+            try {
+                const createRes = await fetch('/api/pos', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        customerId,
+                        customerPoNo,
+                        poDate,
+                        currency: 'USD',
+                        incoterm,
+                        destination: destination || null,
+                        deliveryStart,
+                        deliveryEnd,
+                        validUntil: deliveryEnd || poDate
+                    })
+                });
+                const createBody = await createRes.json().catch(() => null);
+                if (!createRes.ok || createBody?.status !== 'SUCCESS') {
+                    const msg = createBody?.message || tr('po.errCreateFailed', 'Unable to create PO.');
+                    showSubmitError(msg);
+                    if (submitBtn) submitBtn.disabled = false;
+                    if (submitLabel) submitLabel.textContent = originalLabel;
+                    return { ok: false, error: msg };
+                }
+                const createdPo = createBody?.data?.po || createBody?.data || {};
+                createdPoId = String(createdPo?.id || createdPo?.po_id || createdPo?.header?.po_id || autoPoId || '').trim();
+            } catch (err) {
+                const msg = err?.message || tr('po.errCreateFailed', 'Unable to create PO.');
+                showSubmitError(msg);
+                if (submitBtn) submitBtn.disabled = false;
+                if (submitLabel) submitLabel.textContent = originalLabel;
+                return { ok: false, error: msg };
+            }
+
+            let uploadError = null;
+            if (pendingFiles.length > 0 && createdPoId) {
+                if (submitLabel) submitLabel.textContent = tr('po.uploadingAttachStatus', 'กำลังอัปโหลดไฟล์แนบ PO...');
+                try {
+                    const formData = new FormData();
+                    formData.append('entityType', 'PO');
+                    formData.append('entityId', createdPoId);
+                    formData.append('docCategory', 'PO');
+                    pendingFiles.forEach((f) => formData.append('files', f));
+                    const uploadRes = await fetch('/api/documents/upload', {
+                        method: 'POST',
+                        body: formData
+                    });
+                    const uploadBody = await uploadRes.json().catch(() => null);
+                    if (!uploadRes.ok || uploadBody?.status !== 'SUCCESS') {
+                        uploadError = uploadBody?.message || tr('docs.errUploadFailed', 'Failed to upload document.');
+                    } else if (typeof ensureDocumentAttachmentsCache === 'function' && typeof getDocumentCacheKey === 'function') {
+                        const cache = ensureDocumentAttachmentsCache();
+                        cache[getDocumentCacheKey('PO', createdPoId)] = {
+                            loading: false,
+                            loaded: true,
+                            error: null,
+                            documents: Array.isArray(uploadBody?.data?.documents) ? uploadBody.data.documents : []
+                        };
+                    }
+                } catch (err) {
+                    uploadError = err?.message || tr('docs.errUploadFailed', 'Failed to upload document.');
+                }
+            }
+
+            resetNewPOPendingFiles();
+            if (typeof closeModal === 'function') closeModal();
+
+            if (uploadError) {
+                const warnMsg = tr('po.createSavedUploadFailed', 'PO {poId} was saved, but uploading the attachment(s) failed ({reason}). You can retry uploading the file(s) in PO Detail.', {
+                    poId: createdPoId,
+                    reason: uploadError
+                });
+                state.poNotice = { tone: 'warning', message: warnMsg };
+                if (typeof loadPOsFromApi === 'function') await loadPOsFromApi();
+                if (typeof alert === 'function') alert(warnMsg);
+                return { ok: true, poId: createdPoId, uploaded: false, uploadError };
+            }
+
+            state.poNotice = {
+                tone: 'success',
+                message: pendingFiles.length > 0
+                    ? tr('po.createSuccessWithDocs', 'PO {poId} created and {count} attachment(s) uploaded successfully.', { poId: createdPoId, count: pendingFiles.length })
+                    : tr('po.createSuccess', 'PO {poId} created successfully.', { poId: createdPoId })
+            };
+            if (typeof loadPOsFromApi === 'function') await loadPOsFromApi();
+            return { ok: true, poId: createdPoId, uploaded: pendingFiles.length > 0 };
+        }
 
         function handleNewPackagingSelectChange(val) {
             const customInput = document.getElementById('newPoPackagingCustom');
@@ -15848,7 +16174,11 @@
             document.getElementById('modalBackdrop')?.classList.remove('hidden');
             lucide.createIcons();
         }
-        function closeModal() { document.getElementById('modalBackdrop').classList.add('hidden'); }
+        function closeModal() {
+            if (typeof resetNewPOPendingFiles === 'function') resetNewPOPendingFiles();
+            const backdrop = document.getElementById('modalBackdrop');
+            if (backdrop) backdrop.classList.add('hidden');
+        }
         
         // Obsolete legacy SEED_ALL_MASTER_DATA gateway handler removed.
 

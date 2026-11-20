@@ -339,3 +339,320 @@ test('loadDocumentsForEntity and deleteDocumentAttachment call backend document 
   assert.equal(calls[1].url, '/api/documents/DOC-9');
   assert.equal(calls[1].method, 'DELETE');
 });
+
+function createCreatePoModalHarness(options = {}) {
+  const storage = new Map(Object.entries({ wcat_ui_lang: options.lang || 'TH' }));
+  const localStorage = {
+    getItem: (k) => (storage.has(k) ? storage.get(k) : null),
+    setItem: (k, v) => storage.set(k, String(v)),
+    removeItem: (k) => storage.delete(k)
+  };
+  const makeEl = (id, init = {}) => {
+    const classes = new Set((init.className || '').split(/\s+/).filter(Boolean));
+    return {
+      id,
+      value: init.value ?? '',
+      innerHTML: init.innerHTML ?? '',
+      textContent: init.textContent ?? '',
+      disabled: false,
+      files: init.files || [],
+      classList: {
+        add: (...c) => c.forEach((x) => classes.add(x)),
+        remove: (...c) => c.forEach((x) => classes.delete(x)),
+        contains: (x) => classes.has(x)
+      }
+    };
+  };
+  const elements = new Map([
+    ['modalBackdrop', makeEl('modalBackdrop')],
+    ['newPoCustomerId', makeEl('newPoCustomerId', { value: 'C1' })],
+    ['newPoProductId', makeEl('newPoProductId', { value: 'P1' })],
+    ['newPoNo', makeEl('newPoNo', { value: 'CUST-PO-9001' })],
+    ['newPoDate', makeEl('newPoDate', { value: '2026-11-20' })],
+    ['newPoDeliveryStart', makeEl('newPoDeliveryStart', { value: '2026-12-01' })],
+    ['newPoDeliveryEnd', makeEl('newPoDeliveryEnd', { value: '2026-12-31' })],
+    ['newPoQty', makeEl('newPoQty', { value: '100' })],
+    ['newPoTolerancePct', makeEl('newPoTolerancePct', { value: '5' })],
+    ['newPoPrice', makeEl('newPoPrice', { value: '350' })],
+    ['newPoIncoterm', makeEl('newPoIncoterm', { value: 'FOB' })],
+    ['newPoPort', makeEl('newPoPort', { value: 'Rotterdam' })],
+    ['newPoShipmentType', makeEl('newPoShipmentType', { value: 'Container' })],
+    ['newPoContainerType', makeEl('newPoContainerType', { value: "20'" })],
+    ['newPoPackagingSelect', makeEl('newPoPackagingSelect', { value: 'Jumbo Bag 850 kg' })],
+    ['newPoPackageWeightKg', makeEl('newPoPackageWeightKg', { value: '850' })],
+    ['newPoUnitsPerCont', makeEl('newPoUnitsPerCont', { value: '32' })],
+    ['newPoTotalWeightMt', makeEl('newPoTotalWeightMt', { value: '27.2' })],
+    ['newPoDeliveryMsg', makeEl('newPoDeliveryMsg', { className: 'hidden' })],
+    ['newPoReviewBox', makeEl('newPoReviewBox')],
+    ['newPoAttachmentsInput', makeEl('newPoAttachmentsInput')],
+    ['newPoAttachError', makeEl('newPoAttachError', { className: 'hidden' })],
+    ['newPoAttachSelectedList', makeEl('newPoAttachSelectedList')],
+    ['newPoSubmitError', makeEl('newPoSubmitError', { className: 'hidden' })],
+    ['newPoSubmitBtn', makeEl('newPoSubmitBtn')],
+    ['newPoSubmitLabel', makeEl('newPoSubmitLabel', { textContent: 'Create PO' })]
+  ]);
+  const document = {
+    documentElement: { lang: options.lang === 'EN' ? 'en' : 'th' },
+    getElementById: (id) => elements.get(id) || null,
+    querySelectorAll: () => []
+  };
+  const state = {
+    currentUser: { user_id: 'U_ADMIN', role: 'ADMIN' },
+    customers: [{ id: 'C1', code: 'CUST1', name: 'Acme Agro', dischargePort: 'Rotterdam' }],
+    products: [{ id: 'P1', code: 'THP-65', name: 'Tapioca Pellet 65%', shortName: 'THP65' }],
+    customerOwners: [],
+    pos: [],
+    documentAttachmentsCache: {},
+    newPoPendingFiles: options.initialPendingFiles || []
+  };
+
+  let lastModalHtml = '';
+  let closeModalCount = 0;
+  let loadPOsCount = 0;
+  const alerts = [];
+
+  const constantsStart = html.indexOf('const NEW_PO_ALLOWED_MIME_TYPES =');
+  const constantsEnd = html.indexOf('function resetNewPOPendingFiles(');
+  assert.ok(constantsStart >= 0 && constantsEnd > constantsStart, 'NEW_PO_ALLOWED_MIME_TYPES constants must exist');
+  const constantsBlock = html.slice(constantsStart, constantsEnd);
+
+  const fnNames = [
+    'getNextPOCode',
+    'openNewPOModal',
+    'validateNewPODeliveryPeriod',
+    'formatDeliveryPeriod',
+    'renderNewPOReview',
+    'updateNewPOReview',
+    'resetNewPOPendingFiles',
+    'validateNewPOAttachmentFile',
+    'renderNewPOSelectedFilesList',
+    'handleNewPOFilesSelected',
+    'removeNewPOPendingFile',
+    'clearNewPOPendingFiles',
+    'handleNewPOSubmit',
+    'closeModal'
+  ];
+
+  const source = `
+    ${extractI18nCore()}
+    function tr(key, fallback, params) {
+      const val = t(key, params);
+      return val === key ? (fallback || key) : val;
+    }
+    ${extractDocumentsModule()}
+    ${constantsBlock}
+    ${fnNames.map(extractFunction).join('\n\n')}
+    return {
+      t, tr, getUiLanguage, setUiLanguage,
+      ${fnNames.join(', ')}
+    };
+  `;
+
+  const factory = new Function(
+    'window', 'document', 'localStorage', 'state', 'fetch', 'openModal', 'lucide', 'getScopedCustomers',
+    'autoFillCustomerDefaults', 'updateNewPOPriceSuggestion', 'getSuggestedSellingPrice', 'getTodayIso',
+    'loadPOsFromApi', 'alert', 'renderView',
+    source
+  );
+
+  const api = factory(
+    {},
+    document,
+    localStorage,
+    state,
+    options.fetch || (async () => ({ ok: true, json: async () => ({ status: 'SUCCESS', data: {} }) })),
+    (markup) => { lastModalHtml = markup; },
+    { createIcons: () => {} },
+    () => state.customers,
+    () => {},
+    () => {},
+    () => ({ price: 350, source: 'STANDARD', reference: 'STD-1' }),
+    () => '2026-11-20',
+    async () => { loadPOsCount++; },
+    (msg) => alerts.push(msg),
+    () => {}
+  );
+
+  const origClose = api.closeModal;
+  return {
+    api: {
+      ...api,
+      closeModal: () => { closeModalCount++; return origClose(); }
+    },
+    state,
+    elements,
+    alerts,
+    getLastModalHtml: () => lastModalHtml,
+    getLoadPOsCount: () => loadPOsCount,
+    getCloseModalCount: () => closeModalCount
+  };
+}
+
+test('Create New PO modal renders file picker, validates type/size, shows selected files in Review PO, and resets on open/close (TH & EN)', () => {
+  for (const [lang, expectedTitle, expectedNone] of [
+    ['TH', /แนบไฟล์ใบ PO \(Attach Customer PO\)/, /ไม่มีไฟล์แนบ/],
+    ['EN', /Attach Customer PO File\(s\)/, /None/]
+  ]) {
+    const h = createCreatePoModalHarness({
+      lang,
+      initialPendingFiles: [new File(['stale'], 'stale.pdf', { type: 'application/pdf' })]
+    });
+
+    // Opening modal resets stale files and renders bilingual picker
+    h.api.openNewPOModal();
+    assert.equal(h.state.newPoPendingFiles.length, 0, `${lang}: openNewPOModal must reset pending files`);
+    const modalHtml = h.getLastModalHtml();
+    assert.match(modalHtml, expectedTitle);
+    assert.match(modalHtml, /id="newPoAttachmentsInput"/);
+    assert.match(modalHtml, /accept="\.pdf,application\/pdf,image\/jpeg,image\/png,image\/webp"/);
+    assert.match(h.elements.get('newPoReviewBox').innerHTML, expectedNone);
+
+    // Select a mix of valid PDF + invalid .txt + >10MB PDF
+    const validPdf = new File(['%PDF-1.4 customer po'], 'MEEL_PO_2026.pdf', { type: 'application/pdf' });
+    const badTxt = new File(['hello'], 'notes.txt', { type: 'text/plain' });
+    const hugePdf = new File([new Uint8Array(10 * 1024 * 1024 + 1)], 'oversize.pdf', { type: 'application/pdf' });
+
+    const inputEl = h.elements.get('newPoAttachmentsInput');
+    inputEl.files = [validPdf, badTxt, hugePdf];
+    h.api.handleNewPOFilesSelected(inputEl);
+
+    // Only valid file kept; validation error shown for rejected files
+    assert.equal(h.state.newPoPendingFiles.length, 1);
+    assert.equal(h.state.newPoPendingFiles[0].name, 'MEEL_PO_2026.pdf');
+    assert.equal(h.elements.get('newPoAttachError').classList.contains('hidden'), false);
+    assert.match(h.elements.get('newPoAttachError').textContent, /notes\.txt/);
+    assert.match(h.elements.get('newPoAttachError').textContent, /oversize\.pdf/);
+
+    // Selected badge + Review PO both show the attached filename
+    assert.match(h.elements.get('newPoAttachSelectedList').innerHTML, /MEEL_PO_2026\.pdf/);
+    assert.match(h.elements.get('newPoReviewBox').innerHTML, /MEEL_PO_2026\.pdf/);
+
+    // Removing file updates list & Review PO
+    h.api.removeNewPOPendingFile(0);
+    assert.equal(h.state.newPoPendingFiles.length, 0);
+    assert.match(h.elements.get('newPoReviewBox').innerHTML, expectedNone);
+
+    // Closing modal resets pending files
+    inputEl.files = [validPdf];
+    h.api.handleNewPOFilesSelected(inputEl);
+    assert.equal(h.state.newPoPendingFiles.length, 1);
+    h.api.closeModal();
+    assert.equal(h.state.newPoPendingFiles.length, 0);
+  }
+});
+
+test('handleNewPOSubmit chains POST /api/pos -> POST /api/documents/upload with entityType=PO, entityId=createdPo.id, docCategory=PO (TH & EN)', async () => {
+  for (const [lang, expectedNotice] of [
+    ['TH', /สร้างสัญญา PO PO-2026-009 และอัปโหลดไฟล์แนบ 2 ไฟล์เรียบร้อยแล้ว/],
+    ['EN', /PO PO-2026-009 created and 2 attachment\(s\) uploaded successfully\./]
+  ]) {
+    const calls = [];
+    const h = createCreatePoModalHarness({
+      lang,
+      fetch: async (url, init = {}) => {
+        calls.push({ url, method: init.method || 'GET', body: init.body });
+        if (url === '/api/pos') {
+          return {
+            ok: true,
+            json: async () => ({
+              status: 'SUCCESS',
+              data: { po: { id: 'PO-2026-009', header: { po_id: 'PO-2026-009' } } }
+            })
+          };
+        }
+        if (url === '/api/documents/upload') {
+          return {
+            ok: true,
+            json: async () => ({
+              status: 'SUCCESS',
+              data: {
+                documents: [
+                  { id: 'DOC-1', doc_category: 'PO', file_name: 'po_main.pdf', file_size: 20 },
+                  { id: 'DOC-2', doc_category: 'PO', file_name: 'po_stamp.png', file_size: 16 }
+                ]
+              }
+            })
+          };
+        }
+        throw new Error(`Unexpected URL: ${url}`);
+      }
+    });
+
+    h.api.openNewPOModal();
+    const inputEl = h.elements.get('newPoAttachmentsInput');
+    inputEl.files = [
+      new File(['%PDF-1.4 main'], 'po_main.pdf', { type: 'application/pdf' }),
+      new File([new Uint8Array([137, 80, 78, 71])], 'po_stamp.png', { type: 'image/png' })
+    ];
+    h.api.handleNewPOFilesSelected(inputEl);
+
+    const result = await h.api.handleNewPOSubmit({ preventDefault: () => {} }, 'PO-2026-009');
+    assert.equal(result.ok, true);
+    assert.equal(result.poId, 'PO-2026-009');
+    assert.equal(result.uploaded, true);
+
+    assert.equal(calls.length, 2);
+    assert.equal(calls[0].url, '/api/pos');
+    assert.equal(calls[0].method, 'POST');
+    const createPayload = JSON.parse(calls[0].body);
+    assert.equal(createPayload.customerId, 'C1');
+    assert.equal(createPayload.customerPoNo, 'CUST-PO-9001');
+
+    assert.equal(calls[1].url, '/api/documents/upload');
+    assert.equal(calls[1].method, 'POST');
+    assert.ok(calls[1].body instanceof FormData);
+    assert.equal(calls[1].body.get('entityType'), 'PO');
+    assert.equal(calls[1].body.get('entityId'), 'PO-2026-009');
+    assert.equal(calls[1].body.get('docCategory'), 'PO');
+    const uploadedFiles = calls[1].body.getAll('files');
+    assert.equal(uploadedFiles.length, 2);
+    assert.equal(uploadedFiles[0].name, 'po_main.pdf');
+    assert.equal(uploadedFiles[1].name, 'po_stamp.png');
+
+    assert.equal(h.state.newPoPendingFiles.length, 0);
+    assert.equal(h.getLoadPOsCount(), 1);
+    assert.equal(h.state.poNotice.tone, 'success');
+    assert.match(h.state.poNotice.message, expectedNotice);
+  }
+});
+
+test('handleNewPOSubmit refreshes PO list and surfaces bilingual retry message when PO succeeds but R2 upload fails (TH & EN)', async () => {
+  for (const [lang, expectedWarn] of [
+    ['TH', /บันทึก PO PO-2026-010 เรียบร้อยแล้ว แต่อัปโหลดไฟล์แนบไม่สำเร็จ.*PO Detail/],
+    ['EN', /PO PO-2026-010 was saved, but uploading the attachment\(s\) failed.*PO Detail/]
+  ]) {
+    const h = createCreatePoModalHarness({
+      lang,
+      fetch: async (url) => {
+        if (url === '/api/pos') {
+          return {
+            ok: true,
+            json: async () => ({
+              status: 'SUCCESS',
+              data: { po: { header: { po_id: 'PO-2026-010' } } }
+            })
+          };
+        }
+        return {
+          ok: false,
+          json: async () => ({ status: 'ERROR', message: 'R2 temporary error' })
+        };
+      }
+    });
+
+    h.api.openNewPOModal();
+    const inputEl = h.elements.get('newPoAttachmentsInput');
+    inputEl.files = [new File(['%PDF-1.4 retry'], 'retry_po.pdf', { type: 'application/pdf' })];
+    h.api.handleNewPOFilesSelected(inputEl);
+
+    const result = await h.api.handleNewPOSubmit({ preventDefault: () => {} }, 'PO-2026-010');
+    assert.equal(result.ok, true);
+    assert.equal(result.poId, 'PO-2026-010');
+    assert.equal(result.uploaded, false);
+    assert.equal(h.getLoadPOsCount(), 1);
+    assert.equal(h.state.newPoPendingFiles.length, 0);
+    assert.equal(h.state.poNotice.tone, 'warning');
+    assert.match(h.state.poNotice.message, expectedWarn);
+    assert.match(h.alerts[0], expectedWarn);
+  }
+});
