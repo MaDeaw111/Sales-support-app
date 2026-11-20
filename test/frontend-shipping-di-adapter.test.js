@@ -592,3 +592,143 @@ test('Legacy Create/Update Booking modal includes BL No. paired with Vessel/Voya
     delete globalThis.document;
   }
 });
+
+test('Frontend initial state contains zero hardcoded mock DI, shipment, booking, payment, or partner records and defaults to live Phase 6 workspace', () => {
+  const stateStart = html.indexOf('const state = {');
+  const stateEnd = html.indexOf('const navSectionOrder =', stateStart);
+  assert.ok(stateStart >= 0 && stateEnd > stateStart);
+  const stateInit = html.slice(stateStart, stateEnd);
+
+  assert.match(stateInit, /shippingWorkspace:\s*'PHASE6'/);
+  assert.match(stateInit, /shipments:\s*\[\s*\]/);
+  assert.match(stateInit, /shipmentOptions:\s*\[\s*\]/);
+  assert.match(stateInit, /diRecords:\s*\[\s*\]/);
+  assert.match(stateInit, /loadingEvents:\s*\[\s*\]/);
+  assert.match(stateInit, /logisticsProviders:\s*\[\s*\]/);
+  assert.match(stateInit, /providerPrices:\s*\[\s*\]/);
+  assert.match(stateInit, /providerUsageRecords:\s*\[\s*\]/);
+  assert.match(stateInit, /truckBookings:\s*\[\s*\]/);
+  assert.match(stateInit, /forwarderAssignments:\s*\[\s*\]/);
+  assert.match(stateInit, /surveyAssignments:\s*\[\s*\]/);
+  assert.match(stateInit, /containerDetails:\s*\[\s*\]/);
+  assert.match(stateInit, /paymentRecords:\s*\[\s*\]/);
+
+  const forbiddenSamples = [
+    'MEEL-AUG-01', 'MEEL-AUG-02', 'MEEL-SEP-01', 'LKO-AUG-01', 'MEEL-CANCEL-01',
+    'DIREC-2026-0001', 'DIREC-2026-0002', 'DIREC-2026-0003', 'DIREC-2026-0004', 'DIREC-2026-0005',
+    'WCAT001/2026', 'WCAT002/2026', 'WCAT003/2026', 'WCAT-26-081', 'WCAT-26-142',
+    'MSC-2608-001', 'COS-2608-019', 'ONE-2608-044', 'BKG-COS-88219', 'BKG-MSC-99301',
+    'PAY-2026-001', 'PAY-2026-002', 'LOAD-001', 'LGP-001', 'TRK-001', 'FWDASN-001', 'SRVASN-001', 'CONTDET-001'
+  ];
+  for (const token of forbiddenSamples) {
+    assert.ok(!stateInit.includes(token), `state initializer must not contain mock sample ${token}`);
+  }
+  assert.doesNotMatch(html, /Mock Data Only/);
+  assert.doesNotMatch(html, /2026-08-21/);
+
+  const openFromCal = extractFunction('openPhase6ShipmentFromCalendar(diId)');
+  assert.match(openFromCal, /state\.shippingWorkspace\s*=\s*'PHASE6'/);
+});
+
+test('Shipping / DI renders clean 0 counters and empty state with zero mock leakage when D1 returns empty', async () => {
+  const loadDIs = new Function(`return (${extractFunction('loadDeliveryInstructionsFromApi()').trim()});`)();
+  const renderList = new Function(`return (${extractFunction('renderPhase6DeliveryInstructionList()').trim()});`)();
+  const escape = new Function(`return (${extractFunction('escapePhase6Text(value)').trim()});`)();
+
+  globalThis.state = {
+    currentUser: { id: 'USR-0001', role: 'ADMIN' },
+    shippingWorkspace: 'PHASE6',
+    deliveryInstructions: [],
+    phase6ShippingLoaded: false,
+    phase6ShippingLoading: false,
+    phase6ShippingError: '',
+    phase6Search: '',
+    phase6Filters: { diStatus: 'ALL', shipmentStatus: 'ALL', shippingMonth: 'ALL', scheduleResult: 'ALL', paymentStatus: 'ALL' }
+  };
+  globalThis.renderView = () => {};
+  globalThis.canEditPhase6Shipping = () => true;
+  globalThis.canSearchPhase6Workspace = () => true;
+  globalThis.canFilterPhase6Schedule = () => true;
+  globalThis.canFilterPhase6Payment = () => true;
+  globalThis.escapePhase6Text = escape;
+  globalThis.phase6StatusBadge = (value) => `<span>${escape(value || '-')}</span>`;
+  globalThis.fetch = async (url) => {
+    assert.equal(url, '/api/delivery-instructions/workspace');
+    return success({ deliveryInstructions: [] });
+  };
+
+  try {
+    await loadDIs();
+    assert.equal(globalThis.state.phase6ShippingLoaded, true);
+    assert.equal(globalThis.state.deliveryInstructions.length, 0);
+
+    const markup = renderList();
+    assert.match(markup, /Active DI/);
+    assert.match(markup, /Draft \/ Planning/);
+    assert.match(markup, /Booked/);
+    assert.match(markup, /Loaded/);
+    assert.match(markup, /Docs Sent/);
+    assert.match(markup, /Completed/);
+    assert.match(markup, />0</);
+    assert.match(markup, /No delivery instructions yet\./);
+    assert.doesNotMatch(markup, /MEEL-AUG-01|MEEL-AUG-02|MEEL-SEP-01|LKO-AUG-01|DIREC-2026-000|WCAT001\/2026|MSC-2608-001|COS-2608-019|ONE-2608-044/);
+  } finally {
+    for (const name of ['state', 'renderView', 'canEditPhase6Shipping', 'canSearchPhase6Workspace', 'canFilterPhase6Schedule', 'canFilterPhase6Payment', 'escapePhase6Text', 'phase6StatusBadge', 'fetch']) {
+      delete globalThis[name];
+    }
+  }
+});
+
+test('Operations Calendar, Payment Status, and Commission render clean empty states from live D1 with zero mock leakage', async () => {
+  const renderPayments = new Function(`return (${extractFunction('renderPayments(container)').trim()});`)();
+  const renderCommissions = new Function(`return (${extractFunction('renderCommissions(container)').trim()});`)();
+  const renderAgenda = new Function(`return (${extractFunction('renderOperationsAgenda(events)').trim()});`)();
+
+  const escape = (v) => String(v ?? '');
+  globalThis.escapePaymentHtml = escape;
+  globalThis.escapeCommissionHtml = escape;
+  globalThis.escapeCalendarHtml = escape;
+  globalThis.formatMoney = (val, cur = 'USD') => `${cur} ${Number(val || 0).toFixed(2)}`;
+  globalThis.paymentStatusBadge = (s) => `<span>${s || 'UNPAID'}</span>`;
+  globalThis.commissionStatusBadge = (s) => `<span>${s || 'PENDING'}</span>`;
+  globalThis.canEditPayment = () => true;
+  globalThis.canSettleCommission = () => true;
+  globalThis.calendarLoadingSummaryForDate = () => null;
+  globalThis.renderCalendarDailySummaryBadge = () => '';
+  globalThis.lucide = { createIcons() {} };
+  globalThis.window = { lucide: globalThis.lucide };
+  globalThis.state = {
+    currentUser: { id: 'USR-0001', role: 'ADMIN' },
+    customers: [],
+    paymentsDashboard: {
+      summary: { total_shipments: 0, paid_count: 0, partial_count: 0, unpaid_count: 0, final_invoiced_count: 0, awaiting_final_invoice_count: 0, totals_by_currency: [], customer_credits_summary: null },
+      items: [], customerCredits: [], detail: null, loading: false, detailLoading: false, error: null, loaded: true, activeTab: 'SHIPMENTS',
+      filters: { paymentStatus: 'ALL', invoiceReadiness: 'ALL', shipmentStatus: 'ALL', currency: 'ALL', customerId: 'ALL', search: '' }
+    },
+    commissionsDashboard: {
+      summary: { total_count: 0, pending_count: 0, payable_count: 0, paid_count: 0, pending_usd: 0, payable_usd: 0, paid_usd: 0, total_usd: 0 },
+      items: [], recipients: [], detail: null, loading: false, error: null, loaded: true,
+      filters: { status: 'ALL', recipientUserId: 'ALL', customerId: 'ALL', paidDateFrom: '', paidDateTo: '', search: '' }
+    }
+  };
+
+  try {
+    const payContainer = { innerHTML: '' };
+    renderPayments(payContainer);
+    assert.match(payContainer.innerHTML, />0</);
+    assert.doesNotMatch(payContainer.innerHTML, /PAY-2026-001|PAY-2026-002|WCAT001\/2026|WCAT003\/2026|MEEL-AUG-01|LKO-AUG-01/);
+
+    const commContainer = { innerHTML: '' };
+    renderCommissions(commContainer);
+    assert.match(commContainer.innerHTML, /No commission records match the current filters\./);
+    assert.doesNotMatch(commContainer.innerHTML, /WCAT001\/2026|WCAT003\/2026|MEEL-AUG-01|LKO-AUG-01/);
+
+    const agendaMarkup = renderAgenda([]);
+    assert.match(agendaMarkup, /No calendar events in this period\./);
+    assert.doesNotMatch(agendaMarkup, /MEEL-AUG-01|DIREC-2026-000|LOAD-001/);
+  } finally {
+    for (const name of ['escapePaymentHtml', 'escapeCommissionHtml', 'escapeCalendarHtml', 'formatMoney', 'paymentStatusBadge', 'commissionStatusBadge', 'canEditPayment', 'canSettleCommission', 'calendarLoadingSummaryForDate', 'renderCalendarDailySummaryBadge', 'lucide', 'window', 'state']) {
+      delete globalThis[name];
+    }
+  }
+});

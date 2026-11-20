@@ -1097,6 +1097,18 @@
             const finish = () => {
                 state.currentUser = { id:'', name:'', role:'', email:'', customerScope:'' };
                 state.selectedLogisticsProviderId = null;
+                state.selectedPhase6DeliveryInstructionId = null;
+                state.deliveryInstructions = [];
+                state.phase6ShipmentDetail = null;
+                state.phase6ShipmentInvoices = [];
+                state.phase6ShipmentHistory = [];
+                state.phase6PoBalances = [];
+                state.phase6CustomerCredits = [];
+                state.phase6ShippingLoaded = false;
+                state.phase6ShippingError = '';
+                state.pos = [];
+                state.posLoaded = false;
+                state.operationsCalendar = { range: null, events: [], dailyLoadingSummary: [], loading: false, error: null, lastRequestKey: '' };
                 state.logisticsPartners = { items: [], detail: null, loading: false, detailLoading: false, error: null, loaded: false, statusFilter: 'ALL', search: '' };
                 state.paymentsDashboard = { summary: null, items: [], customerCredits: [], detail: null, loading: false, detailLoading: false, error: null, loaded: false, activeTab: 'SHIPMENTS', filters: { paymentStatus: 'ALL', invoiceReadiness: 'ALL', shipmentStatus: 'ALL', currency: 'ALL', customerId: 'ALL', search: '' } };
                 state.commissionsDashboard = { summary: null, items: [], recipients: [], detail: null, loading: false, error: null, loaded: false, filters: { status: 'ALL', recipientUserId: 'ALL', customerId: 'ALL', paidDateFrom: '', paidDateTo: '', search: '' } };
@@ -1152,7 +1164,7 @@
             phase6ShippingError: '',
             phase6Search: '',
             phase6Filters: { diStatus: 'ALL', shipmentStatus: 'ALL', shippingMonth: 'ALL', scheduleResult: 'ALL', paymentStatus: 'ALL' },
-            shippingWorkspace: 'LEGACY',
+            shippingWorkspace: 'PHASE6',
             selectedLogisticsProviderId: null,
             providerDetailTab: 'PROFILE',
             providerTypeFilter: 'ALL',
@@ -1184,117 +1196,20 @@
             posLoaded: false,
             posLoading: false,
             posError: '',
-            shipments: [
-                { id: 'SHP-001', wcatNo: 'WCAT-26-081', poId: 'PO-2026-001', planned_loading_date: '2026-03-25', plannedContainers: 20, plannedTotalMt: 540, goodsStatus: 'LOADED', productionReady: 'YES', packagingReady: 'YES', bookingNo: 'BKG-COS-88219', vesselVoyage: 'COSCO SHIPPING v.2603W', invoiceAmount: 99900, paymentStatus: 'PAID' },
-                { id: 'SHP-002', wcatNo: 'WCAT-26-142', poId: 'PO-2026-002', planned_loading_date: '2026-08-18', plannedContainers: 20, plannedTotalMt: 540, goodsStatus: 'LOADED', productionReady: 'YES', packagingReady: 'YES', bookingNo: 'BKG-MSC-99301', vesselVoyage: 'MSC ARIES v.2608E', invoiceAmount: 101520, paymentStatus: 'PAID' }
-            ],
-            // FRONTEND PROTOTYPE ONLY: standard shipment templates.
-            // These are defaults for faster planning, NOT hard constraints. DI can override them with a reason.
-            shipmentOptions: [
-                { id: 'SHIP-OPT-001', label: "20GP · Jumbo Bag 850 kg · 20 Bags · 17.000 MT", shipmentType: 'Container', containerType: "20'", packaging: 'Jumbo Bag 850 kg', packageWeightKg: 850, bagsPerContainer: 20, totalWeightMt: 17.000, status: 'ACTIVE' },
-                { id: 'SHIP-OPT-002', label: "20GP · Jumbo Bag 950 kg · 20 Bags · 19.000 MT", shipmentType: 'Container', containerType: "20'", packaging: 'Jumbo Bag 950 kg', packageWeightKg: 950, bagsPerContainer: 20, totalWeightMt: 19.000, status: 'ACTIVE' }
-            ],
-
-            // FRONTEND PROTOTYPE ONLY: DI -> WCAT/Invoice -> Booking -> Shipment -> Documents
-            // These records are intentionally not synced to Apps Script / Google Sheets yet.
-            diRecords: [
-                {
-                    id: 'DIREC-2026-0001', diNo: 'MEEL-AUG-01', poId: 'PO-2026-002', productionStatus: 'WAREHOUSE_READY', targetLoadingDate: '2026-08-20',
-                    wcatNo: 'WCAT001/2026', status: 'SHIPPED',
-                    containerType: "20'", packaging: 'Jumbo Bag 950 kg', packageWeightKg: 950,
-                    bagsPerContainer: 20, palletsPerContainer: 20, plannedContainers: 10,
-                    additionalRequest: 'Use 4-way pallets. Apply customer label on each jumbo bag.',
-                    booking: { bookingNo: 'MSC-2608-001', status: 'ACTIVE', revisionNo: 'Rev.1', carrier: 'MSC', vesselVoyage: 'MSC ARIES v.2608E', etd: '2026-08-23', eta: '2026-09-25' },
-                    documents: { stuffingReport: { status: 'RECEIVED', receivedDate: '2026-08-21', note: '' }, allShipDoc: { status: 'PENDING', receivedDate: '', note: '' } },
-                    notes: 'ตัวอย่าง DI ที่โหลดหลายวัน'
-                },
-                {
-                    id: 'DIREC-2026-0002', diNo: 'MEEL-AUG-02', poId: 'PO-2026-002', productionStatus: 'PACKING', targetLoadingDate: '2026-08-24',
-                    wcatNo: 'WCAT002/2026', status: 'BOOKED',
-                    containerType: "20'", packaging: 'Jumbo Bag 850 kg', packageWeightKg: 850,
-                    bagsPerContainer: 32, palletsPerContainer: 32, plannedContainers: 6,
-                    additionalRequest: 'Keep bags separated by lot and confirm pallet count before loading.',
-                    booking: { bookingNo: 'COS-2608-019', status: 'ACTIVE', revisionNo: 'Rev.0', carrier: 'COSCO', vesselVoyage: 'COSCO STAR v.2608W', etd: '2026-08-27', eta: '2026-09-29' },
-                    documents: { stuffingReport: { status: 'PENDING', receivedDate: '', note: '' }, allShipDoc: { status: 'PENDING', receivedDate: '', note: '' } }
-                },
-                {
-                    id: 'DIREC-2026-0003', diNo: 'MEEL-SEP-01', poId: 'PO-2026-002', productionStatus: 'WAITING_PLAN', targetLoadingDate: '2026-09-05',
-                    wcatNo: '', status: 'PLANNED',
-                    containerType: "20'", packaging: 'Jumbo Bag 950 kg', packageWeightKg: 950,
-                    bagsPerContainer: 20, palletsPerContainer: 20, plannedContainers: 4,
-                    additionalRequest: '',
-                    booking: null,
-                    documents: { stuffingReport: { status: 'PENDING', receivedDate: '', note: '' }, allShipDoc: { status: 'PENDING', receivedDate: '', note: '' } }
-                },
-                {
-                    id: 'DIREC-2026-0004', diNo: 'LKO-AUG-01', poId: 'PO-2026-003', productionStatus: 'PRODUCTION', targetLoadingDate: '2026-08-22',
-                    wcatNo: 'WCAT003/2026', status: 'LOADING',
-                    containerType: "20'", packaging: 'Jumbo Bag 950 kg', packageWeightKg: 950,
-                    bagsPerContainer: 20, palletsPerContainer: 20, plannedContainers: 5,
-                    additionalRequest: 'Use clean dry pallets only.',
-                    booking: { bookingNo: 'ONE-2608-044', status: 'REVISED', revisionNo: 'Rev.1', carrier: 'ONE', vesselVoyage: 'ONE OCEAN v.081W', etd: '2026-08-24', eta: '2026-09-21' },
-                    documents: { stuffingReport: { status: 'RECEIVED', receivedDate: '2026-08-21', note: 'Received from documentation team' }, allShipDoc: { status: 'PENDING', receivedDate: '', note: '' } }
-                },
-                {
-                    id: 'DIREC-2026-0005', diNo: 'MEEL-CANCEL-01', poId: 'PO-2026-002',
-                    wcatNo: '', status: 'CANCELLED',
-                    containerType: "20'", packaging: 'Jumbo Bag 950 kg', packageWeightKg: 950,
-                    bagsPerContainer: 20, palletsPerContainer: 20, plannedContainers: 2,
-                    additionalRequest: '',
-                    booking: null,
-                    documents: { stuffingReport: { status: 'PENDING', receivedDate: '', note: '' }, allShipDoc: { status: 'PENDING', receivedDate: '', note: '' } }
-                }
-            ],
-            loadingEvents: [
-                { id: 'LOAD-001', diId: 'DIREC-2026-0001', loadingDate: '2026-08-20', sequenceNo: 1, plannedContainers: 4, actualContainers: 4, actualBags: 80, status: 'LOADED' },
-                { id: 'LOAD-002', diId: 'DIREC-2026-0001', loadingDate: '2026-08-21', sequenceNo: 1, plannedContainers: 6, actualContainers: 6, actualBags: 120, status: 'LOADED' },
-                { id: 'LOAD-003', diId: 'DIREC-2026-0002', loadingDate: '2026-08-21', sequenceNo: 2, plannedContainers: 3, actualContainers: 0, actualBags: 0, status: 'PLANNED' },
-                { id: 'LOAD-004', diId: 'DIREC-2026-0004', loadingDate: '2026-08-21', sequenceNo: 3, plannedContainers: 2, actualContainers: 1, actualBags: 20, status: 'LOADING' },
-                { id: 'LOAD-005', diId: 'DIREC-2026-0004', loadingDate: '2026-08-22', sequenceNo: 1, plannedContainers: 3, actualContainers: 0, actualBags: 0, status: 'PLANNED' }
-            ],
-            // FRONTEND PROTOTYPE ONLY: centralized logistics partner master.
-            logisticsProviders: [
-                { id: 'LGP-001', code: 'TRK-001', companyName: 'Korat Container Transport', providerType: 'TRUCKING', contactPerson: 'Nok', phone: '081-555-0101', email: 'ops@koratcontainer.example', address: 'Nakhon Ratchasima, Thailand', taxId: '0105559000001', status: 'ACTIVE', note: 'Primary container trucking partner for WCAT.' },
-                { id: 'LGP-002', code: 'TRK-002', companyName: 'Siam Haulage', providerType: 'TRUCKING', contactPerson: 'Ton', phone: '089-555-0202', email: 'dispatch@siamhaulage.example', address: 'Chonburi, Thailand', taxId: '0105559000002', status: 'ACTIVE', note: 'Backup trucking capacity during peak loading periods.' },
-                { id: 'LGP-003', code: 'FWD-001', companyName: 'Pacific Freight Solutions', providerType: 'FREIGHT_FORWARDER', contactPerson: 'May', phone: '02-555-3100', email: 'export@pacificfreight.example', address: 'Bangkok, Thailand', taxId: '0105559000003', status: 'ACTIVE', note: 'Ocean freight and export coordination.' },
-                { id: 'LGP-004', code: 'SRV-001', companyName: 'Thai Cargo Survey', providerType: 'SURVEY', contactPerson: 'Anan', phone: '081-555-4400', email: 'survey@thaicargo.example', address: 'Laem Chabang, Chonburi', taxId: '0105559000004', status: 'ACTIVE', note: 'Stuffing and container survey support.' }
-            ],
-            providerPrices: [
-                { id: 'LGPPR-001', providerId: 'LGP-001', serviceType: 'Container Trucking', routeScope: 'Laem Chabang CY → WCAT Factory', containerSize: "20'", unit: 'THB / Container', price: 8500, currency: 'THB', effectiveDate: '2026-08-01', validUntil: '2026-09-30', status: 'ACTIVE', note: '' },
-                { id: 'LGPPR-002', providerId: 'LGP-002', serviceType: 'Container Trucking', routeScope: 'Laem Chabang CY → WCAT Factory', containerSize: "20'", unit: 'THB / Container', price: 9000, currency: 'THB', effectiveDate: '2026-08-01', validUntil: '2026-08-31', status: 'ACTIVE', note: 'Peak season rate.' },
-                { id: 'LGPPR-003', providerId: 'LGP-003', serviceType: 'Ocean Freight', routeScope: 'Thailand → Rotterdam', containerSize: "20'", unit: 'USD / Container', price: 5415, currency: 'USD', effectiveDate: '2026-08-01', validUntil: '2026-08-31', status: 'ACTIVE', note: 'Reference quotation only.' },
-                { id: 'LGPPR-004', providerId: 'LGP-004', serviceType: 'Stuffing Survey', routeScope: 'WCAT Factory', containerSize: '-', unit: 'THB / Job', price: 4500, currency: 'THB', effectiveDate: '2026-08-01', validUntil: '2026-12-31', status: 'ACTIVE', note: '' }
-            ],
-            providerUsageRecords: [
-                { id: 'LGPU-001', providerId: 'LGP-003', usageDate: '2026-08-12', reference: 'WCAT001/2026', serviceType: 'Ocean Freight', qty: 10, unit: 'containers', priceSnapshot: 5415, currency: 'USD', note: 'Forwarding reference for export shipment.' },
-                { id: 'LGPU-002', providerId: 'LGP-004', usageDate: '2026-08-20', reference: 'WCAT001/2026', serviceType: 'Stuffing Survey', qty: 1, unit: 'job', priceSnapshot: 4500, currency: 'THB', note: 'Survey completed.' }
-            ],
-            // FRONTEND PROTOTYPE ONLY: truck allocations are linked to Loading Events.
-            // One DI / shipment can use multiple trucking companies when truck capacity is limited.
-            truckBookings: [
-                { id: 'TRK-001', diId: 'DIREC-2026-0002', loadingEventId: 'LOAD-003', providerId: 'LGP-001', truckingCompany: 'Korat Container Transport', priceSnapshot: 8500, priceCurrency: 'THB', priceUnit: 'THB / Container', contactPerson: 'Nok', phone: '081-555-0101', noOfContainers: 2, containerSize: "20'", pickupCY: 'Laem Chabang CY', loadingLocation: 'WCAT Factory', bookingReference: 'KCT-0821-01', status: 'CONFIRMED', driver: '', truckPlate: '', note: 'Confirmed 2 trucks for sequence 2.' },
-                { id: 'TRK-002', diId: 'DIREC-2026-0002', loadingEventId: 'LOAD-003', providerId: 'LGP-002', truckingCompany: 'Siam Haulage', priceSnapshot: 9000, priceCurrency: 'THB', priceUnit: 'THB / Container', contactPerson: 'Ton', phone: '089-555-0202', noOfContainers: 1, containerSize: "20'", pickupCY: 'Laem Chabang CY', loadingLocation: 'WCAT Factory', bookingReference: 'SH-0821-07', status: 'BOOKED', driver: '', truckPlate: '', note: 'Waiting final truck confirmation.' },
-                { id: 'TRK-003', diId: 'DIREC-2026-0004', loadingEventId: 'LOAD-004', providerId: 'LGP-001', truckingCompany: 'Korat Container Transport', priceSnapshot: 8500, priceCurrency: 'THB', priceUnit: 'THB / Container', contactPerson: 'Nok', phone: '081-555-0101', noOfContainers: 1, containerSize: "20'", pickupCY: 'Bangkok Depot', loadingLocation: 'WCAT Factory', bookingReference: 'KCT-0821-02', status: 'BOOKED', driver: '', truckPlate: '', note: 'Need one more truck for this loading event.' }
-            ],
-            // FRONTEND PROTOTYPE ONLY: shipment partner assignments.
-            // Forwarder is primarily linked to DI/WCAT; Survey is linked to Loading Event.
-            forwarderAssignments: [
-                { id: 'FWDASN-001', diId: 'DIREC-2026-0001', providerId: 'LGP-003', serviceType: 'Ocean Freight / Export Coordination', reference: 'PF-0826-001', status: 'ACTIVE', priceSnapshot: 5415, priceCurrency: 'USD', priceUnit: 'USD / Container', contactPerson: 'May', phone: '02-555-3100', assignedDate: '2026-08-12', note: 'Main forwarder for WCAT001/2026.' }
-            ],
-            surveyAssignments: [
-                { id: 'SRVASN-001', diId: 'DIREC-2026-0001', loadingEventId: 'LOAD-001', providerId: 'LGP-004', surveyType: 'Stuffing Survey', surveyDate: '2026-08-20', noOfContainers: 4, reference: 'TCS-0820-01', status: 'COMPLETED', priceSnapshot: 4500, priceCurrency: 'THB', priceUnit: 'THB / Job', contactPerson: 'Anan', phone: '081-555-4400', note: 'Survey completed.' }
-            ],
-            containerDetails: [
-                { id: 'CONTDET-001', loadingEventId: 'LOAD-001', containerNo: 'MSKU1234567', sealNo: 'SL001234', bags: 20, netWeightMt: 19.000 },
-                { id: 'CONTDET-002', loadingEventId: 'LOAD-001', containerNo: 'MSKU1234568', sealNo: 'SL001235', bags: 20, netWeightMt: 19.000 }
-            ],
-            // FRONTEND PROTOTYPE ONLY: payment coordination records.
+            shipments: [],
+            shipmentOptions: [],
+            diRecords: [],
+            loadingEvents: [],
+            logisticsProviders: [],
+            providerPrices: [],
+            providerUsageRecords: [],
+            truckBookings: [],
+            forwarderAssignments: [],
+            surveyAssignments: [],
+            containerDetails: [],
             commissionRateChangeRequests: [],
             commissionPaidSnapshots: [],
-            paymentRecords: [
-                { id: 'PAY-2026-001', diId: 'DIREC-2026-0001', customerId: 'CUST-001', wcatNo: 'WCAT001/2026', currency: 'USD', invoiceAmount: 35720, receivedAmount: 35720, paymentDate: '2026-08-25', bankReference: 'TT-MEEL-0825-01', status: 'PAID', note: 'Payment received in full for this DI / WCAT.' },
-                { id: 'PAY-2026-002', diId: 'DIREC-2026-0004', customerId: 'CUST-002', wcatNo: 'WCAT003/2026', currency: 'USD', invoiceAmount: 19950, receivedAmount: 10000, paymentDate: '2026-08-28', bankReference: 'TT-LKO-0828-01', status: 'PARTIAL', note: 'First partial payment received for this DI.' }
-            ]
+            paymentRecords: []
         };
 
         const navSectionOrder = ['Overview','Sales','Export','Finance','Admin'];
@@ -1477,7 +1392,13 @@
             state.selectedPoId = null;
             state.selectedShipmentId = null;
             state.selectedDiId = null;
+            state.selectedPhase6DeliveryInstructionId = null;
+            state.phase6ShipmentDetail = null;
             state.selectedLogisticsProviderId = null;
+            if (id === 'shipping' && state.shippingWorkspace === 'PHASE6') {
+                state.phase6ShippingLoaded = false;
+                state.phase6ShippingError = '';
+            }
             renderSidebar(); 
             renderView(); 
             if (id === 'pricing') {
@@ -2695,7 +2616,7 @@
         }
         function renderAttentionPanel() {
             const role = state.currentUser.role;
-            const today = '2026-08-21';
+            const today = getTodayIso();
             const scopedDIs = getScopedDIRecords();
             const diIds = new Set(scopedDIs.map(d=>d.id));
             const items = [];
@@ -3006,7 +2927,7 @@
 
         function renderSalesSupportUpcoming() {
             const d=getSalesSupportDashboardData();
-            const today='2026-08-21';
+            const today=getTodayIso();
             const items=[];
             const diIds=new Set(d.dis.map(x=>x.id));
             (state.loadingEvents||[]).filter(e=>diIds.has(e.diId)&&e.status!=='CANCELLED').forEach(e=>{const days=dashboardDateDiffDays(today,e.loadingDate); if(days!==null&&days>=0&&days<=7){const di=d.dis.find(x=>x.id===e.diId); items.push({date:e.loadingDate,type:'Loading',title:di?.diNo||e.diId,detail:`${e.plannedContainers||0} containers`,view:'calendar'});}});
@@ -6715,6 +6636,24 @@
                 (showShippingPlan ? 1 : 0) + 1 + (showSchedule ? 1 : 0) + (showBooking ? 1 : 0) +
                 (showShipmentStatus ? 1 : 0) + (showPayment ? 1 : 0);
             const error = state.phase6ShippingError ? `<div class="rounded-lg border border-red-200 bg-red-50 p-3 text-xs text-red-700">${escapePhase6Text(state.phase6ShippingError)}</div>` : '';
+            const activeRecords = records.filter(di => di.di_status !== 'CANCELLED' && di.shipment_status !== 'CANCELLED');
+            const summaryStrip = !restricted ? `<div class="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-6 gap-3">
+                ${[
+                    { label: 'Active DI', value: activeRecords.length, sub: 'Non-cancelled DIs' },
+                    { label: 'Draft / Planning', value: activeRecords.filter(di => di.di_status === 'DRAFT' || di.shipment_status === 'PLANNING').length, sub: 'Awaiting booking' },
+                    { label: 'Booked', value: activeRecords.filter(di => di.shipment_status === 'BOOKED').length, sub: 'Booking confirmed' },
+                    { label: 'Loaded', value: activeRecords.filter(di => di.shipment_status === 'LOADED').length, sub: 'Containers loaded' },
+                    { label: 'Docs Sent', value: activeRecords.filter(di => di.shipment_status === 'DOCS_SENT').length, sub: 'Shipping docs sent' },
+                    { label: 'Completed', value: activeRecords.filter(di => di.shipment_status === 'COMPLETED').length, sub: 'Closed shipments' }
+                ].map(card => `<div class="bg-white rounded-xl border border-slate-200 p-3.5 shadow-sm"><div class="text-[10px] uppercase font-bold tracking-wide text-slate-500">${card.label}</div><div class="text-2xl font-black text-slate-900 mt-1">${card.value}</div><div class="text-[10px] text-slate-400 mt-0.5">${card.sub}</div></div>`).join('')}
+            </div>` : '';
+            const hasActiveFilters = Boolean(
+                (state.phase6Search || '').trim() ||
+                Object.values(state.phase6Filters || {}).some(v => v && v !== 'ALL')
+            );
+            const emptyStateLabel = state.phase6ShippingLoading
+                ? 'Loading delivery instructions…'
+                : (hasActiveFilters ? 'No delivery instructions match the current search and filters.' : 'No delivery instructions yet.');
             return `
                 <div class="space-y-5">
                     <div class="flex flex-col lg:flex-row lg:items-center justify-between gap-3">
@@ -6722,6 +6661,7 @@
                         <div class="flex gap-2"><button onclick="setShippingWorkspace('LEGACY')" class="px-3 py-2 rounded-lg border border-slate-300 text-xs font-bold">Legacy shipping</button>${canEditPhase6Shipping() ? '<button onclick="openCreatePhase6DeliveryInstruction()" class="px-3 py-2 rounded-lg bg-blue-600 text-white text-xs font-bold">Create DI</button>' : ''}<button onclick="refreshPhase6ShippingWorkspace()" class="px-3 py-2 rounded-lg border border-slate-300 text-xs font-bold"><i data-lucide="refresh-cw" class="w-3 h-3 inline"></i> Refresh</button></div>
                     </div>
                     ${error}
+                    ${summaryStrip}
                     ${showFilterPanel ? `<div class="bg-white rounded-xl border border-slate-200 p-3 grid grid-cols-1 md:grid-cols-6 gap-2">
                         ${searchable ? `<input value="${escapePhase6Text(state.phase6Search)}" oninput="setPhase6ShippingSearch(this.value)" placeholder="Search DI, PO, customer, booking, BL, invoice, container" class="md:col-span-2 border rounded-lg px-3 py-2 text-xs">` : ''}
                         ${showStatusFilters ? `<select onchange="setPhase6ShippingFilter('diStatus', this.value)" class="border rounded-lg px-2 py-2 text-xs"><option value="ALL">All DI status</option>${['DRAFT','CONFIRMED','IN_PROGRESS','COMPLETED','CANCELLED'].map(status => `<option value="${status}" ${state.phase6Filters.diStatus === status ? 'selected' : ''}>${status}</option>`).join('')}</select><select onchange="setPhase6ShippingFilter('shipmentStatus', this.value)" class="border rounded-lg px-2 py-2 text-xs"><option value="ALL">All shipment status</option>${['PLANNING','BOOKED','LOADED','DOCS_SENT','COMPLETED','CANCELLED'].map(status => `<option value="${status}" ${state.phase6Filters.shipmentStatus === status ? 'selected' : ''}>${status}</option>`).join('')}</select>` : ''}
@@ -6731,7 +6671,7 @@
                     </div>` : ''}
                     <div class="bg-white rounded-xl border border-slate-200 overflow-hidden shadow-sm">
                         <div class="overflow-x-auto"><table class="ui-table min-w-[900px] w-full text-xs"><thead class="bg-slate-50 text-slate-500"><tr><th class="p-3 text-left">${warehouse ? 'Loading' : 'DI No.'}</th>${showCustomerAndPo ? '<th class="p-3 text-left">Customer</th><th class="p-3 text-left">PO</th>' : ''}${showProduct ? '<th class="p-3 text-left">Product summary</th>' : ''}${showPacking ? '<th class="p-3 text-left">Packing</th>' : ''}${showPlannedQty ? '<th class="p-3 text-right">Planned Qty</th>' : ''}${showContainerPlan ? '<th class="p-3 text-left">Container Plan</th>' : ''}${showShippingPlan ? '<th class="p-3 text-left">Shipping Plan</th>' : ''}<th class="p-3 text-left">Planned / Actual Loading</th>${showSchedule ? '<th class="p-3 text-center">Schedule Result</th>' : ''}${showBooking ? '<th class="p-3 text-left">Booking / BL No.</th>' : ''}${showShipmentStatus ? '<th class="p-3 text-center">Shipment Status</th>' : ''}${showPayment ? '<th class="p-3 text-center">Payment Status</th>' : ''}</tr></thead>
-                        <tbody class="divide-y divide-slate-100">${records.length ? records.map(di => { const reference = di.detail_ref || di.di_id; const referenceLabel = warehouse ? 'Open loading plan' : (di.di_no || '-'); return `<tr class="hover:bg-blue-50/40"><td class="p-3">${reference ? `<button type="button" data-phase6-detail-ref="${escapePhase6Text(reference)}" class="font-black text-blue-700 hover:underline">${escapePhase6Text(referenceLabel)}</button>` : escapePhase6Text(referenceLabel)}</td>${showCustomerAndPo ? `<td class="p-3 font-semibold">${escapePhase6Text(di.customer_name || '-')}</td><td class="p-3">${escapePhase6Text(di.customer_po_no || di.po_id || '-')}</td>` : ''}${showProduct ? `<td class="p-3">${escapePhase6Text(di.product_summary || '-')}</td>` : ''}${showPacking ? `<td class="p-3">${escapePhase6Text(di.packing_summary || '-')}</td>` : ''}${showPlannedQty ? `<td class="p-3 text-right font-bold">${Number(di.planned_qty_mt || 0).toFixed(3)} MT</td>` : ''}${showContainerPlan ? `<td class="p-3">${escapePhase6Text(di.container_plan || '-')}</td>` : ''}${showShippingPlan ? `<td class="p-3">${escapePhase6Text([di.shipping_month, di.shipping_period].filter(Boolean).join(' / ') || '-')}</td>` : ''}<td class="p-3">${escapePhase6Text(di.planned_loading_date || '-')}<br><span class="text-slate-400">${escapePhase6Text(di.actual_loading_date || '-')}</span></td>${showSchedule ? `<td class="p-3 text-center">${phase6StatusBadge(di.schedule_result)}</td>` : ''}${showBooking ? `<td class="p-3 font-mono">${escapePhase6Text(di.booking_no || '-')}${!restricted && di.bl_no ? `<div class="text-[10px] text-slate-500">BL: ${escapePhase6Text(di.bl_no)}</div>` : ''}</td>` : ''}${showShipmentStatus ? `<td class="p-3 text-center">${phase6StatusBadge(di.shipment_status)}</td>` : ''}${showPayment ? `<td class="p-3 text-center">${phase6StatusBadge(di.payment_status)}</td>` : ''}</tr>`; }).join('') : `<tr><td colspan="${columnCount}" class="p-8 text-center text-slate-500">${state.phase6ShippingLoading ? 'Loading delivery instructions…' : 'No delivery instructions match the current search and filters.'}</td></tr>`}</tbody></table></div>
+                        <tbody class="divide-y divide-slate-100">${records.length ? records.map(di => { const reference = di.detail_ref || di.di_id; const referenceLabel = warehouse ? 'Open loading plan' : (di.di_no || '-'); return `<tr class="hover:bg-blue-50/40"><td class="p-3">${reference ? `<button type="button" data-phase6-detail-ref="${escapePhase6Text(reference)}" class="font-black text-blue-700 hover:underline">${escapePhase6Text(referenceLabel)}</button>` : escapePhase6Text(referenceLabel)}</td>${showCustomerAndPo ? `<td class="p-3 font-semibold">${escapePhase6Text(di.customer_name || '-')}</td><td class="p-3">${escapePhase6Text(di.customer_po_no || di.po_id || '-')}</td>` : ''}${showProduct ? `<td class="p-3">${escapePhase6Text(di.product_summary || '-')}</td>` : ''}${showPacking ? `<td class="p-3">${escapePhase6Text(di.packing_summary || '-')}</td>` : ''}${showPlannedQty ? `<td class="p-3 text-right font-bold">${Number(di.planned_qty_mt || 0).toFixed(3)} MT</td>` : ''}${showContainerPlan ? `<td class="p-3">${escapePhase6Text(di.container_plan || '-')}</td>` : ''}${showShippingPlan ? `<td class="p-3">${escapePhase6Text([di.shipping_month, di.shipping_period].filter(Boolean).join(' / ') || '-')}</td>` : ''}<td class="p-3">${escapePhase6Text(di.planned_loading_date || '-')}<br><span class="text-slate-400">${escapePhase6Text(di.actual_loading_date || '-')}</span></td>${showSchedule ? `<td class="p-3 text-center">${phase6StatusBadge(di.schedule_result)}</td>` : ''}${showBooking ? `<td class="p-3 font-mono">${escapePhase6Text(di.booking_no || '-')}${!restricted && di.bl_no ? `<div class="text-[10px] text-slate-500">BL: ${escapePhase6Text(di.bl_no)}</div>` : ''}</td>` : ''}${showShipmentStatus ? `<td class="p-3 text-center">${phase6StatusBadge(di.shipment_status)}</td>` : ''}${showPayment ? `<td class="p-3 text-center">${phase6StatusBadge(di.payment_status)}</td>` : ''}</tr>`; }).join('') : `<tr><td colspan="${columnCount}" class="p-8 text-center text-slate-500">${emptyStateLabel}</td></tr>`}</tbody></table></div>
                     </div>
                 </div>`;
         }
@@ -6822,7 +6762,7 @@
                         <div class="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
                             <div>
                                 <div class="flex items-center gap-2 text-[10px] font-bold uppercase tracking-wider text-blue-600 mb-1">
-                                    <span>Frontend Prototype</span><span class="text-slate-300">•</span><span>Mock Data Only</span>
+                                    <span>Legacy Shipping View</span>
                                 </div>
                                 <h2 class="text-xl font-bold text-slate-900">การส่งออก & ติดตามสถานะ (Export Tracking)</h2>
                                 <p class="text-xs text-slate-500 mt-1">PO → DI → WCAT / Invoice → Booking → Truck Allocation → Loading → Documents</p>
@@ -6842,7 +6782,7 @@
             const active = getScopedDIRecords().filter(d => d.status !== 'CANCELLED' && deriveDIStage(d) !== 'COMPLETED');
             const waitingWcat = active.filter(d => !d.wcatNo);
             const bookingActive = active.filter(d => d.booking && d.booking.status !== 'CANCELLED');
-            const today = '2026-08-21'; // prototype date to make mock loading visible
+            const today = getTodayIso();
             const todayEvents = (state.loadingEvents || []).filter(e => e.loadingDate === today && e.status !== 'CANCELLED');
             const todayDI = new Set(todayEvents.map(e => e.diId)).size;
             const todayContainers = todayEvents.reduce((sum, e) => sum + (parseFloat(e.plannedContainers) || 0), 0);
@@ -6913,7 +6853,8 @@
             if (f === 'ACTIVE') return records.filter(d => d.status !== 'CANCELLED' && deriveDIStage(d) !== 'COMPLETED');
             if (f === 'WAITING_WCAT') return records.filter(d => d.status !== 'CANCELLED' && !d.wcatNo);
             if (f === 'TODAY') {
-                const todayIds = new Set((state.loadingEvents || []).filter(e => e.loadingDate === '2026-08-21').map(e => e.diId));
+                const today = getTodayIso();
+                const todayIds = new Set((state.loadingEvents || []).filter(e => e.loadingDate === today).map(e => e.diId));
                 return records.filter(d => todayIds.has(d.id));
             }
             if (f === 'DOCUMENTS') return records.filter(d => ['DOCUMENTS','COMPLETED'].includes(deriveDIStage(d)));
@@ -12114,6 +12055,7 @@
 
         async function openPhase6ShipmentFromCalendar(diId) {
             closeModal();
+            state.shippingWorkspace = 'PHASE6';
             state.currentView = 'shipping';
             renderSidebar();
             renderView();
