@@ -17,6 +17,46 @@ function wrapUniqueError(err, msg) {
   throw err;
 }
 
+function getCanonicalSpecParamRank(item) {
+  const code = String(item?.parameterCode || item?.code || '').trim().toUpperCase();
+  const name = String(item?.parameterName || item?.name || '').trim().toLowerCase();
+
+  // 1. STARCH / Starch
+  if (code === 'STARCH' || code.includes('STARCH') || name.includes('starch')) return 1;
+  // 2. PROTEIN / Protein
+  if (code === 'PROTEIN' || code.includes('PROTEIN') || name.includes('protein')) return 2;
+  // 3. MOISTURE / Moisture
+  if (code === 'MOISTURE' || code.includes('MOISTURE') || name.includes('moisture')) return 3;
+  // 4. SAND_SILICA / Sand & Silica / Sand
+  if (
+    code === 'SAND_SILICA' || code === 'SAND' || code === 'SILICA' ||
+    code.includes('SAND') || code.includes('SILICA') ||
+    name.includes('sand') || name.includes('silica')
+  ) return 4;
+  // 5. FIBER / Fiber
+  if (code === 'FIBER' || code.includes('FIBER') || code.includes('FIBRE') || name.includes('fiber') || name.includes('fibre')) return 5;
+  // 6. Any other parameters
+  return 6;
+}
+
+export function sortProductSpecItems(items = []) {
+  if (!Array.isArray(items) || items.length <= 1) {
+    return Array.isArray(items) ? items.slice() : [];
+  }
+  return items
+    .map((item, idx) => ({ item, idx, rank: getCanonicalSpecParamRank(item) }))
+    .sort((a, b) => {
+      if (a.rank !== b.rank) return a.rank - b.rank;
+      const aSort = a.item?.sortOrder !== undefined && a.item?.sortOrder !== null ? Number(a.item.sortOrder) : null;
+      const bSort = b.item?.sortOrder !== undefined && b.item?.sortOrder !== null ? Number(b.item.sortOrder) : null;
+      if (aSort !== null && bSort !== null && !Number.isNaN(aSort) && !Number.isNaN(bSort) && aSort !== bSort) {
+        return aSort - bSort;
+      }
+      return a.idx - b.idx;
+    })
+    .map(entry => entry.item);
+}
+
 async function fetchActiveStandardSpecsMap(db, productId = null) {
   const sql = `
     SELECT s.standard_spec_id, s.product_id, s.application, s.revision_no, s.status, s.effective_date, s.notes AS spec_notes,
@@ -69,6 +109,12 @@ async function fetchActiveStandardSpecsMap(db, productId = null) {
         sortOrder: Number(row.sort_order),
         notes: row.item_notes || ''
       });
+    }
+  }
+
+  for (const specs of byProduct.values()) {
+    for (const spec of specs) {
+      spec.items = sortProductSpecItems(spec.items);
     }
   }
 
@@ -578,7 +624,7 @@ export function createProductRepository(db) {
         createdAt: r.created_at,
         updatedBy: r.updated_by,
         updatedAt: r.updated_at,
-        items: (itemRows || []).map(i => ({
+        items: sortProductSpecItems((itemRows || []).map(i => ({
           itemId: i.standard_spec_item_id,
           parameterId: i.parameter_id,
           parameterCode: i.parameter_code,
@@ -591,7 +637,7 @@ export function createProductRepository(db) {
           unit: i.unit,
           sortOrder: Number(i.sort_order),
           notes: i.notes
-        }))
+        })))
       };
     },
 
@@ -972,10 +1018,7 @@ export function createProductRepository(db) {
         });
       }
 
-      resolvedItems.sort((a, b) => {
-        if (a.sortOrder !== b.sortOrder) return a.sortOrder - b.sortOrder;
-        return a.parameterName.localeCompare(b.parameterName);
-      });
+      const sortedResolvedItems = sortProductSpecItems(resolvedItems);
 
       return {
         id,
@@ -986,7 +1029,7 @@ export function createProductRepository(db) {
         revisionNo: spec.revisionNo,
         status: spec.status,
         effectiveDate: spec.effectiveDate,
-        items: resolvedItems
+        items: sortedResolvedItems
       };
     }
   };

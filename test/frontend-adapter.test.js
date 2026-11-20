@@ -3025,8 +3025,10 @@ test('Product & Spec Master toolbar supports Cards, List (untruncated), Spec She
     'selectProductQuickSpec',
     'updateProductFilter',
     'resetProductFilters',
+    'sortProductSpecItems',
     'buildProductSpecSummaryText',
     'copyProductSpecSummary',
+    'renderProductSpecSheet',
     'renderProducts'
   ];
   for (const name of helperNames) {
@@ -3241,5 +3243,216 @@ test('Product & Spec Master toolbar supports Cards, List (untruncated), Spec She
     delete globalThis.state;
     delete globalThis.lucide;
     delete globalThis.renderView;
+  }
+});
+
+test('Canonical parameter order (Starch -> Protein -> Moisture -> Sand & Silica -> Fiber -> others) enforced across Cards, List, Spec Sheet, Copy Spec, and Edit Product modal', async () => {
+  const helperNames = [
+    'sortProductSpecItems',
+    'buildProductSpecSummaryText',
+    'copyProductSpecSummary',
+    'renderProductSpecSheet',
+    'renderProducts',
+    'escapeProductSpecHtml',
+    'getActiveSpecParametersForProductModal',
+    'serializeProductSpecItems',
+    'buildProductSpecOperatorOptionsHtml',
+    'buildProductSpecRowHtml',
+    'renderProductSpecRowsIntoDom',
+    'loadProductModalStandardSpecs',
+    'openAddProductModal'
+  ];
+  for (const name of helperNames) {
+    globalThis[name] = new Function(`return (${extractFunction(name).trim()});`)();
+  }
+
+  const outOfOrderItems = [
+    { parameterId: 'PAR-MOIST', parameterCode: 'MOISTURE', parameterName: 'Moisture', operator: 'MAX', numericValue: 14, unit: '%', sortOrder: 1, notes: '' },
+    { parameterId: 'PAR-FIBER', parameterCode: 'FIBER', parameterName: 'Fiber', operator: 'MAX', numericValue: 5, unit: '%', sortOrder: 2, notes: '' },
+    { parameterId: 'PAR-COLOR', parameterCode: 'COLOR', parameterName: 'Color', operator: 'TEXT', textValue: 'Cream', unit: '', sortOrder: 20, notes: '' },
+    { parameterId: 'PAR-STARCH', parameterCode: 'STARCH', parameterName: 'Starch', operator: 'MIN', numericValue: 65, unit: '%', sortOrder: 50, notes: '' },
+    { parameterId: 'PAR-SAND', parameterCode: 'SAND_SILICA', parameterName: 'Sand & Silica', operator: 'MAX', numericValue: 3, unit: '%', sortOrder: 40, notes: '' },
+    { parameterId: 'PAR-ASH', parameterCode: 'ASH', parameterName: 'Ash', operator: 'MAX', numericValue: 4, unit: '%', sortOrder: 10, notes: '' },
+    { parameterId: 'PAR-PROT', parameterCode: 'PROTEIN', parameterName: 'Protein', operator: 'MIN', numericValue: 2, unit: '%', sortOrder: 30, notes: '' }
+  ];
+
+  const product = {
+    id: 'PRD-CANON',
+    code: 'THP65',
+    name: 'Tapioca Hard Pellet 65%',
+    shortName: 'THP65',
+    hsCode: '0714.10.10',
+    defaultUnit: 'MT',
+    status: 'ACTIVE',
+    category: { id: 'CAT-001', name: 'Tapioca' },
+    form: { id: 'FRM-001', name: 'Pellet' },
+    applications: ['FEED_GRADE'],
+    standardSpecs: [
+      {
+        id: 'STD-CANON',
+        application: 'FEED_GRADE',
+        revisionNo: 1,
+        status: 'ACTIVE',
+        items: outOfOrderItems
+      }
+    ]
+  };
+
+  globalThis.state = {
+    currentUser: { role: 'ADMIN' },
+    products: [product],
+    productCategories: [{ id: 'CAT-001', code: 'TAPIOCA', name: 'Tapioca', status: 'ACTIVE' }],
+    productForms: [{ id: 'FRM-001', code: 'PELLET', name: 'Pellet', status: 'ACTIVE' }],
+    specParameters: [
+      { id: 'PAR-MOIST', code: 'MOISTURE', name: 'Moisture', dataType: 'NUMBER', defaultUnit: '%', status: 'ACTIVE', sortOrder: 1 },
+      { id: 'PAR-FIBER', code: 'FIBER', name: 'Fiber', dataType: 'NUMBER', defaultUnit: '%', status: 'ACTIVE', sortOrder: 2 },
+      { id: 'PAR-COLOR', code: 'COLOR', name: 'Color', dataType: 'TEXT', defaultUnit: '', status: 'ACTIVE', sortOrder: 20 },
+      { id: 'PAR-STARCH', code: 'STARCH', name: 'Starch', dataType: 'NUMBER', defaultUnit: '%', status: 'ACTIVE', sortOrder: 50 },
+      { id: 'PAR-SAND', code: 'SAND_SILICA', name: 'Sand & Silica', dataType: 'NUMBER', defaultUnit: '%', status: 'ACTIVE', sortOrder: 40 },
+      { id: 'PAR-ASH', code: 'ASH', name: 'Ash', dataType: 'NUMBER', defaultUnit: '%', status: 'ACTIVE', sortOrder: 10 },
+      { id: 'PAR-PROT', code: 'PROTEIN', name: 'Protein', dataType: 'NUMBER', defaultUnit: '%', status: 'ACTIVE', sortOrder: 30 }
+    ],
+    productViewMode: 'CARDS',
+    productFilters: { search: '', categoryId: 'ALL', status: 'ALL' },
+    selectedSpecProductId: 'PRD-CANON'
+  };
+  globalThis.lucide = { createIcons() {} };
+
+  const assertCanonicalOrderInHtml = (markup, labels) => {
+    let prevPos = -1;
+    for (const label of labels) {
+      const pos = markup.indexOf(label);
+      assert.ok(pos > prevPos, `Expected "${label}" to appear after previous item (pos=${pos}, prev=${prevPos})`);
+      prevPos = pos;
+    }
+  };
+
+  const container = { innerHTML: '' };
+  let copiedText = '';
+  const origNavigator = Object.getOwnPropertyDescriptor(globalThis, 'navigator');
+  Object.defineProperty(globalThis, 'navigator', {
+    configurable: true,
+    value: { clipboard: { async writeText(text) { copiedText = text; } } }
+  });
+
+  const modalRowsEl = { innerHTML: '' };
+  globalThis.document = {
+    getElementById(id) {
+      if (id === 'productSpecRows') return modalRowsEl;
+      return { classList: { add() {}, remove() {} } };
+    }
+  };
+  let modalHtml = '';
+  globalThis.openModal = (markup) => { modalHtml = markup; };
+  globalThis.fetch = async (url) => {
+    if (url.includes('/standard-specs')) {
+      return {
+        ok: true,
+        async json() {
+          return {
+            status: 'SUCCESS',
+            data: {
+              standardSpecs: [
+                {
+                  id: 'STD-CANON',
+                  application: 'FEED_GRADE',
+                  status: 'ACTIVE',
+                  items: outOfOrderItems
+                }
+              ]
+            }
+          };
+        }
+      };
+    }
+    throw new Error(`Unexpected fetch: ${url}`);
+  };
+
+  try {
+    // 1. Direct sortProductSpecItems check
+    const sorted = globalThis.sortProductSpecItems(outOfOrderItems);
+    assert.deepEqual(
+      sorted.map(i => i.parameterName),
+      ['Starch', 'Protein', 'Moisture', 'Sand & Silica', 'Fiber', 'Ash', 'Color']
+    );
+
+    // 2. Cards view (shows top 4 canonical badges in exact order + "+3")
+    globalThis.state.productViewMode = 'CARDS';
+    globalThis.renderProducts(container);
+    assertCanonicalOrderInHtml(container.innerHTML, [
+      'Starch ≥ 65%',
+      'Protein ≥ 2%',
+      'Moisture ≤ 14%',
+      'Sand &amp; Silica ≤ 3%'
+    ]);
+    assert.match(container.innerHTML, /\+3<\/button>/);
+
+    // 3. List view (shows all 7 untruncated badges in canonical order)
+    globalThis.state.productViewMode = 'LIST';
+    globalThis.renderProducts(container);
+    assertCanonicalOrderInHtml(container.innerHTML, [
+      'Starch ≥ 65%',
+      'Protein ≥ 2%',
+      'Moisture ≤ 14%',
+      'Sand &amp; Silica ≤ 3%',
+      'Fiber ≤ 5%',
+      'Ash ≤ 4%',
+      'Color: Cream'
+    ]);
+
+    // 4. Spec Sheet view (renders rows 1..7 in canonical order)
+    globalThis.state.productViewMode = 'SPEC_SHEET';
+    globalThis.renderProducts(container);
+    assertCanonicalOrderInHtml(container.innerHTML, [
+      '>Starch<',
+      '>Protein<',
+      '>Moisture<',
+      '>Sand &amp; Silica<',
+      '>Fiber<',
+      '>Ash<',
+      '>Color<'
+    ]);
+
+    // 5. Copy Spec clipboard output (numbered 1..7 in canonical order)
+    const summary = await globalThis.copyProductSpecSummary('PRD-CANON');
+    assert.equal(copiedText, summary);
+    assert.match(summary, /1\. Starch \(STARCH\): ≥ 65%/);
+    assert.match(summary, /2\. Protein \(PROTEIN\): ≥ 2%/);
+    assert.match(summary, /3\. Moisture \(MOISTURE\): ≤ 14%/);
+    assert.match(summary, /4\. Sand & Silica \(SAND_SILICA\): ≤ 3%/);
+    assert.match(summary, /5\. Fiber \(FIBER\): ≤ 5%/);
+    assert.match(summary, /6\. Ash \(ASH\): ≤ 4%/);
+    assert.match(summary, /7\. Color \(COLOR\): Cream/);
+
+    // 6. Edit Product modal (both initial openAddProductModal & async loadProductModalStandardSpecs sort canonically)
+    globalThis.openAddProductModal('PRD-CANON');
+    assert.deepEqual(
+      globalThis.state.productModalSpecState.rowsByApp.FEED_GRADE.map(r => r.parameterId),
+      ['PAR-STARCH', 'PAR-PROT', 'PAR-MOIST', 'PAR-SAND', 'PAR-FIBER', 'PAR-ASH', 'PAR-COLOR']
+    );
+    await globalThis.loadProductModalStandardSpecs('PRD-CANON', ['FEED_GRADE']);
+    assert.deepEqual(
+      globalThis.state.productModalSpecState.rowsByApp.FEED_GRADE.map(r => r.parameterId),
+      ['PAR-STARCH', 'PAR-PROT', 'PAR-MOIST', 'PAR-SAND', 'PAR-FIBER', 'PAR-ASH', 'PAR-COLOR']
+    );
+    assert.ok(modalHtml.includes('prodSpecAppScope'));
+    assertCanonicalOrderInHtml(modalRowsEl.innerHTML, [
+      'value="PAR-STARCH" selected',
+      'value="PAR-PROT" selected',
+      'value="PAR-MOIST" selected',
+      'value="PAR-SAND" selected',
+      'value="PAR-FIBER" selected',
+      'value="PAR-ASH" selected',
+      'value="PAR-COLOR" selected'
+    ]);
+  } finally {
+    if (origNavigator) Object.defineProperty(globalThis, 'navigator', origNavigator);
+    else delete globalThis.navigator;
+    for (const name of helperNames) delete globalThis[name];
+    delete globalThis.state;
+    delete globalThis.lucide;
+    delete globalThis.document;
+    delete globalThis.openModal;
+    delete globalThis.fetch;
   }
 });
