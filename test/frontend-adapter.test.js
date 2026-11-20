@@ -3017,3 +3017,229 @@ test('PO Management removes hardcoded mock POs and loads live D1 POs from GET /a
     delete globalThis.fetch;
   }
 });
+
+test('Product & Spec Master toolbar supports Cards, List (untruncated), Spec Sheet, Quick-Select, filters, and Copy Spec', async () => {
+  const helperNames = [
+    'setProductViewMode',
+    'openProductSpecSheet',
+    'selectProductQuickSpec',
+    'updateProductFilter',
+    'resetProductFilters',
+    'buildProductSpecSummaryText',
+    'copyProductSpecSummary',
+    'renderProducts'
+  ];
+  for (const name of helperNames) {
+    globalThis[name] = new Function(`return (${extractFunction(name).trim()});`)();
+  }
+
+  const products = [
+    {
+      id: 'PRD-INACTIVE',
+      code: 'OLD01',
+      name: 'Legacy Tapioca Chip',
+      shortName: 'OLD01',
+      hsCode: '0714.10.00',
+      defaultUnit: 'MT',
+      status: 'INACTIVE',
+      category: { id: 'CAT-001', name: 'Tapioca' },
+      form: { id: 'FRM-002', name: 'Chip' },
+      applications: ['FEED_GRADE'],
+      standardSpecs: []
+    },
+    {
+      id: 'PRD-001',
+      code: 'THP65',
+      name: 'Tapioca Hard Pellet 65%',
+      shortName: 'THP65',
+      hsCode: '0714.10.10',
+      defaultUnit: 'MT',
+      status: 'ACTIVE',
+      category: { id: 'CAT-001', name: 'Tapioca' },
+      form: { id: 'FRM-001', name: 'Pellet' },
+      applications: ['FEED_GRADE', 'PET_GRADE'],
+      standardSpecs: [
+        {
+          id: 'STD-001',
+          application: 'FEED_GRADE',
+          revisionNo: 2,
+          effectiveDate: '2026-08-01',
+          status: 'ACTIVE',
+          items: [
+            { parameterId: 'PAR-001', parameterCode: 'STARCH', parameterName: 'Starch', operator: 'MIN', numericValue: 65, unit: '%', notes: 'Min starch' },
+            { parameterId: 'PAR-002', parameterCode: 'MOISTURE', parameterName: 'Moisture', operator: 'MAX', numericValue: 14, unit: '%', notes: '' },
+            { parameterId: 'PAR-003', parameterCode: 'PH', parameterName: 'pH', operator: 'RANGE', numericValue: 6, numericValueTo: 7.5, unit: '', notes: 'Neutral' },
+            { parameterId: 'PAR-004', parameterCode: 'COLOR', parameterName: 'Color', operator: 'TEXT', textValue: 'Cream', unit: '', notes: 'Visual' },
+            { parameterId: 'PAR-005', parameterCode: 'ASH', parameterName: 'Ash', operator: 'MAX', numericValue: 3, unit: '%', notes: 'Max ash limit' }
+          ]
+        },
+        {
+          id: 'STD-002',
+          application: 'PET_GRADE',
+          revisionNo: 1,
+          effectiveDate: '2026-08-15',
+          status: 'ACTIVE',
+          items: [
+            { parameterId: 'PAR-006', parameterCode: 'FIBER', parameterName: 'Crude Fiber', operator: 'MAX', numericValue: 4.5, unit: '%', notes: 'Pet grade limit' }
+          ]
+        }
+      ]
+    },
+    {
+      id: 'PRD-002',
+      code: 'SBP48',
+      name: 'Soybean Meal 48%',
+      shortName: 'SBM48',
+      hsCode: '2304.00.00',
+      defaultUnit: 'MT',
+      status: 'ACTIVE',
+      category: { id: 'CAT-002', name: 'Protein Meal' },
+      form: { id: 'FRM-003', name: 'Meal' },
+      applications: ['FEED_GRADE'],
+      standardSpecs: [
+        {
+          id: 'STD-003',
+          application: 'FEED_GRADE',
+          revisionNo: 1,
+          status: 'ACTIVE',
+          items: [
+            { parameterId: 'PAR-010', parameterCode: 'PROTEIN', parameterName: 'Crude Protein', operator: 'MIN', numericValue: 48, unit: '%', notes: 'Min protein' }
+          ]
+        }
+      ]
+    }
+  ];
+
+  const container = { innerHTML: '' };
+  let renderCalls = 0;
+  globalThis.state = {
+    currentUser: { role: 'ADMIN' },
+    products,
+    productCategories: [
+      { id: 'CAT-001', code: 'TAPIOCA', name: 'Tapioca', status: 'ACTIVE' },
+      { id: 'CAT-002', code: 'PROTEIN', name: 'Protein Meal', status: 'ACTIVE' }
+    ],
+    productForms: [],
+    specParameters: [],
+    productViewMode: 'CARDS',
+    productFilters: { search: '', categoryId: 'ALL', status: 'ALL' },
+    selectedSpecProductId: null
+  };
+  globalThis.lucide = { createIcons() {} };
+  globalThis.renderView = () => {
+    renderCalls += 1;
+    globalThis.renderProducts(container);
+  };
+
+  let copiedText = '';
+  const origNavigator = Object.getOwnPropertyDescriptor(globalThis, 'navigator');
+  Object.defineProperty(globalThis, 'navigator', {
+    configurable: true,
+    value: {
+      clipboard: {
+        async writeText(text) {
+          copiedText = text;
+        }
+      }
+    }
+  });
+
+  try {
+    // 1. Default CARDS view renders toolbar, Quick-Select options, 3 view buttons, and clickable spec area / +N overflow
+    globalThis.renderProducts(container);
+    assert.match(container.innerHTML, /id="productSpecToolbar"/);
+    assert.match(container.innerHTML, /id="productQuickSelect"/);
+    assert.match(container.innerHTML, /THP65 · Tapioca Hard Pellet 65% \(THP65\)/);
+    assert.match(container.innerHTML, /SBP48 · Soybean Meal 48% \(SBM48\)/);
+    assert.match(container.innerHTML, /data-product-view="CARDS"[^>]*aria-pressed="true"/);
+    assert.match(container.innerHTML, /id="productCardsGrid"/);
+    assert.match(container.innerHTML, /openProductSpecSheet\('PRD-001'\)/);
+    // In Cards view with 2 specs (max 3 per spec), Ash (5th item of FEED_GRADE) is truncated behind +2
+    assert.match(container.innerHTML, /\+2<\/button>/);
+    assert.doesNotMatch(container.innerHTML, /Ash ≤ 3%/);
+    assert.doesNotMatch(container.innerHTML, /undefined/);
+
+    // 2. Switching to LIST view renders table with ALL untruncated spec badges
+    globalThis.setProductViewMode('LIST');
+    assert.equal(globalThis.state.productViewMode, 'LIST');
+    assert.match(container.innerHTML, /data-product-view="LIST"[^>]*aria-pressed="true"/);
+    assert.match(container.innerHTML, /id="productListView"/);
+    assert.match(container.innerHTML, /Starch ≥ 65%/);
+    assert.match(container.innerHTML, /Moisture ≤ 14%/);
+    assert.match(container.innerHTML, /pH 6–7\.5/);
+    assert.match(container.innerHTML, /Color: Cream/);
+    assert.match(container.innerHTML, /Ash ≤ 3%/);
+    assert.match(container.innerHTML, /Crude Fiber ≤ 4\.5%/);
+    assert.match(container.innerHTML, /Crude Protein ≥ 48%/);
+    assert.match(container.innerHTML, /ดูสเปก/);
+    assert.match(container.innerHTML, /แก้ไขสินค้า/);
+
+    // 3. Filters: search by spec parameter name ("Protein"), category filter, status filter, and reset
+    globalThis.updateProductFilter('search', 'Protein');
+    assert.match(container.innerHTML, /SBP48/);
+    assert.doesNotMatch(container.innerHTML, /<div class="font-bold text-slate-900[^>]*>Tapioca Hard Pellet 65%/);
+    assert.match(container.innerHTML, /แสดง 1 \/ 3 รายการ/);
+
+    globalThis.resetProductFilters();
+    assert.match(container.innerHTML, /แสดง 3 \/ 3 รายการ/);
+
+    globalThis.updateProductFilter('categoryId', 'CAT-001');
+    assert.match(container.innerHTML, /แสดง 2 \/ 3 รายการ/);
+
+    globalThis.updateProductFilter('status', 'ACTIVE');
+    assert.match(container.innerHTML, /แสดง 1 \/ 3 รายการ/);
+    assert.match(container.innerHTML, /Tapioca Hard Pellet 65%/);
+    assert.doesNotMatch(container.innerHTML, /Legacy Tapioca Chip<\/div>/);
+
+    globalThis.resetProductFilters();
+
+    // 4. Switching to SPEC_SHEET without prior selection defaults to the FIRST ACTIVE product (PRD-001, skipping INACTIVE PRD-INACTIVE)
+    globalThis.state.selectedSpecProductId = null;
+    globalThis.setProductViewMode('SPEC_SHEET');
+    assert.equal(globalThis.state.productViewMode, 'SPEC_SHEET');
+    assert.equal(globalThis.state.selectedSpecProductId, 'PRD-001');
+    assert.match(container.innerHTML, /id="productSpecSheetView"/);
+    assert.match(container.innerHTML, /Tapioca Hard Pellet 65%/);
+    assert.match(container.innerHTML, /Parameter/);
+    assert.match(container.innerHTML, /Standard \/ Limit/);
+    assert.match(container.innerHTML, /Application/);
+    assert.match(container.innerHTML, /Max ash limit/);
+    assert.match(container.innerHTML, /Pet grade limit/);
+    assert.match(container.innerHTML, /6 รายการเกณฑ์/);
+    assert.match(container.innerHTML, /คัดลอกสเปก \(Copy Spec\)/);
+    assert.match(container.innerHTML, /แก้ไขสินค้า \/ สเปก/);
+
+    // 5. Quick-Select dropdown immediately switches to SPEC_SHEET for chosen product (PRD-002)
+    globalThis.setProductViewMode('CARDS');
+    globalThis.selectProductQuickSpec('PRD-002');
+    assert.equal(globalThis.state.productViewMode, 'SPEC_SHEET');
+    assert.equal(globalThis.state.selectedSpecProductId, 'PRD-002');
+    assert.match(container.innerHTML, /Soybean Meal 48%/);
+    assert.match(container.innerHTML, /Crude Protein/);
+    assert.match(container.innerHTML, /≥ 48/);
+    assert.match(container.innerHTML, /Min protein/);
+
+    // 6. Copy Spec builds formatted plain-text summary and writes to clipboard
+    const summary = await globalThis.copyProductSpecSummary('PRD-001');
+    assert.equal(copiedText, summary);
+    assert.match(summary, /\[THP65\] Tapioca Hard Pellet 65% \(THP65\)/);
+    assert.match(summary, /1\. Starch \(STARCH\): ≥ 65% \[FEED_GRADE\] — Min starch/);
+    assert.match(summary, /5\. Ash \(ASH\): ≤ 3% \[FEED_GRADE\] — Max ash limit/);
+    assert.match(summary, /6\. Crude Fiber \(FIBER\): ≤ 4\.5% \[PET_GRADE\] — Pet grade limit/);
+
+    // 7. Non-admin/manager role (SALES_SUPPORT) can inspect Spec Sheet & Copy Spec, but cannot see Edit Product / Spec buttons
+    globalThis.state.currentUser = { role: 'SALES_SUPPORT' };
+    globalThis.renderProducts(container);
+    assert.match(container.innerHTML, /คัดลอกสเปก \(Copy Spec\)/);
+    assert.doesNotMatch(container.innerHTML, /แก้ไขสินค้า \/ สเปก/);
+    assert.doesNotMatch(container.innerHTML, /openAddProductModal/);
+    assert.ok(renderCalls >= 6);
+  } finally {
+    if (origNavigator) Object.defineProperty(globalThis, 'navigator', origNavigator);
+    else delete globalThis.navigator;
+    for (const name of helperNames) delete globalThis[name];
+    delete globalThis.state;
+    delete globalThis.lucide;
+    delete globalThis.renderView;
+  }
+});

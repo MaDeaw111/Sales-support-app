@@ -368,6 +368,20 @@
                 overflow-y: auto;
                 -webkit-overflow-scrolling: touch;
             }
+            /* Product & Spec Toolbar mobile wrapping */
+            .product-spec-toolbar {
+                padding: 0.75rem !important;
+            }
+            .product-view-switcher {
+                width: 100%;
+                display: grid !important;
+                grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
+            }
+            .product-view-btn {
+                padding: 0.45rem 0.4rem !important;
+                font-size: 0.7rem !important;
+                justify-content: center;
+            }
         }
     </style>
 </head>
@@ -1186,6 +1200,9 @@
             users: [],
             customers: [],
             products: [],
+            productViewMode: 'CARDS',
+            productFilters: { search: '', categoryId: 'ALL', status: 'ALL' },
+            selectedSpecProductId: null,
             productCategories: [],
             productForms: [],
             specParameters: [],
@@ -8374,9 +8391,546 @@
         }
 
         // --- PRODUCTS ---
+        function setProductViewMode(mode) {
+            const validModes = ['CARDS', 'LIST', 'SPEC_SHEET'];
+            const nextMode = validModes.includes(mode) ? mode : 'CARDS';
+            state.productViewMode = nextMode;
+            if (nextMode === 'SPEC_SHEET' && !state.selectedSpecProductId) {
+                const products = Array.isArray(state.products) ? state.products : [];
+                const defaultProd = products.find(p => p.status === 'ACTIVE') || products[0] || null;
+                if (defaultProd) state.selectedSpecProductId = defaultProd.id;
+            }
+            renderView();
+        }
+
+        function openProductSpecSheet(productId) {
+            state.selectedSpecProductId = productId || null;
+            state.productViewMode = 'SPEC_SHEET';
+            renderView();
+        }
+
+        function selectProductQuickSpec(productId) {
+            if (productId) {
+                openProductSpecSheet(productId);
+            } else {
+                state.selectedSpecProductId = null;
+                renderView();
+            }
+        }
+
+        function updateProductFilter(field, value, inputEl = null) {
+            if (!state.productFilters) {
+                state.productFilters = { search: '', categoryId: 'ALL', status: 'ALL' };
+            }
+            const selStart = inputEl && typeof inputEl.selectionStart === 'number' ? inputEl.selectionStart : null;
+            const selEnd = inputEl && typeof inputEl.selectionEnd === 'number' ? inputEl.selectionEnd : null;
+            state.productFilters[field] = value;
+            renderView();
+            if (field === 'search' && typeof document !== 'undefined' && document.getElementById) {
+                const searchInput = document.getElementById('productSearchInput');
+                if (searchInput && typeof searchInput.focus === 'function') {
+                    searchInput.focus();
+                    if (selStart !== null && typeof searchInput.setSelectionRange === 'function') {
+                        try { searchInput.setSelectionRange(selStart, selEnd ?? selStart); } catch (_) {}
+                    }
+                }
+            }
+        }
+
+        function resetProductFilters() {
+            state.productFilters = { search: '', categoryId: 'ALL', status: 'ALL' };
+            renderView();
+        }
+
+        function buildProductSpecSummaryText(product) {
+            if (!product) return '';
+            const cat = product.category || {};
+            const frm = product.form || {};
+            const apps = Array.isArray(product.applications) && product.applications.length > 0
+                ? product.applications.join(', ')
+                : '-';
+            const header = `[${product.code || '-'}] ${product.name || '-'}${product.shortName ? ` (${product.shortName})` : ''}`;
+            const meta = `Category: ${cat.name || cat.id || '-'} | Form: ${frm.name || frm.id || '-'} | HS Code: ${product.hsCode || '-'} | Unit: ${product.defaultUnit || '-'} | Status: ${product.status || 'ACTIVE'}`;
+            const appLine = `Applications: ${apps}`;
+            const activeSpecs = (Array.isArray(product.standardSpecs) ? product.standardSpecs : [])
+                .filter(s => s && Array.isArray(s.items) && s.items.length > 0);
+
+            if (activeSpecs.length === 0) {
+                return [header, meta, appLine, 'Standard Specifications: ยังไม่ได้กำหนด (Not configured)'].join('\n');
+            }
+
+            const lines = [header, meta, appLine, 'Standard Specifications:'];
+            let idx = 1;
+            activeSpecs.forEach(spec => {
+                const appTag = spec.application || '-';
+                spec.items.forEach(item => {
+                    const name = item.parameterName || item.parameterCode || item.parameterId || '-';
+                    const code = item.parameterCode ? ` (${item.parameterCode})` : '';
+                    const unitRaw = item.unit || '';
+                    const unitSuffix = unitRaw ? (unitRaw === '%' ? '%' : ` ${unitRaw}`) : '';
+                    let limit = '-';
+                    if (item.operator === 'MIN') limit = `≥ ${item.numericValue}${unitSuffix}`;
+                    else if (item.operator === 'MAX') limit = `≤ ${item.numericValue}${unitSuffix}`;
+                    else if (item.operator === 'EXACT') limit = `= ${item.numericValue}${unitSuffix}`;
+                    else if (item.operator === 'RANGE') limit = `${item.numericValue}–${item.numericValueTo}${unitSuffix}`;
+                    else if (item.operator === 'TEXT') limit = `${item.textValue || '-'}`;
+                    const notes = item.notes ? ` — ${item.notes}` : '';
+                    lines.push(`${idx}. ${name}${code}: ${limit} [${appTag}]${notes}`);
+                    idx += 1;
+                });
+            });
+            return lines.join('\n');
+        }
+
+        async function copyProductSpecSummary(productId, btnEl = null) {
+            const product = (state.products || []).find(p => p.id === productId);
+            if (!product) return '';
+            const text = buildProductSpecSummaryText(product);
+            let copied = false;
+            try {
+                if (typeof navigator !== 'undefined' && navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
+                    await navigator.clipboard.writeText(text);
+                    copied = true;
+                }
+            } catch (_) {}
+
+            if (!copied && typeof document !== 'undefined' && document.createElement && document.body) {
+                try {
+                    const ta = document.createElement('textarea');
+                    ta.value = text;
+                    ta.setAttribute('readonly', '');
+                    ta.style.position = 'fixed';
+                    ta.style.opacity = '0';
+                    document.body.appendChild(ta);
+                    ta.select();
+                    document.execCommand('copy');
+                    document.body.removeChild(ta);
+                    copied = true;
+                } catch (_) {}
+            }
+
+            if (btnEl && copied) {
+                const originalHtml = btnEl.dataset.originalHtml || btnEl.innerHTML;
+                btnEl.dataset.originalHtml = originalHtml;
+                btnEl.innerHTML = '<span>คัดลอกแล้ว ✓</span>';
+                btnEl.classList.add('!bg-emerald-600', '!text-white', '!border-emerald-600');
+                setTimeout(() => {
+                    btnEl.innerHTML = originalHtml;
+                    btnEl.classList.remove('!bg-emerald-600', '!text-white', '!border-emerald-600');
+                }, 1800);
+            }
+            return text;
+        }
+
         function renderProducts(container) {
             const isAdminOrManager = ['ADMIN', 'MANAGER'].includes(state.currentUser.role);
             const escProd = (v) => String(v ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+            const escJsAttr = (v) => escProd(String(v ?? '').replace(/\\/g, '\\\\').replace(/'/g, "\\'"));
+            const formatSpecItemBadge = (item) => {
+                const label = escProd(item.parameterName || item.parameterCode || item.parameterId || '-');
+                const unitRaw = item.unit || '';
+                const unitSuffix = unitRaw ? (unitRaw === '%' ? '%' : ` ${escProd(unitRaw)}`) : '';
+                if (item.operator === 'MIN') return `${label} ≥ ${escProd(item.numericValue)}${unitSuffix}`;
+                if (item.operator === 'MAX') return `${label} ≤ ${escProd(item.numericValue)}${unitSuffix}`;
+                if (item.operator === 'EXACT') return `${label} = ${escProd(item.numericValue)}${unitSuffix}`;
+                if (item.operator === 'RANGE') return `${label} ${escProd(item.numericValue)}–${escProd(item.numericValueTo)}${unitSuffix}`;
+                if (item.operator === 'TEXT') return `${label}: ${escProd(item.textValue || '-')}`;
+                return label;
+            };
+            const formatSpecLimitCell = (item) => {
+                if (item.operator === 'MIN') return `≥ ${escProd(item.numericValue)}`;
+                if (item.operator === 'MAX') return `≤ ${escProd(item.numericValue)}`;
+                if (item.operator === 'EXACT') return `= ${escProd(item.numericValue)}`;
+                if (item.operator === 'RANGE') return `${escProd(item.numericValue)} – ${escProd(item.numericValueTo)}`;
+                if (item.operator === 'TEXT') return escProd(item.textValue || '-');
+                return '-';
+            };
+            const formatAppShort = (app) => app === 'FEED_GRADE' ? 'FEED' : app === 'PET_GRADE' ? 'PET' : escProd(app || '-');
+            const getActiveSpecs = (p) => (Array.isArray(p?.standardSpecs) ? p.standardSpecs : []).filter(s => s && Array.isArray(s.items) && s.items.length > 0);
+
+            const allProducts = Array.isArray(state.products) ? state.products : [];
+            const filters = state.productFilters || { search: '', categoryId: 'ALL', status: 'ALL' };
+            const searchQuery = String(filters.search || '').trim().toLowerCase();
+            const categoryFilter = filters.categoryId || 'ALL';
+            const statusFilter = filters.status || 'ALL';
+            const viewMode = ['CARDS', 'LIST', 'SPEC_SHEET'].includes(state.productViewMode) ? state.productViewMode : 'CARDS';
+            const hasActiveFilters = Boolean(searchQuery || categoryFilter !== 'ALL' || statusFilter !== 'ALL');
+
+            // Build deduplicated category list from state.productCategories + product DTOs
+            const categoryMap = new Map();
+            (state.productCategories || []).forEach(c => {
+                if (c && c.id) categoryMap.set(c.id, { id: c.id, name: c.name || c.code || c.id });
+            });
+            allProducts.forEach(p => {
+                const c = p && p.category;
+                if (c && c.id && !categoryMap.has(c.id)) {
+                    categoryMap.set(c.id, { id: c.id, name: c.name || c.code || c.id });
+                }
+            });
+            const categoryOptions = Array.from(categoryMap.values()).sort((a, b) => String(a.name).localeCompare(String(b.name)));
+
+            const filteredProducts = allProducts.filter(p => {
+                if (!p) return false;
+                const catId = p.category?.id || p.categoryId || '';
+                if (categoryFilter !== 'ALL' && catId !== categoryFilter) return false;
+                const prodStatus = p.status || 'ACTIVE';
+                if (statusFilter !== 'ALL' && prodStatus !== statusFilter) return false;
+                if (searchQuery) {
+                    const specMatch = getActiveSpecs(p).some(spec =>
+                        spec.items.some(item =>
+                            String(item.parameterName || '').toLowerCase().includes(searchQuery) ||
+                            String(item.parameterCode || '').toLowerCase().includes(searchQuery)
+                        )
+                    );
+                    const haystack = [
+                        p.code, p.name, p.shortName, p.hsCode,
+                        p.category?.name, p.form?.name
+                    ].map(v => String(v || '').toLowerCase());
+                    if (!specMatch && !haystack.some(text => text.includes(searchQuery))) return false;
+                }
+                return true;
+            });
+
+            // Resolve product for Spec Sheet view (explicit quick-select -> first active product -> fallback)
+            let specProduct = allProducts.find(p => p.id === state.selectedSpecProductId) || null;
+            if (!specProduct) {
+                specProduct = filteredProducts.find(p => (p.status || 'ACTIVE') === 'ACTIVE')
+                    || filteredProducts[0]
+                    || allProducts.find(p => (p.status || 'ACTIVE') === 'ACTIVE')
+                    || allProducts[0]
+                    || null;
+            }
+            const quickSelectValue = viewMode === 'SPEC_SHEET'
+                ? (specProduct ? specProduct.id : '')
+                : (state.selectedSpecProductId || '');
+
+            const toolbarHtml = `
+                <div id="productSpecToolbar" class="product-spec-toolbar bg-white rounded-xl border border-slate-200 shadow-sm p-3.5 mb-5 space-y-3">
+                    <div class="flex flex-col lg:flex-row lg:items-end justify-between gap-3">
+                        <div class="flex-1 min-w-0">
+                            <label for="productQuickSelect" class="block text-[10px] font-bold uppercase tracking-wide text-slate-500 mb-1">
+                                เลือกดูสเปกสินค้า (Quick-Select Product Spec)
+                            </label>
+                            <select id="productQuickSelect" onchange="selectProductQuickSpec(this.value)" class="ui-input min-w-0">
+                                <option value="">-- เลือกสินค้าเพื่อดูสเปกฉบับเต็ม (${allProducts.length} รายการ) --</option>
+                                ${allProducts.map(p => {
+                                    const label = `${escProd(p.code)} · ${escProd(p.name)}${p.shortName ? ` (${escProd(p.shortName)})` : ''}${p.status && p.status !== 'ACTIVE' ? ` [${escProd(p.status)}]` : ''}`;
+                                    return `<option value="${escProd(p.id)}" ${quickSelectValue === p.id ? 'selected' : ''}>${label}</option>`;
+                                }).join('')}
+                            </select>
+                        </div>
+                        <div class="shrink-0">
+                            <div class="text-[10px] font-bold uppercase tracking-wide text-slate-500 mb-1">มุมมองการแสดงผล (View Mode)</div>
+                            <div id="productViewModeSwitcher" class="product-view-switcher inline-flex items-center rounded-lg border border-slate-200 bg-slate-50 p-1 gap-1">
+                                <button type="button" data-product-view="CARDS" onclick="setProductViewMode('CARDS')" aria-pressed="${viewMode === 'CARDS' ? 'true' : 'false'}" class="product-view-btn px-3 py-1.5 rounded-md text-xs font-bold flex items-center gap-1.5 whitespace-nowrap ${viewMode === 'CARDS' ? 'bg-blue-600 text-white shadow-sm' : 'text-slate-600 hover:bg-white hover:text-slate-900'}">
+                                    <i data-lucide="layout-grid" class="w-3.5 h-3.5 shrink-0"></i><span>Cards</span><span class="hidden xl:inline text-[10px] opacity-80">(มุมมองการ์ด)</span>
+                                </button>
+                                <button type="button" data-product-view="LIST" onclick="setProductViewMode('LIST')" aria-pressed="${viewMode === 'LIST' ? 'true' : 'false'}" class="product-view-btn px-3 py-1.5 rounded-md text-xs font-bold flex items-center gap-1.5 whitespace-nowrap ${viewMode === 'LIST' ? 'bg-blue-600 text-white shadow-sm' : 'text-slate-600 hover:bg-white hover:text-slate-900'}">
+                                    <i data-lucide="list" class="w-3.5 h-3.5 shrink-0"></i><span>List</span><span class="hidden xl:inline text-[10px] opacity-80">(มุมมองลิสต์)</span>
+                                </button>
+                                <button type="button" data-product-view="SPEC_SHEET" onclick="setProductViewMode('SPEC_SHEET')" aria-pressed="${viewMode === 'SPEC_SHEET' ? 'true' : 'false'}" class="product-view-btn px-3 py-1.5 rounded-md text-xs font-bold flex items-center gap-1.5 whitespace-nowrap ${viewMode === 'SPEC_SHEET' ? 'bg-blue-600 text-white shadow-sm' : 'text-slate-600 hover:bg-white hover:text-slate-900'}">
+                                    <i data-lucide="file-spreadsheet" class="w-3.5 h-3.5 shrink-0"></i><span>Spec Sheet</span><span class="hidden xl:inline text-[10px] opacity-80">(มุมมองเจาะลึกสเปก)</span>
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="pt-2.5 border-t border-slate-100 flex flex-col md:flex-row md:items-end gap-2.5 flex-wrap">
+                        <div class="flex-1 min-w-[200px]">
+                            <label for="productSearchInput" class="block text-[10px] font-bold uppercase tracking-wide text-slate-400 mb-1">ค้นหาสินค้า / พารามิเตอร์สเปก</label>
+                            <div class="relative">
+                                <i data-lucide="search" class="w-3.5 h-3.5 text-slate-400 absolute left-3 top-3"></i>
+                                <input id="productSearchInput" type="text" value="${escProd(filters.search || '')}" oninput="updateProductFilter('search', this.value, this)" placeholder="ค้นหารหัส, ชื่อสินค้า, ชื่อย่อ หรือพารามิเตอร์ (เช่น Starch, Moisture)..." class="ui-input !pl-8">
+                            </div>
+                        </div>
+                        <div class="w-full sm:w-auto sm:min-w-[170px]">
+                            <label for="productCategoryFilter" class="block text-[10px] font-bold uppercase tracking-wide text-slate-400 mb-1">หมวดสินค้า (Category)</label>
+                            <select id="productCategoryFilter" onchange="updateProductFilter('categoryId', this.value)" class="ui-input">
+                                <option value="ALL" ${categoryFilter === 'ALL' ? 'selected' : ''}>ทุกหมวดสินค้า (All)</option>
+                                ${categoryOptions.map(cat => `<option value="${escProd(cat.id)}" ${categoryFilter === cat.id ? 'selected' : ''}>${escProd(cat.name)}</option>`).join('')}
+                            </select>
+                        </div>
+                        <div class="w-full sm:w-auto sm:min-w-[145px]">
+                            <label for="productStatusFilter" class="block text-[10px] font-bold uppercase tracking-wide text-slate-400 mb-1">สถานะ (Status)</label>
+                            <select id="productStatusFilter" onchange="updateProductFilter('status', this.value)" class="ui-input">
+                                <option value="ALL" ${statusFilter === 'ALL' ? 'selected' : ''}>ทุกสถานะ (ALL)</option>
+                                <option value="ACTIVE" ${statusFilter === 'ACTIVE' ? 'selected' : ''}>ACTIVE เท่านั้น</option>
+                                <option value="INACTIVE" ${statusFilter === 'INACTIVE' ? 'selected' : ''}>INACTIVE เท่านั้น</option>
+                            </select>
+                        </div>
+                        <div class="flex items-center justify-between sm:justify-end gap-2">
+                            <span class="text-[11px] font-semibold text-slate-500 whitespace-nowrap">แสดง ${filteredProducts.length} / ${allProducts.length} รายการ</span>
+                            ${hasActiveFilters ? `
+                                <button type="button" onclick="resetProductFilters()" class="ui-btn ui-btn-secondary !min-h-[36px] text-xs whitespace-nowrap">
+                                    <i data-lucide="rotate-ccw" class="w-3.5 h-3.5"></i><span>ล้างตัวกรอง</span>
+                                </button>
+                            ` : ''}
+                        </div>
+                    </div>
+                </div>
+            `;
+
+            let productDisplayHtml = '';
+            if (viewMode === 'CARDS') {
+                productDisplayHtml = `
+                    <div id="productCardsGrid" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                        ${filteredProducts.length > 0 ? filteredProducts.map(p => {
+                            const cat = p.category || {};
+                            const frm = p.form || {};
+                            const activeSpecs = getActiveSpecs(p);
+                            let specSummaryHtml = `
+                                <div onclick="event.stopPropagation(); openProductSpecSheet('${escJsAttr(p.id)}')" title="คลิกเพื่อดูสเปกฉบับเต็ม" class="text-[10px] text-slate-400 italic pt-1.5 border-t border-slate-100 hover:text-teal-700 transition-colors cursor-pointer">
+                                    สเปกมาตรฐาน: ยังไม่ได้กำหนด
+                                </div>
+                            `;
+                            if (activeSpecs.length > 0) {
+                                const maxBadgesPerSpec = activeSpecs.length > 1 ? 3 : 4;
+                                specSummaryHtml = `
+                                    <div onclick="event.stopPropagation(); openProductSpecSheet('${escJsAttr(p.id)}')" title="คลิกเพื่อดูสเปกฉบับเต็ม" class="pt-1.5 border-t border-slate-100 space-y-1.5 rounded-lg p-1.5 -mx-1.5 hover:bg-teal-50/50 transition-colors cursor-pointer">
+                                        <div class="text-[10px] font-bold text-slate-500 uppercase tracking-wide flex items-center justify-between">
+                                            <span>สเปกมาตรฐาน (Standard Spec)</span>
+                                            <span class="text-[9px] font-semibold text-teal-700">${activeSpecs.reduce((acc, s) => acc + s.items.length, 0)} เกณฑ์</span>
+                                        </div>
+                                        ${activeSpecs.map(spec => {
+                                            const visibleItems = spec.items.slice(0, maxBadgesPerSpec);
+                                            const hiddenCount = spec.items.length - visibleItems.length;
+                                            const appLabel = activeSpecs.length > 1 ? `<span class="text-[9px] font-bold uppercase text-slate-500 mr-1">${formatAppShort(spec.application)}:</span>` : '';
+                                            return `
+                                                <div class="flex flex-wrap items-center gap-1">
+                                                    ${appLabel}
+                                                    ${visibleItems.map(item => `<span class="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold bg-teal-50 text-teal-800 border border-teal-200/80">${formatSpecItemBadge(item)}</span>`).join('')}
+                                                    ${hiddenCount > 0 ? `<button type="button" onclick="event.stopPropagation(); openProductSpecSheet('${escJsAttr(p.id)}')" class="inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-bold bg-slate-100 hover:bg-teal-100 text-slate-600 hover:text-teal-800 transition-colors">+${hiddenCount}</button>` : ''}
+                                                </div>
+                                            `;
+                                        }).join('')}
+                                    </div>
+                                `;
+                            }
+                            return `
+                                <div class="bg-white rounded-xl border border-slate-200 shadow-sm p-4 space-y-3 hover:shadow-md transition-shadow flex flex-col justify-between cursor-pointer" onclick="openProductDashboard('${escJsAttr(p.id)}')">
+                                    <div class="space-y-3">
+                                        <div class="flex justify-between items-start gap-2">
+                                            <div class="min-w-0">
+                                                <span class="text-[10px] font-mono bg-blue-50 text-blue-700 font-bold px-2 py-0.5 rounded border border-blue-200">${escProd(p.code)}</span>
+                                                <h3 class="text-sm font-bold text-slate-900 mt-1 leading-snug hover:text-blue-600">${escProd(p.name)}</h3>
+                                                <div class="text-[10px] text-slate-500 font-medium mt-0.5">Short Name: <span class="font-bold text-slate-700">${escProd(p.shortName || '-')}</span></div>
+                                            </div>
+                                            <div class="flex flex-col gap-1 items-end shrink-0">
+                                                ${p.status === 'ACTIVE' ? '<span class="bg-emerald-100 text-emerald-800 text-[9px] font-bold px-1.5 py-0.5 rounded">ACTIVE</span>' : '<span class="bg-slate-100 text-slate-600 text-[9px] font-bold px-1.5 py-0.5 rounded">INACTIVE</span>'}
+                                            </div>
+                                        </div>
+                                        <div class="bg-slate-50 p-2.5 rounded-lg border border-slate-200/80 text-[11px] space-y-1.5">
+                                            <div>หมวดหมู่: <strong class="text-slate-800">${escProd(cat.name || cat.id || '-')}</strong></div>
+                                            <div>รูปแบบสินค้า: <strong class="text-slate-800">${escProd(frm.name || frm.id || '-')}</strong></div>
+                                            <div>พิกัดศุลกากร (HS): <strong class="text-slate-800">${escProd(p.hsCode || '-')}</strong></div>
+                                            <div class="flex flex-wrap gap-1 mt-1.5">
+                                                ${(p.applications || []).map(app => `<span class="bg-slate-200 text-slate-700 text-[9px] px-1 rounded">${escProd(app)}</span>`).join('')}
+                                            </div>
+                                        </div>
+                                        ${specSummaryHtml}
+                                    </div>
+                                    <div class="pt-2 border-t flex items-center justify-between gap-2">
+                                        <button type="button" onclick="event.stopPropagation(); openProductSpecSheet('${escJsAttr(p.id)}')" class="text-xs font-bold text-teal-700 hover:underline flex items-center gap-1">
+                                            <i data-lucide="file-spreadsheet" class="w-3.5 h-3.5"></i><span>ดูสเปก</span>
+                                        </button>
+                                        ${isAdminOrManager ? `
+                                            <button type="button" onclick="event.stopPropagation(); openAddProductModal('${escJsAttr(p.id)}')" class="text-xs font-bold text-blue-600 hover:underline">แก้ไขสินค้า</button>
+                                        ` : ''}
+                                    </div>
+                                </div>
+                            `;
+                        }).join('') : `
+                            <div class="col-span-full bg-slate-50 rounded-xl border-2 border-dashed p-8 text-center text-slate-400 text-sm">
+                                ${allProducts.length === 0 ? 'ไม่พบข้อมูลสินค้าที่ลงทะเบียนไว้ในระบบ' : 'ไม่พบสินค้าที่ตรงกับเงื่อนไขการค้นหา'}
+                            </div>
+                        `}
+                    </div>
+                `;
+            } else if (viewMode === 'LIST') {
+                productDisplayHtml = `
+                    <div id="productListView" class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+                        <div class="overflow-x-auto ui-table-scroll">
+                            <table class="ui-table w-full text-left text-xs min-w-[920px]">
+                                <thead class="bg-slate-50 text-slate-600 uppercase text-[10px] font-bold border-b border-slate-200">
+                                    <tr>
+                                        <th class="p-3">สินค้า (Product)</th>
+                                        <th class="p-3">หมวดหมู่ & รูปแบบ (HS)</th>
+                                        <th class="p-3">Applications</th>
+                                        <th class="p-3">สเปกมาตรฐาน (Standard Specs)</th>
+                                        <th class="p-3 text-center">สถานะ</th>
+                                        <th class="p-3 text-right">จัดการ (Actions)</th>
+                                    </tr>
+                                </thead>
+                                <tbody class="divide-y divide-slate-100">
+                                    ${filteredProducts.length > 0 ? filteredProducts.map(p => {
+                                        const cat = p.category || {};
+                                        const frm = p.form || {};
+                                        const activeSpecs = getActiveSpecs(p);
+                                        const fullBadgesHtml = activeSpecs.length > 0
+                                            ? `<div class="space-y-1.5">${activeSpecs.map(spec => {
+                                                const appLabel = activeSpecs.length > 1
+                                                    ? `<span class="text-[9px] font-bold uppercase text-slate-500 mr-1">${formatAppShort(spec.application)}:</span>`
+                                                    : '';
+                                                return `<div class="flex flex-wrap items-center gap-1">${appLabel}${spec.items.map(item => `<span class="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold bg-teal-50 text-teal-800 border border-teal-200/80">${formatSpecItemBadge(item)}</span>`).join('')}</div>`;
+                                            }).join('')}</div>`
+                                            : '<span class="text-[11px] text-slate-400 italic">ยังไม่ได้กำหนด</span>';
+                                        return `
+                                            <tr class="align-top hover:bg-slate-50/80">
+                                                <td class="p-3 min-w-[200px]">
+                                                    <div class="flex items-center gap-1.5 flex-wrap">
+                                                        <span class="text-[10px] font-mono bg-blue-50 text-blue-700 font-bold px-1.5 py-0.5 rounded border border-blue-200">${escProd(p.code)}</span>
+                                                        ${p.shortName ? `<span class="text-[10px] font-semibold text-slate-500">(${escProd(p.shortName)})</span>` : ''}
+                                                    </div>
+                                                    <div class="font-bold text-slate-900 mt-1 leading-snug cursor-pointer hover:text-blue-600" onclick="openProductSpecSheet('${escJsAttr(p.id)}')">${escProd(p.name)}</div>
+                                                </td>
+                                                <td class="p-3 whitespace-nowrap">
+                                                    <div class="font-semibold text-slate-800">${escProd(cat.name || cat.id || '-')}</div>
+                                                    <div class="text-[11px] text-slate-500">${escProd(frm.name || frm.id || '-')}</div>
+                                                    <div class="text-[10px] font-mono text-slate-400 mt-0.5">HS: ${escProd(p.hsCode || '-')}</div>
+                                                </td>
+                                                <td class="p-3">
+                                                    <div class="flex flex-wrap gap-1">
+                                                        ${(p.applications || []).length > 0 ? (p.applications || []).map(app => `<span class="bg-slate-200 text-slate-700 text-[9px] font-bold px-1.5 py-0.5 rounded whitespace-nowrap">${escProd(app)}</span>`).join('') : '<span class="text-slate-400">-</span>'}
+                                                    </div>
+                                                </td>
+                                                <td class="p-3 min-w-[280px]">${fullBadgesHtml}</td>
+                                                <td class="p-3 text-center whitespace-nowrap">
+                                                    ${p.status === 'ACTIVE' ? '<span class="bg-emerald-100 text-emerald-800 text-[10px] font-bold px-2 py-0.5 rounded">ACTIVE</span>' : '<span class="bg-slate-100 text-slate-600 text-[10px] font-bold px-2 py-0.5 rounded">INACTIVE</span>'}
+                                                </td>
+                                                <td class="p-3 text-right whitespace-nowrap">
+                                                    <div class="inline-flex items-center justify-end gap-2">
+                                                        <button type="button" onclick="openProductSpecSheet('${escJsAttr(p.id)}')" class="px-2.5 py-1 rounded-lg bg-teal-50 hover:bg-teal-100 text-teal-800 border border-teal-200 text-[11px] font-bold">ดูสเปก</button>
+                                                        ${isAdminOrManager ? `<button type="button" onclick="openAddProductModal('${escJsAttr(p.id)}')" class="px-2.5 py-1 rounded-lg bg-white hover:bg-slate-100 text-blue-600 border border-slate-200 text-[11px] font-bold">แก้ไขสินค้า</button>` : ''}
+                                                    </div>
+                                                </td>
+                                            </tr>
+                                        `;
+                                    }).join('') : `
+                                        <tr>
+                                            <td colspan="6" class="p-8 text-center text-slate-400 text-sm">
+                                                ${allProducts.length === 0 ? 'ไม่พบข้อมูลสินค้าที่ลงทะเบียนไว้ในระบบ' : 'ไม่พบสินค้าที่ตรงกับเงื่อนไขการค้นหา'}
+                                            </td>
+                                        </tr>
+                                    `}
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                `;
+            } else {
+                // SPEC_SHEET view
+                if (!specProduct) {
+                    productDisplayHtml = `
+                        <div id="productSpecSheetView" class="bg-slate-50 rounded-xl border-2 border-dashed p-8 text-center text-slate-400 text-sm">
+                            ไม่พบข้อมูลสินค้าสำหรับแสดงตารางสเปก
+                        </div>
+                    `;
+                } else {
+                    const cat = specProduct.category || {};
+                    const frm = specProduct.form || {};
+                    const activeSpecs = getActiveSpecs(specProduct);
+                    const specRows = [];
+                    activeSpecs.forEach(spec => {
+                        spec.items.forEach(item => {
+                            specRows.push({ spec, item });
+                        });
+                    });
+                    const revMeta = activeSpecs.map(s => `${escProd(s.application || '-')}${s.revisionNo !== undefined ? ` (Rev.${escProd(s.revisionNo)})` : ''}${s.effectiveDate ? ` · Eff. ${escProd(s.effectiveDate)}` : ''}`).join(' | ');
+                    productDisplayHtml = `
+                        <div id="productSpecSheetView" class="space-y-4">
+                            <div class="bg-white rounded-xl border border-slate-200 shadow-sm p-5 space-y-4">
+                                <div class="flex flex-col lg:flex-row lg:items-start justify-between gap-4">
+                                    <div class="space-y-2 min-w-0">
+                                        <div class="flex items-center flex-wrap gap-2">
+                                            <span class="text-xs font-mono bg-blue-50 text-blue-700 font-bold px-2.5 py-1 rounded border border-blue-200">${escProd(specProduct.code)}</span>
+                                            <h3 class="text-lg font-black text-slate-900 leading-snug">${escProd(specProduct.name)}</h3>
+                                            ${specProduct.shortName ? `<span class="text-xs font-bold text-slate-500">(${escProd(specProduct.shortName)})</span>` : ''}
+                                            <span class="px-2 py-0.5 rounded text-[10px] font-bold ${specProduct.status === 'ACTIVE' ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-100 text-slate-600'}">${escProd(specProduct.status || 'ACTIVE')}</span>
+                                        </div>
+                                        <div class="flex flex-wrap items-center gap-x-4 gap-y-1.5 text-xs text-slate-600">
+                                            <span>หมวดหมู่: <strong class="text-slate-800">${escProd(cat.name || cat.id || '-')}</strong></span>
+                                            <span>รูปแบบสินค้า: <strong class="text-slate-800">${escProd(frm.name || frm.id || '-')}</strong></span>
+                                            <span>พิกัด HS: <strong class="font-mono text-slate-800">${escProd(specProduct.hsCode || '-')}</strong></span>
+                                            <span>หน่วยตั้งต้น: <strong class="text-slate-800">${escProd(specProduct.defaultUnit || '-')}</strong></span>
+                                        </div>
+                                        <div class="flex flex-wrap items-center gap-1.5 pt-0.5">
+                                            <span class="text-[10px] font-bold uppercase text-slate-400 mr-1">Applications:</span>
+                                            ${(specProduct.applications || []).length > 0 ? (specProduct.applications || []).map(app => `<span class="bg-slate-100 text-slate-700 border border-slate-200 text-[10px] font-bold px-2 py-0.5 rounded">${escProd(app)}</span>`).join('') : '<span class="text-xs text-slate-400">-</span>'}
+                                        </div>
+                                    </div>
+                                    <div class="flex flex-wrap items-center gap-2 shrink-0">
+                                        <button id="copyProductSpecBtn" type="button" onclick="copyProductSpecSummary('${escJsAttr(specProduct.id)}', this)" class="ui-btn ui-btn-secondary text-xs whitespace-nowrap">
+                                            <i data-lucide="copy" class="w-3.5 h-3.5"></i><span>คัดลอกสเปก (Copy Spec)</span>
+                                        </button>
+                                        ${isAdminOrManager ? `
+                                            <button type="button" onclick="openAddProductModal('${escJsAttr(specProduct.id)}')" class="ui-btn ui-btn-primary text-xs whitespace-nowrap">
+                                                <i data-lucide="edit-3" class="w-3.5 h-3.5"></i><span>แก้ไขสินค้า / สเปก</span>
+                                            </button>
+                                        ` : ''}
+                                        <button type="button" onclick="openProductDashboard('${escJsAttr(specProduct.id)}')" class="ui-btn ui-btn-secondary text-xs whitespace-nowrap">
+                                            <i data-lucide="history" class="w-3.5 h-3.5"></i><span>Revision</span>
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+                                <div class="p-4 bg-slate-50 border-b border-slate-200 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                                    <div>
+                                        <h4 class="text-sm font-black text-slate-900">ตารางเกณฑ์สเปกมาตรฐาน (Standard Specification)</h4>
+                                        ${revMeta ? `<p class="text-[11px] text-slate-500 mt-0.5">${revMeta}</p>` : '<p class="text-[11px] text-slate-500 mt-0.5">เกณฑ์คุณภาพมาตรฐานของสินค้าที่ใช้งานอยู่ปัจจุบัน</p>'}
+                                    </div>
+                                    <span class="inline-flex items-center self-start sm:self-auto px-2.5 py-1 rounded-full text-[11px] font-bold bg-teal-50 text-teal-800 border border-teal-200">${specRows.length} รายการเกณฑ์</span>
+                                </div>
+                                ${specRows.length > 0 ? `
+                                    <div class="overflow-x-auto ui-table-scroll">
+                                        <table class="ui-table w-full text-left text-xs min-w-[640px]">
+                                            <thead class="bg-white text-slate-500 uppercase text-[10px] font-bold border-b border-slate-200">
+                                                <tr>
+                                                    <th class="p-3 w-12 text-center">#</th>
+                                                    <th class="p-3">Parameter</th>
+                                                    <th class="p-3">Standard / Limit</th>
+                                                    <th class="p-3">Unit</th>
+                                                    <th class="p-3">Application</th>
+                                                    <th class="p-3">Notes</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody class="divide-y divide-slate-100">
+                                                ${specRows.map(({ spec, item }, index) => `
+                                                    <tr class="hover:bg-slate-50/70">
+                                                        <td class="p-3 text-center font-mono text-slate-400 font-semibold">${index + 1}</td>
+                                                        <td class="p-3">
+                                                            <div class="font-bold text-slate-900">${escProd(item.parameterName || item.parameterCode || item.parameterId || '-')}</div>
+                                                            ${item.parameterCode ? `<div class="text-[10px] font-mono text-slate-400">${escProd(item.parameterCode)}</div>` : ''}
+                                                        </td>
+                                                        <td class="p-3 whitespace-nowrap">
+                                                            <span class="inline-flex items-center px-2 py-0.5 rounded font-bold text-xs bg-teal-50 text-teal-800 border border-teal-200">${formatSpecLimitCell(item)}</span>
+                                                        </td>
+                                                        <td class="p-3 text-slate-700 font-semibold whitespace-nowrap">${escProd(item.unit || '-')}</td>
+                                                        <td class="p-3 whitespace-nowrap">
+                                                            <span class="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold bg-slate-100 text-slate-700 border border-slate-200">${escProd(spec.application || '-')}</span>
+                                                        </td>
+                                                        <td class="p-3 text-slate-600">${escProd(item.notes || '-')}</td>
+                                                    </tr>
+                                                `).join('')}
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                ` : `
+                                    <div class="p-8 text-center space-y-3">
+                                        <p class="text-xs text-slate-400">ยังไม่ได้กำหนดเกณฑ์สเปกมาตรฐานสำหรับสินค้านี้</p>
+                                        ${isAdminOrManager ? `
+                                            <button type="button" onclick="openAddProductModal('${escJsAttr(specProduct.id)}')" class="ui-btn ui-btn-primary text-xs">
+                                                + กำหนดสเปกสินค้า
+                                            </button>
+                                        ` : ''}
+                                    </div>
+                                `}
+                            </div>
+                        </div>
+                    `;
+                }
+            }
+
             const categoryAndFormMaster = isAdminOrManager ? `
                 <section class="mt-6 grid grid-cols-1 lg:grid-cols-2 gap-4">
                     <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
@@ -8435,7 +8989,7 @@
                 </section>
             ` : '';
             container.innerHTML = `
-                <div class="flex justify-between items-center mb-6">
+                <div class="flex justify-between items-center mb-4 gap-3 flex-wrap">
                     <div>
                         <h2 class="text-xl font-bold text-slate-900">สินค้า & ข้อกำหนดคุณภาพ (Product & Spec Master)</h2>
                         <p class="text-xs text-slate-500">จัดการข้อมูลรายละเอียดสินค้า ข้อมูลหมวดหมู่ รูปแบบ และเกณฑ์สเปกคุณภาพเคมี</p>
@@ -8446,83 +9000,8 @@
                         </button>
                     ` : ''}
                 </div>
-                <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                    ${state.products && state.products.length > 0 ? state.products.map(p => {
-                        const cat = p.category || {};
-                        const frm = p.form || {};
-                        const escSpec = (v) => String(v ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
-                        const formatSpecItemBadge = (item) => {
-                            const label = escSpec(item.parameterName || item.parameterCode || item.parameterId || '-');
-                            const unitRaw = item.unit || '';
-                            const unitSuffix = unitRaw ? (unitRaw === '%' ? '%' : ` ${escSpec(unitRaw)}`) : '';
-                            if (item.operator === 'MIN') return `${label} ≥ ${escSpec(item.numericValue)}${unitSuffix}`;
-                            if (item.operator === 'MAX') return `${label} ≤ ${escSpec(item.numericValue)}${unitSuffix}`;
-                            if (item.operator === 'EXACT') return `${label} = ${escSpec(item.numericValue)}${unitSuffix}`;
-                            if (item.operator === 'RANGE') return `${label} ${escSpec(item.numericValue)}–${escSpec(item.numericValueTo)}${unitSuffix}`;
-                            if (item.operator === 'TEXT') return `${label}: ${escSpec(item.textValue || '-')}`;
-                            return label;
-                        };
-                        const activeSpecs = (Array.isArray(p.standardSpecs) ? p.standardSpecs : []).filter(s => s && Array.isArray(s.items) && s.items.length > 0);
-                        let specSummaryHtml = '<div class="text-[10px] text-slate-400 italic pt-1">สเปกมาตรฐาน: ยังไม่ได้กำหนด</div>';
-                        if (activeSpecs.length > 0) {
-                            const maxBadgesPerSpec = activeSpecs.length > 1 ? 3 : 4;
-                            specSummaryHtml = `
-                                <div class="pt-1.5 border-t border-slate-100 space-y-1.5">
-                                    <div class="text-[10px] font-bold text-slate-500 uppercase tracking-wide flex items-center justify-between">
-                                        <span>สเปกมาตรฐาน (Standard Spec)</span>
-                                        <span class="text-[9px] font-semibold text-teal-700">${activeSpecs.reduce((acc, s) => acc + s.items.length, 0)} เกณฑ์</span>
-                                    </div>
-                                    ${activeSpecs.map(spec => {
-                                        const visibleItems = spec.items.slice(0, maxBadgesPerSpec);
-                                        const hiddenCount = spec.items.length - visibleItems.length;
-                                        const appLabel = activeSpecs.length > 1 ? `<span class="text-[9px] font-bold uppercase text-slate-500 mr-1">${spec.application === 'FEED_GRADE' ? 'FEED' : spec.application === 'PET_GRADE' ? 'PET' : escSpec(spec.application)}:</span>` : '';
-                                        return `
-                                            <div class="flex flex-wrap items-center gap-1">
-                                                ${appLabel}
-                                                ${visibleItems.map(item => `<span class="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold bg-teal-50 text-teal-800 border border-teal-200/80">${formatSpecItemBadge(item)}</span>`).join('')}
-                                                ${hiddenCount > 0 ? `<span class="inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-bold bg-slate-100 text-slate-600">+${hiddenCount}</span>` : ''}
-                                            </div>
-                                        `;
-                                    }).join('')}
-                                </div>
-                            `;
-                        }
-                        return `
-                            <div class="bg-white rounded-xl border border-slate-200 shadow-sm p-4 space-y-3 hover:shadow-md transition-shadow flex flex-col justify-between cursor-pointer" onclick="openProductDashboard('${p.id}')">
-                                <div class="space-y-3">
-                                    <div class="flex justify-between items-start">
-                                        <div>
-                                            <span class="text-[10px] font-mono bg-blue-50 text-blue-700 font-bold px-2 py-0.5 rounded border border-blue-200">${p.code}</span>
-                                            <h3 class="text-sm font-bold text-slate-900 mt-1 leading-snug hover:text-blue-600">${p.name}</h3>
-                                            <div class="text-[10px] text-slate-500 font-medium mt-0.5">Short Name: <span class="font-bold text-slate-700">${p.shortName}</span></div>
-                                        </div>
-                                        <div class="flex flex-col gap-1 items-end">
-                                            ${p.status === 'ACTIVE' ? '<span class="bg-emerald-100 text-emerald-800 text-[9px] font-bold px-1.5 py-0.5 rounded">ACTIVE</span>' : '<span class="bg-slate-100 text-slate-600 text-[9px] font-bold px-1.5 py-0.5 rounded">INACTIVE</span>'}
-                                        </div>
-                                    </div>
-                                    <div class="bg-slate-50 p-2.5 rounded-lg border border-slate-200/80 text-[11px] space-y-1.5">
-                                        <div>หมวดหมู่: <strong class="text-slate-800">${cat.name || cat.id || '-'}</strong></div>
-                                        <div>รูปแบบสินค้า: <strong class="text-slate-800">${frm.name || frm.id || '-'}</strong></div>
-                                        <div>พิกัดศุลกากร (HS): <strong class="text-slate-800">${p.hsCode || '-'}</strong></div>
-                                        <div class="flex flex-wrap gap-1 mt-1.5">
-                                            ${(p.applications || []).map(app => `<span class="bg-slate-200 text-slate-700 text-[9px] px-1 rounded">${app}</span>`).join('')}
-                                        </div>
-                                    </div>
-                                    ${specSummaryHtml}
-                                </div>
-                                ${isAdminOrManager ? `
-                                    <div class="pt-2 border-t flex justify-end">
-                                        <button onclick="event.stopPropagation(); openAddProductModal('${p.id}')" class="text-xs font-bold text-blue-600 hover:underline">แก้ไขสินค้า</button>
-                                    </div>
-                                ` : ''}
-                            </div>
-                        `;
-                    }).join('') : `
-                        <div class="col-span-full bg-slate-50 rounded-xl border-2 border-dashed p-8 text-center text-slate-400 text-sm">
-                            ไม่พบข้อมูลสินค้าที่ลงทะเบียนไว้ในระบบ
-                        </div>
-                    `}
-                </div>
+                ${toolbarHtml}
+                ${productDisplayHtml}
                 ${categoryAndFormMaster}
                 ${parameterMaster}
             `;
