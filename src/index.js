@@ -78,11 +78,19 @@ export default {
       url.pathname === '/api/service-partners' || url.pathname.startsWith('/api/service-partners/') ||
       url.pathname === '/api/customer-credits' || url.pathname.startsWith('/api/customer-credits/') ||
       url.pathname === '/api/delivery-instructions' || url.pathname.startsWith('/api/delivery-instructions/') ||
-      url.pathname === '/api/shipments-v2' || url.pathname.startsWith('/api/shipments-v2/')
+      url.pathname === '/api/shipments-v2' || url.pathname.startsWith('/api/shipments-v2/') ||
+      url.pathname === '/api/phase6/shipments' || url.pathname.startsWith('/api/phase6/shipments/')
     ) {
       if (!env.DB) return jsonResponse({ status: 'ERROR', message: 'D1 DB binding is not configured.' }, 503);
       const { createShippingDiHandlerFromEnv } = await import('./shipping-di/routes.js');
       return createShippingDiHandlerFromEnv(env)(request);
+    }
+
+    if (url.pathname === '/api/documents' || url.pathname.startsWith('/api/documents/')) {
+      if (!env.DB) return jsonResponse({ status: 'ERROR', message: 'D1 DB binding is not configured.' }, 503);
+      if (!env.DOCS_BUCKET) return jsonResponse({ status: 'ERROR', message: 'R2 DOCS_BUCKET binding is not configured.' }, 503);
+      const { createDocumentsHandlerFromEnv } = await import('./documents/routes.js');
+      return createDocumentsHandlerFromEnv(env)(request, env);
     }
 
     if (

@@ -17,5 +17,11 @@
       "database_id": "f1618ec6-84b5-46bb-a2ad-b0317e561d65",
       "migrations_dir": "migrations"
     }
+  ],
+  "r2_buckets": [
+    {
+      "binding": "DOCS_BUCKET",
+      "bucket_name": "wcat-sales-docs"
+    }
   ]
 }

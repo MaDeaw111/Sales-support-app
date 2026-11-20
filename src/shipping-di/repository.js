@@ -1,4 +1,5 @@
 import crypto from 'node:crypto';
+import { getShipmentAttachmentSummaryMap } from '../documents/repository.js';
 import {
   codedError,
   validateDeliveryInstruction,
@@ -2201,7 +2202,90 @@ export function createShippingDiRepository(db) {
       }
       query += ' ORDER BY di.created_at DESC, di.di_id DESC';
       const { results } = await db.prepare(query).bind(...params).all();
-      return (results || []).map((row) => ({ ...row, planned_qty_mt: Number(row.planned_qty_mt) }));
+      const rows = (results || []).map((row) => ({ ...row, planned_qty_mt: Number(row.planned_qty_mt) }));
+      const summaryMap = await getShipmentAttachmentSummaryMap(db, rows.map((r) => r.shipment_id).filter(Boolean));
+      if (summaryMap.size === 0) return rows;
+      return rows.map((row) => {
+        const docs = row.shipment_id ? summaryMap.get(row.shipment_id) : null;
+        if (!docs) return row;
+        return {
+          ...row,
+          stuffing_report_count: docs.stuffing_report_count,
+          all_ship_doc_count: docs.all_ship_doc_count,
+          customer_docs_count: docs.customer_docs_count,
+          di_doc_count: docs.di_doc_count
+        };
+      });
+    },
+
+    async listPhase6Shipments(filters = {}) {
+      const hasBlNo = await hasPhase6ShipmentBlNoColumn(db);
+      let query = `
+        SELECT
+          shipment.shipment_id,
+          shipment.di_id,
+          di.di_no,
+          di.customer_id,
+          customer.customer_name,
+          customer.owner_user_id,
+          di.po_id,
+          revision.customer_po_no,
+          di.shipping_month,
+          di.shipping_period,
+          di.container_plan,
+          di.status AS di_status,
+          shipment.status,
+          shipment.booking_no,
+          ${hasBlNo ? 'shipment.bl_no' : 'NULL AS bl_no'},
+          shipment.vessel,
+          shipment.etd,
+          shipment.eta,
+          shipment.planned_loading_date,
+          shipment.actual_loading_date,
+          shipment.schedule_result,
+          shipment.forwarder_partner_id,
+          shipment.shipping_line_partner_id,
+          shipment.trucking_partner_id,
+          shipment.payment_status,
+          shipment.created_at,
+          shipment.updated_at
+        FROM phase6_shipments shipment
+        JOIN delivery_instructions di ON di.di_id = shipment.di_id
+        JOIN customers customer ON customer.customer_id = di.customer_id
+        LEFT JOIN po_revisions revision ON revision.revision_id = di.po_revision_id
+        WHERE shipment.status <> 'CANCELLED'
+          AND di.status <> 'CANCELLED'
+      `;
+      const params = [];
+      if (filters.ownedByUserId) {
+        query += ' AND customer.owner_user_id = ?';
+        params.push(filters.ownedByUserId);
+      }
+      if (filters.status) {
+        query += ' AND shipment.status = ?';
+        params.push(filters.status);
+      }
+      query += ' ORDER BY shipment.created_at DESC, shipment.shipment_id DESC';
+      const { results } = await db.prepare(query).bind(...params).all();
+      const rows = results || [];
+      const summaryMap = await getShipmentAttachmentSummaryMap(db, rows.map((r) => r.shipment_id));
+      return rows.map((row) => {
+        const docs = summaryMap.get(row.shipment_id) || {
+          stuffing_report_count: 0,
+          all_ship_doc_count: 0,
+          customer_docs_count: 0,
+          di_doc_count: 0,
+          all_ship_doc_uploaded_at: null
+        };
+        return {
+          ...row,
+          stuffing_report_count: docs.stuffing_report_count,
+          all_ship_doc_count: docs.all_ship_doc_count,
+          customer_docs_count: docs.customer_docs_count,
+          di_doc_count: docs.di_doc_count,
+          all_ship_doc_uploaded_at: docs.all_ship_doc_uploaded_at
+        };
+      });
     },
 
     async suggestPartnersForCustomer(customerId) {

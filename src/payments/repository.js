@@ -1,3 +1,5 @@
+import { getShipmentAttachmentSummaryMap } from '../documents/repository.js';
+
 const CURRENCY_ORDER = ['USD', 'EUR', 'THB'];
 
 function roundMoney(value) {
@@ -200,6 +202,18 @@ export function createPaymentsRepository(db) {
 
       const { results } = await db.prepare(query).bind(...params).all();
       let items = (results || []).map(normalizeShipmentPaymentRow);
+      const docSummaryMap = await getShipmentAttachmentSummaryMap(db, items.map((x) => x.shipment_id));
+      if (docSummaryMap.size > 0) {
+        items = items.map((item) => {
+          const docs = docSummaryMap.get(item.shipment_id);
+          if (!docs) return item;
+          return {
+            ...item,
+            all_ship_doc_uploaded_at: docs.all_ship_doc_uploaded_at || null,
+            payment_slip_count: Number(docs.payment_slip_count || 0)
+          };
+        });
+      }
 
       if (options.invoiceReadiness) {
         items = items.filter((item) => item.invoice_readiness === options.invoiceReadiness);
@@ -288,6 +302,12 @@ export function createPaymentsRepository(db) {
       if (!row) return null;
 
       const shipment = normalizeShipmentPaymentRow(row);
+      const detailDocMap = await getShipmentAttachmentSummaryMap(db, [shipment.shipment_id]);
+      const detailDocs = detailDocMap.get(shipment.shipment_id);
+      if (detailDocs) {
+        shipment.all_ship_doc_uploaded_at = detailDocs.all_ship_doc_uploaded_at || null;
+        shipment.payment_slip_count = Number(detailDocs.payment_slip_count || 0);
+      }
 
       const { results: invoiceRows } = await db.prepare(`
         SELECT

@@ -67,16 +67,43 @@ export function projectShippingDiForRole(record, caller) {
 
 export function projectShippingDiWorkspaceForRole(record, caller) {
   if (caller.role === 'EXTERNAL_SALES') {
-    return pickPresent(record, [
+    const projected = pickPresent(record, [
       'di_no', 'di_status',
       'booking_no', 'planned_loading_date', 'actual_loading_date', 'schedule_result', 'shipment_status'
     ]);
+    if (Number(record.customer_docs_count || 0) > 0) {
+      projected.customer_docs_count = Number(record.customer_docs_count);
+      projected.stuffing_report_count = Number(record.stuffing_report_count || 0);
+      projected.all_ship_doc_count = Number(record.all_ship_doc_count || 0);
+    }
+    return projected;
   }
   if (caller.role === 'PRODUCTION_WAREHOUSE') {
     return pickPresent(record, [
       'product_summary', 'packing_summary', 'planned_qty_mt', 'container_plan',
       'planned_loading_date', 'actual_loading_date'
     ]);
+  }
+  return record;
+}
+
+export function projectPhase6ShipmentForRole(record, caller) {
+  if (!record || !caller) return record;
+  if (caller.role === 'EXTERNAL_SALES') {
+    return {
+      ...pickPresent(record, [
+        'shipment_id', 'di_id', 'di_no', 'customer_id', 'customer_name',
+        'po_id', 'customer_po_no', 'status', 'booking_no', 'bl_no',
+        'vessel', 'etd', 'eta', 'planned_loading_date', 'actual_loading_date',
+        'schedule_result', 'all_ship_doc_uploaded_at'
+      ]),
+      stuffing_report_count: Number(record.stuffing_report_count || 0),
+      all_ship_doc_count: Number(record.all_ship_doc_count || 0),
+      customer_docs_count: Number(record.customer_docs_count || 0)
+    };
+  }
+  if (caller.role === 'PRODUCTION_WAREHOUSE') {
+    return projectShippingDiForRole(record, caller);
   }
   return record;
 }
@@ -293,6 +320,46 @@ export function createShippingDiHandler({ repo, resolveUser, db }) {
       if (!shipment) return json({ status: 'ERROR', message: 'SHIPMENT_NOT_FOUND' }, 404);
       if (!await canReadShippingDiRecord(caller, shipment)) return json({ status: 'ERROR', message: 'Permission denied.' }, 403);
       return json({ status: 'SUCCESS', data: { shipment: projectShippingDiForRole(shipment, caller) } });
+    }
+
+    if (path === '/api/phase6/shipments' && method === 'GET') {
+      if (!PHASE6_READ_ROLES.includes(caller.role)) return json({ status: 'ERROR', message: 'Permission denied.' }, 403);
+      if (caller.role === 'EXTERNAL_SALES' && !db?.prepare) return json({ status: 'ERROR', message: 'Permission denied.' }, 403);
+      const shipments = await activeRepo.listPhase6Shipments({
+        ownedByUserId: caller.role === 'EXTERNAL_SALES' ? caller.user_id : undefined,
+        status: url.searchParams.get('status') || undefined
+      });
+      return json({
+        status: 'SUCCESS',
+        data: {
+          shipments: shipments.map((item) => projectPhase6ShipmentForRole(item, caller))
+        }
+      });
+    }
+
+    const phase6ShipmentMatch = path.match(/^\/api\/phase6\/shipments\/([^/]+)$/);
+    if (phase6ShipmentMatch && method === 'GET') {
+      if (!PHASE6_READ_ROLES.includes(caller.role)) return json({ status: 'ERROR', message: 'Permission denied.' }, 403);
+      const shipment = await activeRepo.getPhase6ShipmentByShipmentId(decodeURIComponent(phase6ShipmentMatch[1]));
+      if (!shipment) return json({ status: 'ERROR', message: 'SHIPMENT_NOT_FOUND' }, 404);
+      if (!await canReadShippingDiRecord(caller, shipment)) return json({ status: 'ERROR', message: 'Permission denied.' }, 403);
+      const allShipments = await activeRepo.listPhase6Shipments({
+        ownedByUserId: caller.role === 'EXTERNAL_SALES' ? caller.user_id : undefined
+      });
+      const summaryRow = allShipments.find((s) => s.shipment_id === shipment.shipment_id);
+      const enriched = summaryRow
+        ? {
+          ...shipment,
+          customer_name: summaryRow.customer_name,
+          po_id: summaryRow.po_id,
+          customer_po_no: summaryRow.customer_po_no,
+          stuffing_report_count: summaryRow.stuffing_report_count,
+          all_ship_doc_count: summaryRow.all_ship_doc_count,
+          customer_docs_count: summaryRow.customer_docs_count,
+          all_ship_doc_uploaded_at: summaryRow.all_ship_doc_uploaded_at
+        }
+        : shipment;
+      return json({ status: 'SUCCESS', data: { shipment: projectPhase6ShipmentForRole(enriched, caller) } });
     }
 
     const shipmentHistoryMatch = path.match(/^\/api\/shipments-v2\/([^/]+)\/history$/);

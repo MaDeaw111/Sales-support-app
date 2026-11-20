@@ -50,7 +50,11 @@ function pick(record, fields) {
 export function projectPaymentItemForRole(item, caller) {
   if (!item || !caller) return item;
   if (caller.role === 'EXTERNAL_SALES') {
-    return pick(item, EXTERNAL_SALES_ITEM_FIELDS);
+    const projected = pick(item, EXTERNAL_SALES_ITEM_FIELDS);
+    if (item.all_ship_doc_uploaded_at) {
+      projected.all_ship_doc_uploaded_at = item.all_ship_doc_uploaded_at;
+    }
+    return projected;
   }
   return {
     ...item,
