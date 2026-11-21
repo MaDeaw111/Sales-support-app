@@ -273,8 +273,8 @@ function plannedEnd(dto) {
 }
 
 export function calculateScheduleResult(shippingMonth, shippingPeriod, actualLoadingDate, start, end) {
-  if (start && end && end > start) return actualLoadingDate >= start && actualLoadingDate <= end ? 'ON_PLAN' : 'OUT_OF_PLAN';
   const actualDate = requiredScheduleDate(actualLoadingDate);
+  if (start || end) return actualDate >= (start || end) && actualDate <= (end || start) ? 'ON_PLAN' : 'OUT_OF_PLAN';
   const actualMonth = actualDate.slice(0, 7);
   const actualDay = Number(actualDate.slice(8, 10));
   if (actualMonth !== shippingMonth) return 'OUT_OF_PLAN';

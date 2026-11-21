@@ -1561,3 +1561,22 @@ test('recording actual loading on the last day of a multi-day plan is on plan', 
   const result = await repo.updateShipmentSchedule(shipment.shipment_id,{actualLoadingDate:'2026-09-24'},'U_EXPORT');
   assert.equal(result.schedule_result,'ON_PLAN');
 });
+
+test('single-day loading plan overrides shipping half and rescheduling corrects stale results', async () => {
+  const {db, wrappedDb}=await setupTestDb();
+  const repo=createShippingDiRepository(wrappedDb);
+  db.exec("UPDATE delivery_instructions SET shipping_month='2026-01', shipping_period='FIRST_HALF' WHERE di_id='DI-CONFIRMED'");
+  const shipment=await repo.createShipmentForDeliveryInstruction('DI-CONFIRMED','U_EXPORT');
+  const id=shipment.shipment_id;
+  await repo.recordShipmentBooking(id,{bookingNo:'BK-SINGLE'},'U_EXPORT');
+  const plan=(start,end=start)=>repo.updateShipmentSchedule(id,{plannedLoadingDate:start,plannedLoadingEndDate:end},'U_EXPORT');
+  await plan('2026-01-22');
+  assert.equal((await repo.updateShipmentSchedule(id,{actualLoadingDate:'2026-01-22'},'U_EXPORT')).schedule_result,'ON_PLAN');
+  await plan('2026-01-21');
+  assert.equal((await repo.getPhase6Shipment(id)).schedule_result,'OUT_OF_PLAN');
+  db.prepare("UPDATE phase6_shipments SET status='LOADED' WHERE shipment_id=?").run(id);
+  assert.equal((await plan('2026-01-22')).schedule_result,'ON_PLAN');
+  db.prepare("UPDATE phase6_shipments SET schedule_result='OUT_OF_PLAN' WHERE shipment_id=?").run(id);
+  assert.equal((await repo.getPhase6ShipmentByShipmentId(id)).schedule_result,'ON_PLAN');
+  assert.ok((await repo.listDeliveryInstructionWorkspace({scheduleResult:'ON_PLAN'})).some(row=>row.shipment_id===id && row.schedule_result==='ON_PLAN'));
+});

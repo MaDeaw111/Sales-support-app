@@ -47,3 +47,20 @@ test('recorded preliminary invoices use the primary green finalize button', () =
   ctx.canEditPhase6Shipping=()=>false;
   assert.doesNotMatch(render(),/data-phase6-action="finalize-invoice"/);
 });
+
+test('DI schedule shows a pending badge and two aligned date rows',()=>{
+  const {ctx,shipment}=harness();
+  load(ctx,'renderPhase6DeliveryInstructionDetail');
+  ctx.phase6PartnerOptions=()=> '';
+  ctx.state.currentUser={role:'ADMIN'};
+  Object.assign(shipment,{planned_loading_date:'2026-01-22',planned_loading_end_date:'2026-01-24',actual_loading_date:null,schedule_result:'OUT_OF_PLAN'});
+  const render=()=>ctx.renderPhase6DeliveryInstructionDetail({di_id:'D1',di_status:'IN_PROGRESS'});
+  const output=render();
+  assert.match(output,/2026-01-22 – 2026-01-24/);
+  assert.match(output,/bg-slate-100 text-slate-600">PENDING/);
+  assert.match(output,/data-schedule-row="planned"[\s\S]*phase6PlannedLoadingUpdate[\s\S]*phase6PlannedLoadingEnd[\s\S]*data-phase6-schedule-kind="planned"/);
+  assert.match(output,/data-schedule-row="actual"[\s\S]*shipping.actualLoadingDate[\s\S]*phase6ActualLoading[\s\S]*phase6ScheduleNote[\s\S]*data-phase6-schedule-kind="actual"/);
+  shipment.actual_loading_date='2026-01-22';
+  shipment.schedule_result='ON_PLAN';
+  assert.match(render(),/bg-emerald-100 text-emerald-800">ON PLAN/);
+});

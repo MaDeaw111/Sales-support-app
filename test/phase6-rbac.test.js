@@ -99,7 +99,7 @@ test('EXTERNAL_SALES receives only its approved shipment-progress allowlist for 
     vessel: 'MV Internal',
     planned_loading_date: '2026-09-08',
     actual_loading_date: '2026-09-10',
-    schedule_result: 'ON_PLAN'
+    schedule_result: 'OUT_OF_PLAN'
   });
 });
 

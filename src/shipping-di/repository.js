@@ -277,6 +277,20 @@ async function shipmentEntryProducts(db, diId) {
     }));
 }
 
+// Keep the list filter and detail projection consistent with schedule writes.
+function scheduleResultExpression(shipment, instruction) {
+  const actual = shipment + '.actual_loading_date';
+  const start = 'NULLIF(' + shipment + ".planned_loading_date, '')";
+  const end = 'NULLIF(' + shipment + ".planned_loading_end_date, '')";
+  return `CASE WHEN NULLIF(${actual}, '') IS NULL THEN NULL
+    WHEN COALESCE(${start}, ${end}) IS NOT NULL THEN
+      CASE WHEN ${actual} BETWEEN COALESCE(${start}, ${end}) AND COALESCE(${end}, ${start}) THEN 'ON_PLAN' ELSE 'OUT_OF_PLAN' END
+    WHEN substr(${actual}, 1, 7) = ${instruction}.shipping_month
+      AND CASE ${instruction}.shipping_period WHEN 'FIRST_HALF' THEN substr(${actual}, 9, 2) <= '15'
+        WHEN 'SECOND_HALF' THEN substr(${actual}, 9, 2) >= '16' ELSE 0 END THEN 'ON_PLAN'
+    ELSE 'OUT_OF_PLAN' END`;
+}
+
 async function findPhase6ShipmentReadModel(db, identifier, lookupField) {
   const hasBlNo = await hasPhase6ShipmentBlNoColumn(db);
   const shipment = await db.prepare(`
@@ -284,7 +298,7 @@ async function findPhase6ShipmentReadModel(db, identifier, lookupField) {
            shipment.status, shipment.booking_no, ${hasBlNo ? 'shipment.bl_no' : 'NULL AS bl_no'}, shipment.forwarder_partner_id,
            shipment.shipping_line_partner_id, shipment.trucking_partner_id, shipment.vessel,
            shipment.etd, shipment.eta, shipment.planned_loading_date, shipment.planned_loading_end_date, shipment.actual_loading_date,
-           shipment.schedule_result, shipment.schedule_note, shipment.all_ship_docs_drive_url,
+           ${scheduleResultExpression('shipment','instruction')} AS schedule_result, shipment.schedule_note, shipment.all_ship_docs_drive_url,
            shipment.digital_docs_sent_date, shipment.original_docs_required, shipment.dhl_sent_date,
             shipment.dhl_tracking_no, shipment.docs_note, shipment.cash_received_amount,
             shipment.payment_status, shipment.payment_note, shipment.cancellation_note,
@@ -1542,21 +1556,28 @@ export function createShippingDiRepository(db) {
       const schedule = validateShipmentSchedule(dto);
       const shipment = await findPhase6Shipment(db, shipmentId);
       if (!shipment || shipment.shipment_id !== shipmentId) throw codedError('SHIPMENT_NOT_FOUND');
-      if (shipment.status !== 'BOOKED') throw codedError('SHIPMENT_NOT_BOOKED');
+      const updatingPlan = schedule.plannedLoadingDate !== undefined;
+      if (updatingPlan ? !['BOOKED','LOADED','DOCS_SENT'].includes(shipment.status) : shipment.status !== 'BOOKED') throw codedError('SHIPMENT_NOT_BOOKED');
 
       const deliveryInstruction = await findDeliveryInstruction(db, shipment.di_id);
       if (!deliveryInstruction) throw codedError('DI_NOT_FOUND');
 
-      if (schedule.plannedLoadingDate !== undefined) {
+      if (updatingPlan) {
+        const end = schedule.plannedLoadingEndDate ?? null;
+        const result = shipment.actual_loading_date ? calculateScheduleResult(
+          deliveryInstruction.shipping_month, deliveryInstruction.shipping_period,
+          shipment.actual_loading_date, schedule.plannedLoadingDate, end
+        ) : null;
         const results = await db.batch([
           db.prepare(`
             UPDATE phase6_shipments
-            SET planned_loading_date = ?, planned_loading_end_date = ?, updated_by = ?, updated_at = CURRENT_TIMESTAMP
-            WHERE shipment_id = ? AND status = 'BOOKED'
+            SET planned_loading_date = ?, planned_loading_end_date = ?, schedule_result = ?, updated_by = ?, updated_at = CURRENT_TIMESTAMP
+            WHERE shipment_id = ? AND status IN ('BOOKED','LOADED','DOCS_SENT')
+              AND actual_loading_date IS ?
               AND planned_loading_date IS ?
               AND planned_loading_end_date IS ?
-              AND (planned_loading_date IS NOT ? OR planned_loading_end_date IS NOT ?)
-          `).bind(schedule.plannedLoadingDate, schedule.plannedLoadingEndDate ?? null, actorId, shipmentId, shipment.planned_loading_date, shipment.planned_loading_end_date, schedule.plannedLoadingDate, schedule.plannedLoadingEndDate ?? null),
+              AND (planned_loading_date IS NOT ? OR planned_loading_end_date IS NOT ? OR schedule_result IS NOT ?)
+          `).bind(schedule.plannedLoadingDate, end, result, actorId, shipmentId, shipment.actual_loading_date, shipment.planned_loading_date, shipment.planned_loading_end_date, schedule.plannedLoadingDate, end, result),
           auditAfterMutationStatement(db, 'SHIPMENT', shipmentId, 'PLANNED_LOADING_DATE_UPDATED', actorId, {
             old: shipment.planned_loading_date,
             new: schedule.plannedLoadingDate,
@@ -1584,8 +1605,8 @@ export function createShippingDiRepository(db) {
                 ) THEN 'LOADED' ELSE 'BOOKED' END,
                 actual_loading_date = ?, schedule_result = ?, schedule_note = ?,
                 updated_by = ?, updated_at = CURRENT_TIMESTAMP
-            WHERE shipment_id = ? AND status = 'BOOKED'
-          `).bind(schedule.actualLoadingDate, scheduleResult, scheduleNote, actorId, shipmentId),
+            WHERE shipment_id = ? AND status = 'BOOKED' AND planned_loading_date IS ? AND planned_loading_end_date IS ?
+          `).bind(schedule.actualLoadingDate, scheduleResult, scheduleNote, actorId, shipmentId, shipment.planned_loading_date, shipment.planned_loading_end_date),
           auditAfterMutationStatement(db, 'SHIPMENT', shipmentId, 'ACTUAL_LOADING_DATE_RECORDED', actorId, {
             actualLoadingDate: schedule.actualLoadingDate,
             scheduleResult,
@@ -2234,7 +2255,7 @@ export function createShippingDiRepository(db) {
           shipment.shipment_id, shipment.booking_no, ${hasBlNo ? 'shipment.bl_no' : 'NULL AS bl_no'}, CASE WHEN shipment.shipment_id IS NOT NULL THEN shipment.planned_loading_date ELSE ${requestedLoadingDateExpression('di.di_id')} END AS planned_loading_date, CASE WHEN shipment.shipment_id IS NOT NULL THEN shipment.planned_loading_end_date ELSE ${requestedLoadingDateExpression('di.di_id', 'plannedLoadingEndDate')} END AS planned_loading_end_date, shipment.actual_loading_date,
           (SELECT invoice_no FROM shipment_invoices WHERE shipment_id=shipment.shipment_id
             ORDER BY version='FINAL' DESC, invoice_date DESC, invoice_no ASC LIMIT 1) AS invoice_no,
-          shipment.schedule_result, shipment.status AS shipment_status, shipment.payment_status
+          ${scheduleResultExpression('shipment','di')} AS schedule_result, shipment.status AS shipment_status, shipment.payment_status
         FROM delivery_instructions di
         JOIN customers customer ON customer.customer_id = di.customer_id
         LEFT JOIN po_revisions revision ON revision.revision_id = di.po_revision_id
@@ -2245,7 +2266,7 @@ export function createShippingDiRepository(db) {
       if (filters.diStatus) { query += ' AND di.status = ?'; params.push(filters.diStatus); }
       if (filters.shipmentStatus) { query += ' AND shipment.status = ?'; params.push(filters.shipmentStatus); }
       if (filters.shippingMonth) { query += ' AND di.shipping_month = ?'; params.push(filters.shippingMonth); }
-      if (filters.scheduleResult) { query += ' AND shipment.schedule_result = ?'; params.push(filters.scheduleResult); }
+      if (filters.scheduleResult) { query += ' AND (' + scheduleResultExpression('shipment','di') + ') = ?'; params.push(filters.scheduleResult); }
       if (filters.paymentStatus) { query += ' AND shipment.payment_status = ?'; params.push(filters.paymentStatus); }
       if (filters.search) {
         const like = `%${filters.search}%`;
@@ -2304,7 +2325,7 @@ export function createShippingDiRepository(db) {
           shipment.eta,
           shipment.planned_loading_date,
           shipment.actual_loading_date,
-          shipment.schedule_result,
+          ${scheduleResultExpression('shipment','di')} AS schedule_result,
           shipment.forwarder_partner_id,
           shipment.shipping_line_partner_id,
           shipment.trucking_partner_id,
