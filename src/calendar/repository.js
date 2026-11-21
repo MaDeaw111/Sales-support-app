@@ -123,7 +123,7 @@ export function createCalendarRepository(db) {
         const diIds = [...new Set(matchedShipments.map((s) => s.di_id))];
         const shipmentIds = [...new Set(matchedShipments.map((s) => s.shipment_id))];
 
-        const [diLines, containerRows, containerLineRows, auditRows] = await Promise.all([
+        const [diLines, containerRows, containerLineRows, auditRows, invoiceRows] = await Promise.all([
           queryByIds(
             db,
             (ph) => `
@@ -193,7 +193,12 @@ export function createCalendarRepository(db) {
               ORDER BY ae.created_at DESC, ae.event_id DESC
             `,
             shipmentIds
-          )
+          ),
+          loadingOnly ? [] : queryByIds(db, (ph) => `
+            SELECT shipment_id, invoice_no, version AS invoice_type
+            FROM shipment_invoices WHERE shipment_id IN (${ph})
+            ORDER BY CASE version WHEN 'FINAL' THEN 0 ELSE 1 END, invoice_date DESC, invoice_no, invoice_id
+          `, shipmentIds)
         ]);
 
         const productsByDi = new Map();
@@ -246,6 +251,12 @@ export function createCalendarRepository(db) {
           historyByShipment.set(audit.shipment_id, list);
         }
 
+        const invoicesByShipment = new Map();
+        for (const { shipment_id, ...invoice } of invoiceRows) {
+          if (!invoicesByShipment.has(shipment_id)) invoicesByShipment.set(shipment_id, []);
+          invoicesByShipment.get(shipment_id).push(invoice);
+        }
+
         for (const s of matchedShipments) {
           const products = productsByDi.get(s.di_id) || [];
           const plannedQtyMt = roundQty(products.reduce((sum, p) => sum + Number(p.planned_qty_mt || 0), 0));
@@ -256,6 +267,7 @@ export function createCalendarRepository(db) {
             shipment_id: s.shipment_id,
             di_id: s.di_id,
             di_no: s.di_no,
+            invoices: invoicesByShipment.get(s.shipment_id) || [],
             po_id: s.po_id,
             customer_po_no: s.customer_po_no || null,
             customer_id: s.customer_id,

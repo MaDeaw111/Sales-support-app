@@ -190,3 +190,21 @@ test('operations calendar expands a three-day plan and counts its tonnage once',
   assert.deepEqual(events.filter(event=>event.shipment_id===shipment.shipment_id).map(event=>event.loading_day),[1,2,3]);
   assert.equal(Math.round(dailyLoadingSummary.reduce((sum,day)=>sum+day.planned_qty_mt,0)*1000), Math.round(events.filter(event=>event.loading_day===1).reduce((sum,event)=>sum+event.planned_qty_mt,0)*1000));
 });
+
+test('calendar attaches ordered invoice references and suppresses them for warehouse', async () => {
+  const {db,repo}=await setupCalendarFixture();
+  const insert=db.prepare("INSERT INTO shipment_invoices (invoice_id,shipment_id,invoice_no,invoice_date,currency,version,invoice_write_token,final_container_version,created_by) VALUES (?, 'S1', ?, '2026-11-12', 'USD', ?, ?, ?, 'U_EXPORT')");
+  insert.run('INV1','WCAT014','PRELIMINARY','token1',null);
+  insert.run('INV2','WCAT015','FINAL','token2',0);
+  const filters={from:'2026-11-12',to:'2026-11-15'};
+  const {events}=await repo.listCalendarData(filters);
+  const event=events.find(row=>row.shipment_id==='S1');
+  assert.deepEqual(event.invoices,[{invoice_no:'WCAT015',invoice_type:'FINAL'},{invoice_no:'WCAT014',invoice_type:'PRELIMINARY'}]);
+  const {projectCalendarEventForRole}=await import('../src/calendar/routes.js');
+  for(const role of ['ADMIN','MANAGER','EXPORT','SALES_SUPPORT','EXTERNAL_SALES']) {
+    const projected=await projectCalendarEventForRole(event,{role,user_id:'U_SALES_1'});
+    assert.deepEqual(projected.invoices,event.invoices);
+  }
+  const warehouse=await projectCalendarEventForRole(event,{role:'PRODUCTION_WAREHOUSE',user_id:'U_WH'});
+  assert.equal(warehouse.invoices,undefined);
+});

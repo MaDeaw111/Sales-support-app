@@ -1617,6 +1617,8 @@
                 'calendar.loadingDates': 'วันโหลดสินค้า',
                 'calendar.planActualShort': 'แผน: {plan} · จริง: {actual}',
                 'calendar.reference': 'อ้างอิง',
+                'calendar.invoice': 'ใบแจ้งหนี้',
+                'calendar.searchReferences': 'ค้นหาใบแจ้งหนี้, DI, PO, ลูกค้า หรือเลขจอง',
                 'calendar.loadingAuditTitle': 'ประวัติการเปลี่ยนแปลงวันโหลด',
                 'calendar.noLoadingChanges': 'ยังไม่มีการเปลี่ยนแปลงวันโหลด',
                 'calendar.changePlannedBtn': 'เปลี่ยนวันโหลดตามแผน',
@@ -2928,6 +2930,8 @@
                 'calendar.loadingDates': 'Loading Dates',
                 'calendar.planActualShort': 'Plan: {plan} · Actual: {actual}',
                 'calendar.reference': 'Reference',
+                'calendar.invoice': 'Invoice',
+                'calendar.searchReferences': 'Search invoice, DI, PO, customer or booking',
                 'calendar.loadingAuditTitle': 'Loading Date Audit History',
                 'calendar.noLoadingChanges': 'No loading date changes recorded yet.',
                 'calendar.changePlannedBtn': 'Change Planned Loading Date',
@@ -15984,18 +15988,17 @@
                     badge: type === 'LOADING_ACTUAL' ? 'LOADED' : 'PLAN'
                 };
             }
-            if (type === 'LOADING_PLANNED' || type === 'LOADING_ACTUAL') {
+            if (['LOADING_PLANNED', 'LOADING_ACTUAL', 'ETD', 'ETA'].includes(type)) {
+                const invoice = e.invoices?.[0]?.invoice_no;
+                const di = String(e.di_no || '').trim();
+                const diLabel = di && (/^DI[-\s]/i.test(di) ? di : 'DI ' + di);
+                const po = e.customer_po_no ? 'PO ' + e.customer_po_no : '';
+                const details = [e.container_plan, e.planned_qty_mt ? Number(e.planned_qty_mt).toLocaleString('en-US', { maximumFractionDigits: 3 }) + ' MT' : '', e.booking_no ? 'BK ' + e.booking_no : '', day].filter(Boolean).join(' · ');
                 return {
-                    primary: [e.di_no || 'Loading', day].filter(Boolean).join(' · '),
-                    secondary: [e.customer_name, e.container_plan, e.booking_no ? `BK ${e.booking_no}` : ''].filter(Boolean).join(' · '),
-                    badge: type === 'LOADING_ACTUAL' ? 'ACTUAL' : 'PLAN'
-                };
-            }
-            if (type === 'ETD' || type === 'ETA') {
-                return {
-                    primary: `${type} · ${e.di_no || e.booking_no || 'Shipment'}`,
-                    secondary: [e.vessel, e.customer_name].filter(Boolean).join(' · '),
-                    badge: type
+                    primary: invoice || diLabel || po || '-',
+                    secondary: invoice ? diLabel || po : diLabel ? po : '',
+                    tertiary: [e.customer_name, details].filter(Boolean).join(' - '),
+                    badge: type === 'LOADING_PLANNED' ? 'PLAN' : type === 'LOADING_ACTUAL' ? 'ACTUAL' : type
                 };
             }
             const poLabel = type === 'PO_DELIVERY_START' ? 'PO Start' : 'PO End';
@@ -16021,6 +16024,7 @@
         }
 
         function updateCalendarFilter(key, value) {
+            if (key === 'search') { state.calendarFilters.search = value; renderView(); return; }
             state.calendarFilters[key] = value;
             loadOperationsCalendarFromApi({ force: true });
         }
@@ -16097,6 +16101,7 @@
                 : '';
 
             return `<div class="bg-white border border-slate-200 rounded-xl p-3 grid sm:grid-cols-2 lg:grid-cols-6 gap-2 text-xs">
+                ${!isWarehouse ? `<input type="search" class="rounded-lg border px-2 py-2" aria-label="${tr('calendar.searchReferences', 'Search invoice, DI, PO, customer or booking')}" placeholder="${tr('calendar.searchReferences', 'Search invoice, DI, PO, customer or booking')}" value="${escapeCalendarHtml(f.search || '')}" onchange="updateCalendarFilter('search',this.value)">` : ''}
                 ${customerFilter}${ownerFilter}${productFilter}${typeFilter}${statusFilter}
                 <div class="flex items-end gap-1.5"><button onclick="resetCalendarFilters()" class="flex-1 border border-slate-200 rounded-lg px-3 py-2 font-black text-slate-600 hover:bg-slate-50">${tr('common.reset', 'Reset')}</button><button onclick="loadOperationsCalendarFromApi({ force: true })" class="px-3 py-2 border border-slate-200 rounded-lg font-black text-slate-600 hover:bg-slate-50" title="${tr('common.refresh', 'Refresh')}"><i data-lucide="refresh-cw" class="w-3.5 h-3.5"></i></button></div>
             </div>`;
@@ -16123,7 +16128,8 @@
                 loadOperationsCalendarFromApi();
             }
 
-            const events = state.operationsCalendar.events || [];
+            const search = production ? '' : String(f.search || '').trim().toLowerCase();
+            const events = (state.operationsCalendar.events || []).filter(e => !search || [e.di_no, e.customer_po_no, e.po_id, e.customer_name, e.booking_no, ...(e.invoices || []).map(invoice => invoice.invoice_no)].some(value => String(value || '').toLowerCase().includes(search)));
             const loading = !!state.operationsCalendar.loading;
             const error = state.operationsCalendar.error;
             const viewLabelMap = {
@@ -16244,8 +16250,9 @@
                         return `<button onclick="openCalendarEventDetail('${escapeCalendarHtml(e.event_id)}')" class="w-full text-left p-3 hover:bg-slate-50 flex items-center gap-3">
                             <div class="w-9 h-9 rounded-lg border ${calendarToneClasses(e.event_type)} flex items-center justify-center"><i data-lucide="${CALENDAR_EVENT_TYPES[e.event_type]?.icon || 'calendar'}" class="w-4 h-4"></i></div>
                             <div class="min-w-0 flex-1">
-                                <div class="flex items-center gap-2"><div class="font-black text-xs truncate">${escapeCalendarHtml(display.primary)}</div><span class="px-1.5 py-0.5 rounded bg-slate-900 text-white text-[7px] font-black">${escapeCalendarHtml(display.badge)}</span></div>
+                                <div class="flex items-center justify-between gap-2"><div class="font-black text-xs truncate">${escapeCalendarHtml(display.primary)}</div><span class="px-1.5 py-0.5 rounded bg-slate-900 text-white text-[7px] font-black">${escapeCalendarHtml(display.badge)}</span></div>
                                 <div class="text-[10px] text-slate-500 truncate">${escapeCalendarHtml(display.secondary)}</div>
+                                ${display.tertiary ? `<div class="text-[9px] text-slate-500 truncate">${escapeCalendarHtml(display.tertiary)}</div>` : ''}
                             </div>
                             ${calendarStatusBadge(status)}
                         </button>`;
@@ -16262,6 +16269,7 @@
                     <span class="shrink-0 px-1 py-0.5 rounded bg-slate-900 text-white text-[6px] leading-none tracking-wide">${escapeCalendarHtml(display.badge)}</span>
                 </div>
                 ${display.secondary ? `<div class="text-[7px] opacity-80 truncate mt-0.5">${escapeCalendarHtml(display.secondary)}</div>` : ''}
+                ${display.tertiary ? `<div class="text-[9px] text-slate-500 truncate">${escapeCalendarHtml(display.tertiary)}</div>` : ''}
             </button>`;
         }
 
@@ -16274,6 +16282,7 @@
                     <span class="shrink-0 px-1.5 py-0.5 rounded bg-slate-900 text-white text-[7px] leading-none tracking-wide">${escapeCalendarHtml(display.badge)}</span>
                 </div>
                 ${display.secondary ? `<div class="text-[8px] font-bold mt-1 truncate">${escapeCalendarHtml(display.secondary)}</div>` : ''}
+                ${display.tertiary ? `<div class="text-[9px] text-slate-500 truncate">${escapeCalendarHtml(display.tertiary)}</div>` : ''}
                 ${status ? `<div class="mt-1">${calendarStatusBadge(status)}</div>` : ''}
             </button>`;
         }
@@ -16369,6 +16378,8 @@
             const typeLabel = tr('calendar.event.' + e.event_type, typeMeta.label);
             const display = calendarEventDisplay(e);
 
+            const invoiceCard = () => `<div data-calendar-invoice class="bg-slate-50 rounded-lg p-3"><div class="text-[9px] uppercase font-black text-slate-400">${tr('calendar.invoice', 'Invoice')}</div>${(e.invoices || []).map(invoice => `<div class="mt-1 flex items-center gap-2"><strong>${escapeCalendarHtml(invoice.invoice_no)}</strong><span class="rounded bg-blue-100 px-2 py-0.5 text-blue-800">${escapeCalendarHtml(invoice.invoice_type === 'FINAL' ? tr('shipping.final', 'FINAL') : tr('shipping.preliminary', 'PRELIMINARY'))}</span></div>`).join('') || '-'}</div>`;
+
             if (role === 'PRODUCTION_WAREHOUSE') {
                 const productsHtml = (e.products || []).length
                     ? e.products.map((p) => `<div class="border border-slate-200 rounded-lg p-2.5 text-xs flex justify-between gap-2"><div><div class="font-black">${escapeCalendarHtml(p.product_code)} · ${escapeCalendarHtml(p.product_name)}</div><div class="text-[10px] text-slate-500">${escapeCalendarHtml(p.packing_snapshot || '-')}</div></div><div class="font-black text-slate-800 whitespace-nowrap">${Number(p.planned_qty_mt || 0).toFixed(3)} MT</div></div>`).join('')
@@ -16403,6 +16414,7 @@
                         <div class="bg-slate-50 rounded-lg p-3"><div class="text-[9px] uppercase font-black text-slate-400">Incoterm</div><div class="font-bold mt-1">${escapeCalendarHtml(e.incoterm || '-')}</div></div>
                         <div class="bg-slate-50 rounded-lg p-3"><div class="text-[9px] uppercase font-black text-slate-400">${tr('pricing.colDestination', 'Destination')}</div><div class="font-bold mt-1">${escapeCalendarHtml(e.destination || '-')}</div></div>
                     </div>` : `<div class="grid grid-cols-2 gap-3 text-xs">
+                        ${invoiceCard()}
                         <div class="bg-slate-50 rounded-lg p-3"><div class="text-[9px] uppercase font-black text-slate-400">${tr('calendar.diNumber', 'DI Number')}</div><div class="font-black mt-1">${escapeCalendarHtml(e.di_no || '-')}</div></div>
                         <div class="bg-slate-50 rounded-lg p-3"><div class="text-[9px] uppercase font-black text-slate-400">${tr('common.status', 'Status')}</div><div class="mt-1">${calendarStatusBadge(e.shipment_status || e.di_status)}</div></div>
                         <div class="bg-slate-50 rounded-lg p-3"><div class="text-[9px] uppercase font-black text-slate-400">${tr('calendar.bookingVessel', 'Booking / Vessel')}</div><div class="font-bold mt-1">${escapeCalendarHtml([e.booking_no, e.vessel].filter(Boolean).join(' · ') || '-')}</div></div>
@@ -16427,6 +16439,7 @@
                     <div class="bg-slate-50 rounded-lg p-3"><div class="text-[9px] uppercase font-black text-slate-400">${tr('common.customer', 'Customer')}</div><div class="font-bold mt-1">${escapeCalendarHtml(e.customer_name || '-')}</div></div>
                     <div class="bg-slate-50 rounded-lg p-3"><div class="text-[9px] uppercase font-black text-slate-400">${tr('common.status', 'Status')}</div><div class="mt-1">${calendarStatusBadge(calendarEventStatusValue(e))}</div></div>
                     <div class="bg-slate-50 rounded-lg p-3"><div class="text-[9px] uppercase font-black text-slate-400">${tr('calendar.reference', 'Reference')}</div><div class="font-black mt-1">${escapeCalendarHtml(e.di_no || e.customer_po_no || e.po_id || '-')}</div></div>
+                    ${!isPo ? invoiceCard() : ''}
                     ${isPo
                         ? `<div class="bg-slate-50 rounded-lg p-3"><div class="text-[9px] uppercase font-black text-slate-400">${tr('calendar.deliveryWindow', 'Delivery Window')}</div><div class="font-bold mt-1">${escapeCalendarHtml(e.delivery_start || '-')} → ${escapeCalendarHtml(e.delivery_end || '-')}</div></div>`
                         : `<div class="bg-slate-50 rounded-lg p-3"><div class="text-[9px] uppercase font-black text-slate-400">${tr('calendar.bookingVessel', 'Booking / Vessel')}</div><div class="font-bold mt-1">${escapeCalendarHtml([e.booking_no, e.vessel].filter(Boolean).join(' · ') || '-')}</div></div>

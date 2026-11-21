@@ -73,7 +73,7 @@ export async function projectCalendarEventForRole(event, caller) {
         event_date: event.event_date,
       ...(event.loading_day_count > 1 ? { loading_day: event.loading_day, loading_day_count: event.loading_day_count } : {}),
         ...pickPresent(event, [
-          'di_no', 'di_status', 'shipment_status',
+          'di_no', 'customer_po_no', 'invoices', 'di_status', 'shipment_status',
           'booking_no', 'vessel', 'etd', 'eta',
           'planned_loading_date', 'actual_loading_date', 'schedule_result'
         ])
