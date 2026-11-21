@@ -15,3 +15,16 @@ test('executive dashboard shows all three tiers and suppresses financial content
   assert.match(warehouse,/executive.queue/);
   assert.doesNotMatch(warehouse,/EUR|USD|executive.receivables/);
 });
+
+test('analytics render the donut, gauge, localized insight slides and four KPI jumps',()=>{
+  const ctx=vm.createContext({state:{executiveInsight:1},getUiLanguage:()=> 'TH',escapeDashboardHtml:String,t:key=>key,renderDashboardAction:()=>'',renderDashboardHeader:()=>''});
+  vm.runInContext(source,ctx);
+  const output=ctx.renderExecutiveDashboard({period:'this_month',totalContract:50,products:[{name:'Tapioca',contract:50}],upcoming:{},months:[],watchlist:[],receivables:{},onPlanRatePct:75,onPlanCount:3,loadedCount:4,insights:[{th:'First slide'},{th:'Selected Thai slide'},{th:'Third slide'}]},'EXPORT','');
+  assert.match(output,/data-product-mix[\s\S]*conic-gradient/);
+  assert.match(output,/data-on-plan-gauge[\s\S]*75%/);
+  assert.match(output,/Selected Thai slide/);
+  assert.equal((output.match(/aria-pressed=/g)||[]).length,3);
+  assert.equal((output.match(/>↗<\/button>/g)||[]).length,4);
+  assert.match(output,/value="this_month" selected/);
+  for(const view of ['po_engine','shipping','calendar','payments']) assert.ok(output.includes("changeView('"+view+"')"));
+});

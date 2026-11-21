@@ -396,3 +396,37 @@ test('executive dashboard includes draft contracts, scoped watchlists and financ
   assert.deepEqual(sales.watchlist.map(row=>row.poId),['PO2']);
   assert.ok(sales.months.every(month=>month.actual===0));
 });
+
+test('dashboard analytics resolve grade from specs and filter Bangkok calendar periods', async () => {
+  const {db,wrappedDb}=await setupTestDb();
+  await seedFullDashboardFixture(db);
+  db.exec(`
+    INSERT INTO product_applications(product_id,application) VALUES ('P1','FEED_GRADE'),('P2','PET_GRADE');
+    INSERT INTO standard_specs(standard_spec_id,product_id,application,revision_no,effective_date)
+      VALUES ('FEED1','P1','FEED_GRADE',1,'2026-09-01'),('PET1','P2','PET_GRADE',1,'2026-09-01');
+    UPDATE po_revision_lines SET spec_revision_id='FEED1' WHERE line_id='L1';
+    UPDATE po_revision_lines SET spec_revision_id='PET1' WHERE line_id='L2';
+    UPDATE po_revisions SET po_date='2026-11-01' WHERE revision_id='REV1';
+    UPDATE po_revisions SET po_date='2026-10-01' WHERE revision_id='REV2';
+    ALTER TABLE phase6_shipments ADD COLUMN planned_loading_end_date TEXT;
+    UPDATE phase6_shipments SET planned_loading_date='2026-11-22', planned_loading_end_date='2026-11-24', actual_loading_date='2026-11-24' WHERE shipment_id='SHP-1';
+  `);
+  const repo=createDashboardRepository(wrappedDb);
+  const now=new Date('2026-11-24T00:00:00Z');
+  const admin={role:'ADMIN',user_id:'U_ADMIN'};
+  const result=await repo.getExecutiveDashboard(admin,now,'this_quarter');
+  assert.deepEqual(result.gradeBreakdown.map(({grade,contract,actual,remaining,sharePct,contractValue})=>({grade,contract,actual,remaining,sharePct,contractValue})),[
+    {grade:'FEED_GRADE',contract:100,actual:20,remaining:80,sharePct:66.7,contractValue:{USD:50000}},
+    {grade:'PET_GRADE',contract:50,actual:0,remaining:50,sharePct:33.3,contractValue:{EUR:20000}}
+  ]);
+  assert.equal(result.onPlanRatePct,100);
+  assert.equal(result.loadedCount,1);
+  assert.equal((await repo.getExecutiveDashboard(admin,now,'this_month')).totalContract,100);
+  assert.equal((await repo.getExecutiveDashboard(admin,now,'this_year')).totalContract,150);
+  assert.ok(result.insights.every(item=>item.en && item.th));
+  const warehouse=await repo.getExecutiveDashboard({role:'PRODUCTION_WAREHOUSE',user_id:'U_WH'},now);
+  assert.ok(warehouse.gradeBreakdown.every(item=>item.contractValue===undefined));
+  assert.doesNotMatch(JSON.stringify(warehouse.insights),/USD|EUR/);
+  const invalid=await worker.fetch(makeRequest('/api/dashboard?period=invalid','GET','admin-token'),{DB:wrappedDb});
+  assert.equal(invalid.status,400);
+});

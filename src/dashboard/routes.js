@@ -33,10 +33,14 @@ export function createDashboardHandler({ repo, resolveUser, db, now = () => new 
       return json({ status: 'ERROR', message: 'Dashboard route not found.' }, 404);
     }
 
+    const period = url.searchParams.get('period') || 'all';
+    if (!['all','this_month','this_quarter','this_year'].includes(period)) {
+      return json({status:'ERROR',message:'Invalid dashboard period.'},400);
+    }
     const snapshotTime = now();
     const data = await activeRepo.getDashboardForCaller(caller, snapshotTime);
     if (!data) return json({ status: 'ERROR', message: 'Permission denied.' }, 403);
-    if (activeRepo.getExecutiveDashboard) data.executive = await activeRepo.getExecutiveDashboard(caller, snapshotTime);
+    if (activeRepo.getExecutiveDashboard) data.executive = await activeRepo.getExecutiveDashboard(caller, snapshotTime, period);
     return json({ status: 'SUCCESS', data });
   };
 }

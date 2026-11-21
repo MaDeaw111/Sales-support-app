@@ -266,8 +266,8 @@ export function createDashboardRepository(db) {
   const commissionsRepo = createCommissionsRepository(db);
 
   return {
-    async getExecutiveDashboard(caller, now = new Date()) {
-      return buildExecutiveDashboard(db, caller, now);
+    async getExecutiveDashboard(caller, now = new Date(), period = 'all') {
+      return buildExecutiveDashboard(db, caller, now, period);
     },
     async getDashboardForCaller(caller, now = new Date()) {
       const todayIso = (now instanceof Date && !Number.isNaN(now.getTime()) ? now : new Date()).toISOString().slice(0, 10);

@@ -443,6 +443,15 @@
         }
         .di-invoice-finalize:hover:not(:disabled) { background: #166534; }
         .di-invoice-finalize:disabled { opacity: 0.55; cursor: not-allowed; }
+        @media print {
+            body:has([data-executive-dashboard]) #appSidebar,
+            body:has([data-executive-dashboard]) header,
+            [data-executive-dashboard] button,
+            [data-executive-dashboard] select { display: none !important; }
+            body:has([data-executive-dashboard]) #mainContent { overflow: visible; }
+            [data-executive-dashboard] { print-color-adjust: exact; }
+            [data-executive-dashboard] section { break-inside: avoid; }
+        }
     </style>
 </head>
 <body class="bg-slate-100 text-slate-800 antialiased min-h-screen flex flex-col">
@@ -1633,6 +1642,21 @@
                 'calendar.planActualShort': 'แผน: {plan} · จริง: {actual}',
                 'calendar.reference': 'อ้างอิง',
                 'executive.title': "ภาพรวมผู้บริหาร",
+                'executive.period': "ช่วงเวลา",
+                'executive.all': "สัญญาที่เปิดทั้งหมด",
+                'executive.this_month': "เดือนนี้",
+                'executive.this_quarter': "ไตรมาสนี้",
+                'executive.this_year': "ปีนี้",
+                'executive.print': "พิมพ์ / สรุป",
+                'executive.grades': "เปรียบเทียบเกรดสินค้า",
+                'executive.FEED_GRADE': "เกรดอาหารสัตว์",
+                'executive.PET_GRADE': "เกรดอาหารสัตว์เลี้ยง",
+                'executive.OTHER': "อื่น ๆ",
+                'executive.mix': "สัดส่วนสินค้า",
+                'executive.onPlan': "โหลดตรงแผน",
+                'executive.insights': "ข้อมูลเชิงลึก",
+                'executive.previous': "ก่อนหน้า",
+                'executive.next': "ถัดไป",
                 'executive.contracts': "ยอดขายในมือ",
                 'executive.fulfillment': "ความคืบหน้าการส่งมอบ",
                 'executive.upcoming': "แผนส่งออกเร็ว ๆ นี้",
@@ -2981,6 +3005,21 @@
                 'calendar.planActualShort': 'Plan: {plan} · Actual: {actual}',
                 'calendar.reference': 'Reference',
                 'executive.title': "Executive Dashboard",
+                'executive.period': "Period",
+                'executive.all': "All Active",
+                'executive.this_month': "This Month",
+                'executive.this_quarter': "This Quarter",
+                'executive.this_year': "This Year",
+                'executive.print': "Print / Summary",
+                'executive.grades': "Feed Grade vs. Pet Grade",
+                'executive.FEED_GRADE': "Feed Grade",
+                'executive.PET_GRADE': "Pet Grade",
+                'executive.OTHER': "Other",
+                'executive.mix': "Product Mix",
+                'executive.onPlan': "On-Plan Loading",
+                'executive.insights': "Smart Insights",
+                'executive.previous': "Previous insight",
+                'executive.next': "Next insight",
                 'executive.contracts': "Open Contracts",
                 'executive.fulfillment': "Fulfillment Progress",
                 'executive.upcoming': "Upcoming Shipments",
@@ -6196,9 +6235,14 @@
             if (ds.loading && !opts.force) return ds.data;
             ds.loading = true;
             ds.error = null;
+            const request = (ds.request || 0) + 1;
+            ds.request = request;
             try {
-                const res = await fetch('/api/dashboard');
+                const period = state.executivePeriod || 'all';
+                const res = await fetch(period === 'all' ? '/api/dashboard' : '/api/dashboard?period=' + encodeURIComponent(period));
+                if (ds.request !== request) return ds.data;
                 const body = await res.json().catch(() => null);
+                if (ds.request !== request) return ds.data;
                 if (!res.ok || body?.status !== 'SUCCESS' || !body.data) {
                     ds.error = body?.message || 'Failed to load dashboard summary.';
                     return ds.data;
@@ -6208,11 +6252,13 @@
                 ds.error = null;
                 return ds.data;
             } catch (err) {
-                ds.error = err?.message || 'Failed to load dashboard summary.';
+                if (ds.request === request) ds.error = err?.message || 'Failed to load dashboard summary.';
                 return ds.data;
             } finally {
-                ds.loading = false;
-                if (typeof renderView === 'function') renderView();
+                if (ds.request === request) {
+                    ds.loading = false;
+                    if (typeof renderView === 'function') renderView();
+                }
             }
         }
 
@@ -6229,7 +6275,32 @@
             if (['ADMIN','MANAGER','SALES_SUPPORT'].includes(role)) actions.push(renderDashboardAction(t('dashboard.addCustomer'), 'user-plus', 'openAddCustomerModal()'));
             if (!warehouse) actions.push(renderDashboardAction(t('common.products'), 'package', "changeView('products')"));
             if (['ADMIN','MANAGER','EXPORT'].includes(role)) actions.push(renderDashboardAction(t('dashboard.addLogisticsPartner'), 'building-2', 'openLogisticsPartnerModal()'));
-            const card = (title, primary, detail) => `<section class="rounded-xl border border-slate-200 bg-white p-5"><h2 class="text-xs font-semibold text-slate-500">${title}</h2><div class="mt-3 text-2xl font-bold text-slate-900">${primary}</div><div class="mt-2 space-y-2 text-xs text-slate-600">${detail}</div></section>`;
+            const grades = (data.gradeBreakdown || []).filter(item => item.grade !== 'OTHER' || item.contract || item.actual);
+            const gradeCards = grades.map(item => `<div class="min-w-0 rounded-lg bg-slate-50 p-3">
+                <div class="flex justify-between gap-2 text-xs font-semibold"><span>${label(item.grade)}</span><span>${item.sharePct}%</span></div>
+                <div class="my-2">${bar(item.sharePct,item.grade === 'PET_GRADE' ? 'bg-violet-500' : 'bg-teal-500')}</div>
+                <strong>${mt(item.contract)}</strong>
+                <div class="mt-1 text-xs text-slate-500">${label('actual')} ${mt(item.actual)} · ${label('remaining')} ${mt(item.remaining)}</div>
+                ${!warehouse && item.contractValue ? `<div class="mt-1 text-xs">${grouped(item.contractValue)}</div>` : ''}
+            </div>`).join('');
+            const palette = ['#0f766e','#2563eb','#7c3aed','#c2410c','#be185d','#475569'];
+            let position = 0;
+            const mix = data.products.filter(item => item.contract > 0).map((item,index) => {
+                const share = percent(item.contract,data.totalContract);
+                const end = Math.min(100, position + share);
+                const color = palette[index % palette.length];
+                const segment = color + ' ' + position + '% ' + end + '%';
+                position = end;
+                return {item,share,color,segment};
+            });
+            const ring = mix.length ? 'conic-gradient(' + mix.map(part=>part.segment).join(',') + ')' : '#e2e8f0';
+            const insights = data.insights || [];
+            const selected = typeof state !== 'undefined' ? (state.executiveInsight || 0) % Math.max(1,insights.length) : 0;
+            const language = typeof getUiLanguage === 'function' && getUiLanguage() === 'TH' ? 'th' : 'en';
+            const insightText = index => esc(insights[index]?.[language] || label('empty'));
+            const rate = Math.min(100,Math.max(0,Number(data.onPlanRatePct) || 0));
+            const jump = (view, title) => `<button type="button" onclick="changeView('${view}')" aria-label="${esc(title)}" title="${esc(title)}" class="rounded-md px-2 py-1 text-sm font-semibold text-blue-700 hover:bg-blue-50">↗</button>`;
+            const card = (title, primary, detail, action) => `<section class="rounded-xl border border-slate-200 bg-white p-5"><div class="flex items-start justify-between gap-2"><h2 class="text-xs font-semibold text-slate-500">${title}</h2>${action}</div><div class="mt-3 text-2xl font-bold text-slate-900">${primary}</div><div class="mt-2 space-y-2 text-xs text-slate-600">${detail}</div></section>`;
             const bar = (value, color) => `<div class="h-2 overflow-hidden rounded-full bg-slate-100"><div class="h-full rounded-full ${color}" style="width:${value}%"></div></div>`;
             const progress = percent(data.actual, data.totalContract);
             const upcoming = data.upcoming;
@@ -6245,18 +6316,36 @@
             }).join('');
             return `<div data-executive-dashboard class="space-y-5">
                 ${renderDashboardHeader(label('title'), '', actions.join(''))}
+                <div class="flex flex-wrap gap-2 print:hidden"><select aria-label="${label('period')}" class="rounded-lg border bg-white px-3 py-2 text-xs" onchange="setExecutivePeriod(this.value)">${['all','this_month','this_quarter','this_year'].map(value=>`<option value="${value}" ${(data.period || 'all')===value?'selected':''}>${label(value)}</option>`).join('')}</select><button type="button" class="rounded-lg border bg-white px-3 py-2 text-xs font-semibold" onclick="window.print()">${label('print')}</button></div>
                 <div class="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-                    ${card(label('contracts'), mt(data.totalContract), t('dashboard.posCount',{count:data.openCount}) + (data.contractValue && !warehouse ? '<div>' + grouped(data.contractValue) + '</div>' : ''))}
-                    ${card(label('fulfillment'), mt(data.actual), `<div>${label('actual')} · ${progress.toFixed(0)}%</div>${bar(progress,'bg-emerald-500')}<div>${label('remaining')} ${mt(data.remaining)}</div>`)}
-                    ${card(label('upcoming'), mt(upcoming.mt), `<div>${label(upcoming.fallback ? 'nextScheduled' : 'next30')}${upcoming.nextDate ? ' · ' + esc(upcoming.nextDate) : ''}</div><div>20′ · ${upcoming.small} / 40′ · ${upcoming.large}${upcoming.other ? ' / ' + label('other') + ' · ' + upcoming.other : ''}</div><button class="font-semibold text-blue-700 hover:underline" onclick="changeView('calendar')">${label('calendar')}</button>`)}
-                    ${data.receivables && !warehouse ? card(label('receivables'), grouped(data.receivables), data.overdue ? `<span class="rounded-full bg-rose-100 px-2 py-1 font-semibold text-rose-800">${data.overdue} ${label('overdue')}</span>` : label('noOverdue')) : card(label('queue'), data.activeContainers, `${label('containers')} · ${data.queue} ${label('queued')}`)}
+                    ${card(label('contracts'), mt(data.totalContract), t('dashboard.posCount',{count:data.openCount}) + (data.contractValue && !warehouse ? '<div>' + grouped(data.contractValue) + '</div>' : ''), jump(warehouse ? 'shipping' : 'po_engine',label('contracts')))}
+                    ${card(label('fulfillment'), mt(data.actual), `<div>${label('actual')} · ${progress.toFixed(0)}%</div>${bar(progress,'bg-emerald-500')}<div>${label('remaining')} ${mt(data.remaining)}</div>`, jump('shipping',label('fulfillment')))}
+                    ${card(label('upcoming'), mt(upcoming.mt), `<div>${label(upcoming.fallback ? 'nextScheduled' : 'next30')}${upcoming.nextDate ? ' · ' + esc(upcoming.nextDate) : ''}</div><div>20′ · ${upcoming.small} / 40′ · ${upcoming.large}${upcoming.other ? ' / ' + label('other') + ' · ' + upcoming.other : ''}</div><button class="font-semibold text-blue-700 hover:underline" onclick="changeView('calendar')">${label('calendar')}</button>`, jump('calendar',label('calendar')))}
+                    ${data.receivables && !warehouse ? card(label('receivables'), grouped(data.receivables), data.overdue ? `<span class="rounded-full bg-rose-100 px-2 py-1 font-semibold text-rose-800">${data.overdue} ${label('overdue')}</span>` : label('noOverdue'), jump('payments',label('receivables'))) : card(label('queue'), data.activeContainers, `${label('containers')} · ${data.queue} ${label('queued')}`, jump('shipping',label('queue')))}
                 </div>
                 <div class="grid gap-4 lg:grid-cols-2">
-                    ${section('products', data.products.map(product => `<div><div class="flex justify-between gap-3 text-xs font-semibold"><span>${esc(product.name)}</span><span>${mt(product.contract)}</span></div><div class="my-2">${bar(percent(product.actual,product.contract),'bg-emerald-500')}</div><div class="text-xs text-slate-500">${label('actual')} ${mt(product.actual)} · ${label('remaining')} ${mt(Math.max(0,product.contract-product.actual))}</div></div>`).join(''))}
+                    ${section('grades', `<div class="grid gap-2 sm:grid-cols-2">${gradeCards}</div><p class="rounded-lg bg-teal-50 p-3 text-xs text-teal-900">${insightText(0)}</p>`)}
+                    ${section('mix', `<div class="flex flex-wrap items-center gap-5"><div data-product-mix class="grid h-32 w-32 shrink-0 place-items-center rounded-full" style="background:${ring}"><div class="grid h-24 w-24 place-items-center rounded-full bg-white text-sm font-bold">${mt(data.totalContract)}</div></div><ul class="min-w-0 flex-1 space-y-2 text-xs">${mix.map(({item,share,color})=>`<li class="flex items-start gap-2"><span class="mt-1 h-2 w-2 shrink-0 rounded-full" style="background:${color}"></span><span>${esc(item.name)}<br><strong>${share.toFixed(1)}% · ${mt(item.contract)}</strong></span></li>`).join('') || label('empty')}</ul></div>`)}
+                    ${section('onPlan', `<div data-on-plan-gauge class="mx-auto relative h-24 w-48 overflow-hidden"><div class="absolute h-48 w-48 rounded-full" style="background:conic-gradient(from 270deg,#0f766e 0% ${rate/2}%,#e2e8f0 ${rate/2}% 50%,transparent 50%)"></div><div class="absolute left-4 top-4 grid h-40 w-40 justify-items-center rounded-full bg-white pt-8"><strong class="text-2xl">${data.loadedCount ? rate+'%' : '—'}</strong></div></div><p class="text-center text-xs text-slate-600">${label('onPlan')} · ${Number(data.onPlanCount || 0)} / ${Number(data.loadedCount || 0)}</p>`)}
+                    ${section('insights', `<div class="min-h-20 rounded-lg bg-blue-50 p-4 text-sm font-semibold text-slate-800" aria-live="polite">${insightText(selected)}</div><div class="flex items-center justify-between"><button type="button" class="rounded border px-2 py-1" aria-label="${label('previous')}" onclick="selectExecutiveInsight(${(selected+insights.length-1)%Math.max(1,insights.length)})">‹</button><div class="flex gap-2">${insights.map((_,index)=>`<button type="button" aria-label="${label('insights')} ${index+1}" aria-pressed="${index===selected}" onclick="selectExecutiveInsight(${index})" class="h-3 w-3 rounded-full ${index===selected?'bg-blue-700':'bg-slate-300'}"></button>`).join('')}</div><button type="button" class="rounded border px-2 py-1" aria-label="${label('next')}" onclick="selectExecutiveInsight(${(selected+1)%Math.max(1,insights.length)})">›</button></div>`)}
+                </div>
+                <div class="space-y-4">
                     ${section('timeline', data.months.map(month => `<div class="grid grid-cols-[5rem_1fr] items-center gap-3 text-xs"><strong>${esc(month.month)}</strong><div class="space-y-1"><div class="grid grid-cols-[1fr_6rem] items-center gap-2">${bar(percent(month.actual,peak),'bg-emerald-500')}<span>${label('actual')} ${mt(month.actual)}</span></div><div class="grid grid-cols-[1fr_6rem] items-center gap-2">${bar(percent(month.planned,peak),'bg-blue-400')}<span>${label('planned')} ${mt(month.planned)}</span></div></div></div>`).join(''))}
                 </div>
                 ${section('watch', rows ? `<div class="overflow-x-auto"><table class="w-full text-left text-xs"><thead class="bg-slate-50 text-slate-500"><tr>${['reference',warehouse?'productsOnly':'customerProduct',warehouse?'qty':'qtyValue','loading','alert'].map(key=>`<th scope="col" class="p-3">${label(key)}</th>`).join('')}</tr></thead><tbody>${rows}</tbody></table></div>` : '')}
             </div>`;
+        }
+
+        function setExecutivePeriod(period) {
+            if (!['all','this_month','this_quarter','this_year'].includes(period)) return;
+            state.executivePeriod = period;
+            state.executiveInsight = 0;
+            loadDashboardSummaryFromApi({force:true});
+        }
+
+        function selectExecutiveInsight(index) {
+            state.executiveInsight = index;
+            renderView();
         }
 
         function openExecutiveWatchlistItem(index) {
