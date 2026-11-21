@@ -465,6 +465,16 @@
         .di-list-status > span { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
         .di-list-table td .di-list-pill { max-width: 100%; }
         @media (max-width: 1279px) { .di-list-table { min-width: 480px; } .di-list-table:has(col:nth-child(7)) { min-width: 860px; } }
+        .crm-directory th, .crm-directory td { text-align: left; vertical-align: middle; padding: 12px 14px; }
+        .crm-directory .crm-numeric { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+        .crm-directory td { border-top: 1px solid #e2e8f0; }
+        .crm-directory tr[data-customer-id] { cursor: pointer; }
+        .crm-directory tr[data-customer-id]:hover { background: #f8fafc; }
+        .crm-directory .crm-customer-name { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; text-align: left; }
+        .crm-customer-name button { text-align: left; overflow-wrap: anywhere; }
+        .crm-line { white-space: nowrap; }
+        .crm-pill { display: inline-flex; align-items: center; white-space: nowrap; padding: 2px 10px; border-radius: 999px; font-weight: 600; }
+        .crm-status-stack { display: flex; flex-direction: column; gap: 4px; align-items: flex-start; }
     </style>
 </head>
 <body class="bg-slate-100 text-slate-800 antialiased min-h-screen flex flex-col">
@@ -860,6 +870,16 @@
                 // Customers / CRM
                 'customers.title': 'ข้อมูลลูกค้า & CRM',
                 'crm.title': "ลูกค้า / CRM",
+                'crm.customerTier': "ลูกค้าและระดับ",
+                'crm.ordersGrade': "PO และสัดส่วนเกรด",
+                'crm.statusPayment': "สถานะและการชำระเงิน",
+                'crm.onePo': "{count} PO",
+                'crm.petShort': "อาหารสัตว์เลี้ยง",
+                'crm.feedShort': "อาหารสัตว์",
+                'crm.houseSource': "ลูกค้าตรงบริษัท",
+                'crm.assignedSource': "ลูกค้าที่มีผู้แทนดูแล",
+                'crm.activeAccount': "ใช้งาน",
+                'crm.inactiveAccount': "ไม่ใช้งาน",
                 'crm.new': 'ลูกค้าใหม่ / ยังไม่มี PO',
                 'crm.period': "ช่วงเวลา",
                 'crm.all': "ทั้งหมด",
@@ -2319,6 +2339,16 @@
                 // Customers / CRM
                 'customers.title': 'Customers & CRM',
                 'crm.title': "Customer / CRM",
+                'crm.customerTier': "Customer & Tier",
+                'crm.ordersGrade': "POs & Grade Mix",
+                'crm.statusPayment': "Status & Payment",
+                'crm.onePo': "{count} PO",
+                'crm.petShort': "Pet",
+                'crm.feedShort': "Feed",
+                'crm.houseSource': "Direct House Account",
+                'crm.assignedSource': "Rep-managed account",
+                'crm.activeAccount': "Active",
+                'crm.inactiveAccount': "Inactive",
                 'crm.new': 'New / No PO',
                 'crm.period': "Period",
                 'crm.all': "All Active",
@@ -7443,12 +7473,30 @@
             </div>`;
             if (!data) return toolbar+`<p role="status" class="rounded-lg border bg-white p-4 text-xs">${label(model?.error?'error':'loading')}</p>`;
             const {summary,tiers,grades,rows} = data;
-            const badge = tier => `<span class="rounded-full px-2 py-1 text-xs font-bold ${{S:'bg-violet-100 text-violet-800',A:'bg-blue-100 text-blue-800',B:'bg-teal-100 text-teal-800',C:'bg-slate-100 text-slate-700'}[tier]}">${label('tier')} ${tier}</span>`;
+            const badge = tier => `<span class="crm-pill ${{S:'bg-violet-100 text-violet-800',A:'bg-blue-100 text-blue-800',B:'bg-teal-100 text-teal-800',C:'bg-slate-100 text-slate-700'}[tier]}">${label('tier')} ${tier}</span>`;
             const percent = (value,total) => total ? Math.min(100,Math.max(0,value/total*100)) : 0;
             const bar = item => `<div class="my-2 h-2 rounded-full bg-sky-100"><div class="h-full rounded-full bg-teal-600" style="width:${percent(item.shippedMt,item.shippedMt+item.remainingMt)}%"></div></div>`;
             const volume = item => `${label('shipped')} ${mt(item.shippedMt)} · ${label('remaining')} ${mt(item.remainingMt)}`;
             const card = (title,value,body) => `<section class="rounded-xl border bg-white p-4"><h3 class="text-xs font-semibold text-slate-500">${label(title)}</h3><div class="mt-2 text-xl font-bold">${value}</div><div class="mt-2 space-y-1 text-xs text-slate-600">${body}</div></section>`;
             const payment = item => item.overdue ? 'overdue' : Object.values(item.ar || {}).some(amount=>amount>0) ? 'pending' : item.invoices?.length ? 'onTime' : 'noInvoice';
+            const pill = (text,tone) => `<span class="crm-pill ${tone}">${esc(text)}</span>`;
+            const inline = value => `<div class="crm-line">${esc(value)}</div>`;
+            const columns = [
+                {key:'customerTier',width:240,cell:row=>`<div class="crm-customer-name"><button type="button" data-customer-id="${esc(row.id)}" onclick="openCustomerAnalyticsDetail(this.dataset.customerId)" class="font-bold text-blue-700 hover:underline">${esc(row.name)}</button>${badge(row.tier)}</div><div class="text-xs text-slate-500">${inline([row.code,row.country].filter(Boolean).join(' · ') || '—')}</div>`},
+                ...(!warehouse ? [{key:'rep',width:165,cell:row=>`<div class="font-semibold">${esc(row.repName || (row.ownershipType==='HOUSE_ACCOUNT'?t('common.houseAccount'):t('common.unassigned')))}</div><div class="text-xs text-slate-500">${label(row.ownershipType==='HOUSE_ACCOUNT' || row.source==='DIRECT_WCAT' ? 'houseSource' : 'assignedSource')}</div>`}] : []),
+                {key:'ordersGrade',width:225,cell:row=>`<div class="tabular-nums">${inline(t(row.poCount===1?'crm.onePo':'dashboard.posCount',{count:row.poCount})+' · '+mt(row.totalContractedMt))}<div class="text-xs text-slate-500">${inline(label('petShort')+' '+num(row.petGradeMt)+' · '+label('feedShort')+' '+mt(row.feedGradeMt))}</div></div>`},
+                {key:'remaining',width:110,numeric:true,cell:row=>inline(mt(row.remainingMt))},
+                ...(!warehouse ? [{key:'value',width:155,numeric:true,cell:row=>Object.entries(row.contractValue || {}).map(([code,amount])=>`<div class="crm-line">${grouped({[code]:amount})}</div>`).join('') || '—'}] : []),
+                {key:warehouse?'status':'statusPayment',width:145,cell:row=>{
+                    const active = row.status==='ACTIVE_CUSTOMER' || row.status==='ACTIVE';
+                    const account = pill(label(active?'activeAccount':'inactiveAccount'),active?'bg-emerald-100 text-emerald-800':'bg-slate-100 text-slate-700');
+                    const health = payment(row);
+                    const tones = {overdue:'bg-rose-100 text-rose-800',pending:'bg-amber-100 text-amber-800',onTime:'bg-emerald-100 text-emerald-800',noInvoice:'bg-slate-100 text-slate-600'};
+                    return `<div class="crm-status-stack">${account}${warehouse?'':pill(label(health),tones[health])}</div>`;
+                }},
+                {key:'action',width:80,numeric:true,cell:row=>editable?`<button type="button" data-customer-id="${esc(row.id)}" onclick="openEditCustomer(this.dataset.customerId)" class="whitespace-nowrap rounded-lg border border-blue-200 px-2.5 py-1.5 font-semibold text-blue-700">${t('common.edit')}</button>`:`<button type="button" data-customer-id="${esc(row.id)}" onclick="openCustomerAnalyticsDetail(this.dataset.customerId)" class="whitespace-nowrap rounded-lg border px-2.5 py-1.5 font-semibold">${t('common.open')}</button>`}
+            ];
+            const directory = `<div class="overflow-x-auto rounded-xl border bg-white"><table class="crm-directory w-full text-xs"><colgroup>${columns.map(column=>`<col style="width:${column.width}px">`).join('')}</colgroup><thead class="bg-slate-50"><tr>${columns.map(column=>`<th scope="col" ${column.numeric?'class="crm-numeric"':''}>${label(column.key)}</th>`).join('')}</tr></thead><tbody>${rows.map(row=>`<tr data-customer-id="${esc(row.id)}" onclick="if (!event.target.closest('button, a') && !window.getSelection()?.toString()) openCustomerAnalyticsDetail(this.dataset.customerId)">${columns.map(column=>`<td ${column.numeric?'class="crm-numeric"':''}>${column.cell(row)}</td>`).join('')}</tr>`).join('') || `<tr><td colspan="${columns.length}" class="text-slate-500">${label('empty')}</td></tr>`}</tbody></table></div>`;
             return toolbar+`<div data-crm-analytics class="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
                 ${card('coverage',num(summary.totalCustomers),`<div>${label('active')} · ${num(summary.activeCustomers)}</div><div>${label('new')} · ${num(summary.newCustomers)}</div>${['S','A'].map(tier=>badge(tier)+' '+num(tiers.find(item=>item.tier===tier)?.count)).join(' · ')}`)}
                 ${card('concentration',num(summary.top1CustomerSharePct)+'%',`<div>${label('top1')}</div><div>${label('top3')} · ${num(summary.top3CustomersSharePct)}%</div>`)}
@@ -7457,8 +7505,7 @@
             </div><div class="grid gap-4 lg:grid-cols-2">
                 <section class="rounded-xl border bg-white p-4"><h3 class="text-sm font-bold">${label('leaderboard')}</h3><div class="mt-3 space-y-3 text-xs">${rows.filter(row=>row.totalContractedMt>0).slice(0,7).map(row=>`<div><div class="flex flex-wrap items-center justify-between gap-2"><button type="button" class="font-bold text-blue-700" data-customer-id="${esc(row.id)}" onclick="openCustomerAnalyticsDetail(this.dataset.customerId)">${esc(row.name)}</button><span>${badge(row.tier)} · ${mt(row.totalContractedMt)}</span></div>${bar(row)}<div>${volume(row)} · ${label('tierProgress')} ${num(row.tierSScore*100)}%</div></div>`).join('') || label('empty')}</div></section>
                 <section class="rounded-xl border bg-white p-4"><h3 class="text-sm font-bold">${label('distribution')}</h3><div class="mt-3 grid gap-2 sm:grid-cols-2">${tiers.map(item=>`<div class="rounded-lg bg-slate-50 p-3 text-xs">${badge(item.tier)} · ${num(item.count)}<div class="mt-2">${mt(item.mt)} · ${num(item.sharePct)}%</div></div>`).join('')}${grades.map(item=>`<div class="rounded-lg bg-slate-50 p-3 text-xs"><strong>${label(item.grade)}</strong><div class="my-2 h-2 rounded-full bg-slate-200"><div class="h-full rounded-full bg-teal-600" style="width:${item.sharePct}%"></div></div>${mt(item.mt)} · ${num(item.sharePct)}%</div>`).join('')}</div></section>
-            </div><div class="overflow-x-auto rounded-xl border bg-white"><table class="w-full text-left text-xs"><thead class="bg-slate-50"><tr>${['customer','country',...(!warehouse?['rep']:[]),'tier','orders','remaining',...(!warehouse?['value','payment']:[]),'status',...(editable?['action']:[])].map(key=>`<th scope="col" class="p-3">${label(key)}</th>`).join('')}</tr></thead>
-                <tbody>${rows.map(row=>`<tr class="border-t"><td class="p-3"><button type="button" data-customer-id="${esc(row.id)}" onclick="openCustomerAnalyticsDetail(this.dataset.customerId)" class="font-bold text-blue-700 hover:underline">${esc(row.name)}</button><div>${esc(row.code)}</div></td><td class="p-3">${esc(row.country || '—')}</td>${!warehouse?`<td class="p-3">${esc(row.repName || (row.ownershipType==='HOUSE_ACCOUNT'?t('common.houseAccount'):t('common.unassigned')))}<div class="text-slate-500">${esc(row.source==='EXTERNAL'?t('customers.sourceExternal'):t('customers.sourceDirect'))}</div></td>`:''}<td class="p-3">${badge(row.tier)}</td><td class="p-3">${row.poCount} / ${mt(row.totalContractedMt)}<div>${label('PET_GRADE')} ${mt(row.petGradeMt)} · ${label('FEED_GRADE')} ${mt(row.feedGradeMt)}</div></td><td class="p-3">${mt(row.remainingMt)}</td>${!warehouse?`<td class="p-3">${grouped(row.contractValue)}</td><td class="p-3"><span class="${row.overdue?'text-rose-700 font-bold':'text-slate-700'}">${label(payment(row))}</span></td>`:''}<td class="p-3">${escapeDashboardHtml(typeof translateStatus==='function'?translateStatus(row.status):row.status)}</td>${editable?`<td class="p-3"><button type="button" data-customer-id="${esc(row.id)}" onclick="openEditCustomer(this.dataset.customerId)" class="font-semibold text-blue-700">${t('common.edit')}</button></td>`:''}</tr>`).join('') || `<tr><td colspan="${warehouse?6:9+(editable?1:0)}" class="p-4 text-slate-500">${label('empty')}</td></tr>`}</tbody></table></div>`;
+            </div>${directory}`;
         }
 
         function openCustomerAnalyticsDetail(id) {
