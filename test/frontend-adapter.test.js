@@ -1767,6 +1767,7 @@ test('renderPayments enforces role-aware UI for EXTERNAL_SALES, SALES_SUPPORT, a
       di_id: 'DI-1',
       di_no: 'DI-001',
       customer_po_no: 'CPO-1',
+      po_id: 'PO-2025-009',
       customer_name: 'Meelunie',
       currency: 'USD',
       shipment_status: 'DOCS_SENT',
@@ -1805,6 +1806,15 @@ test('renderPayments enforces role-aware UI for EXTERNAL_SALES, SALES_SUPPORT, a
       };
       const container = { innerHTML: '' };
       renderFn(container);
+      assert.match(container.innerHTML, /font-bold text-slate-900[^>]*>CPO-1<\/div>/);
+      assert.match(container.innerHTML, /System PO: PO-2025-009/);
+      if (role === 'EXTERNAL_SALES') {
+        const dashboard = globalThis.state.paymentsDashboard || globalThis.state.commissionsDashboard;
+        delete dashboard.items[0].po_id;
+        renderFn(container);
+        assert.doesNotMatch(container.innerHTML, /System PO: -/);
+        assert.match(container.innerHTML, /font-bold text-slate-900[^>]*>CPO-1</);
+      }
       assert.equal(container.innerHTML.includes('+ Add Customer Credit'), expectWrite, `${role} + Add Customer Credit visibility`);
       assert.equal(container.innerHTML.includes('Record Payment'), expectWrite, `${role} Record Payment visibility`);
       assert.equal(container.innerHTML.includes('Customer Credits'), expectCreditsTab, `${role} Customer Credits tab visibility`);
@@ -2005,6 +2015,7 @@ test('renderCommissions hides settle controls and recipient strip for EXTERNAL_S
         di_id: 'DI-1',
         di_no: 'DI-001',
         customer_po_no: 'CPO-1',
+        po_id: 'PO-2025-009',
         customer_name: 'Meelunie',
         recipient_user_id: 'U_SALES1',
         recipient_name: 'Sira TTPagro',
@@ -2062,6 +2073,15 @@ test('renderCommissions hides settle controls and recipient strip for EXTERNAL_S
       };
       const container = { innerHTML: '' };
       renderFn(container);
+      assert.match(container.innerHTML, /font-bold text-slate-900[^>]*>CPO-1<\/div>/);
+      assert.match(container.innerHTML, /System PO: PO-2025-009/);
+      if (role === 'EXTERNAL_SALES') {
+        const dashboard = globalThis.state.paymentsDashboard || globalThis.state.commissionsDashboard;
+        delete dashboard.items[0].po_id;
+        renderFn(container);
+        assert.doesNotMatch(container.innerHTML, /System PO: -/);
+        assert.match(container.innerHTML, /font-bold text-slate-900[^>]*>CPO-1</);
+      }
       assert.equal(container.innerHTML.includes('Settle / Pay'), expectSettle, `${role} Settle / Pay visibility`);
       assert.equal(container.innerHTML.includes('All Salespeople'), expectRecipientStrip, `${role} recipient filter visibility`);
       assert.match(container.innerHTML, /Receipt/, `${role} should see Receipt action on PAID row`);

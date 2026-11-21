@@ -732,3 +732,22 @@ test('Operations Calendar, Payment Status, and Commission render clean empty sta
     }
   }
 });
+
+test('Shipping PO references use customer number first and system number beneath in lists and details',()=>{
+  const renderList=new Function(`return (${extractFunction('renderPhase6DeliveryInstructionList()').trim()});`)();
+  const renderDetail=new Function(`return (${extractFunction('renderPhase6DeliveryInstructionDetail(di)').trim()});`)();
+  const di={di_id:'DI1',di_no:'DI-1',di_status:'DRAFT',po_id:'PO-2025-009',customer_po_no:'1606'};
+  const bindings={state:{currentUser:{role:'ADMIN'},deliveryInstructions:[di],phase6Filters:{},phase6ShipmentDetail:null},escapePhase6Text:v=>String(v??''),canEditPhase6Shipping:()=>false,canSearchPhase6Workspace:()=>true,canFilterPhase6Schedule:()=>true,canFilterPhase6Payment:()=>true,phase6StatusBadge:v=>String(v??'')};
+  Object.assign(globalThis,bindings);
+  try {
+    for(const label of ['System PO','เลขที่ PO ระบบ']) {
+      globalThis.t=key=>key==='po.systemPo'?label:key;
+      for(const output of [renderList(),renderDetail(di)]) {
+        assert.match(output,/font-bold text-slate-900[^>]*>1606<\/div>/);
+        assert.ok(output.includes(`${label}: PO-2025-009`));
+      }
+    }
+    di.customer_po_no=' ';
+    assert.match(renderList(),/font-bold text-slate-900[^>]*>PO-2025-009<\/div>/);
+  } finally {for(const key of [...Object.keys(bindings),'t'])delete globalThis[key];}
+});
