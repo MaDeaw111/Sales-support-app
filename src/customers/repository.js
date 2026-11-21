@@ -1,3 +1,4 @@
+import {buildCustomerAnalytics} from './analytics.js';
 function wrapDb(db) {
   if (!db) throw new Error('D1 DB binding is required.');
   
@@ -138,6 +139,7 @@ export function createCustomerRepository(dbBinding) {
       return rowToCustomer(customerRow, contactRows || []);
     },
     
+    analytics(caller,filters) { return buildCustomerAnalytics(db,caller,filters); },
     async listCustomers(filters = {}) {
       const sql = `
         SELECT c.customer_id, c.customer_code, c.customer_name, c.country, c.source,

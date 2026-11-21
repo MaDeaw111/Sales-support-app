@@ -487,3 +487,52 @@ test('external sales analytics separate paid, unpaid and pipeline commission and
   assert.deepEqual(searched.reps.map(rep=>rep.id),['U_SALES1']);
   assert.equal((await worker.fetch(makeRequest('/api/external-sales/analytics','GET','wh-token'),{DB:wrappedDb})).status,403);
 });
+
+test('CRM tier thresholds include pure grade, weighted qualification and dormant customers', async()=>{
+  const {classifyCustomer}=await import('../src/customers/analytics.js');
+  const classify=(pet,feed,more={})=>classifyCustomer({petGradeMt:pet,feedGradeMt:feed,totalContractedMt:pet+feed,poCount:1,remainingMt:pet+feed,lastActivity:'2026-11-20',...more},'2026-07-24').tier;
+  assert.equal(classify(1000,0),'S');
+  assert.equal(classify(0,7000),'S');
+  assert.equal(classify(500,3500),'S');
+  assert.equal(classify(0,2000),'A');
+  assert.equal(classify(300,0),'A');
+  assert.equal(classify(100,0,{poCount:2}),'A');
+  assert.equal(classify(99,0),'B');
+  assert.equal(classify(0,0),'C');
+  assert.equal(classify(1000,0,{remainingMt:0,lastActivity:'2026-01-01'}),'C');
+});
+
+test('CRM analytics computes concentration, scoped tier filters and overdue AR with warehouse redaction',async()=>{
+  const {db,wrappedDb}=await setupTestDb();
+  await seedFullDashboardFixture(db);
+  db.exec(`
+    INSERT INTO product_applications(product_id,application) VALUES ('P1','PET_GRADE'),('P2','FEED_GRADE');
+    INSERT INTO standard_specs(standard_spec_id,product_id,application,revision_no,effective_date)
+      VALUES ('PET-CRM','P1','PET_GRADE',1,'2026-01-01'),('FEED-CRM','P2','FEED_GRADE',1,'2026-01-01');
+    UPDATE po_revision_lines SET spec_revision_id='PET-CRM',contract_qty_mt=1000,max_qty_mt=1100 WHERE line_id='L1';
+    UPDATE po_revision_lines SET spec_revision_id='FEED-CRM' WHERE line_id='L2';
+    UPDATE po_revisions SET status='DRAFT' WHERE revision_id='REV2';
+    UPDATE po_headers SET current_active_revision_id=NULL WHERE po_id='PO2';
+    UPDATE phase6_shipments SET cash_received_amount=7500 WHERE shipment_id='SHP-1';
+    UPDATE shipment_invoices SET invoice_date='2020-01-01' WHERE invoice_id='INV-1';
+  `);
+  const fetchAnalytics=async(token,query='')=>{
+    const response=await worker.fetch(makeRequest('/api/customers/analytics'+query,'GET',token),{DB:wrappedDb});
+    assert.equal(response.status,200);
+    return (await response.json()).data;
+  };
+  const result=await fetchAnalytics('exp-token');
+  assert.equal(result.rows[0].tier,'S');
+  assert.equal(result.rows[0].petGradeMt,1000);
+  assert.equal(result.rows[1].feedGradeMt,50);
+  assert.equal(result.summary.top1CustomerSharePct,1000/1050*100);
+  assert.equal(result.summary.top3CustomersSharePct,100);
+  assert.deepEqual(result.summary.ar,{USD:2500});
+  assert.equal(result.summary.overdueCustomers,1);
+  assert.equal((await fetchAnalytics('admin-token','?tier=S&grade=PET_GRADE')).rows.length,1);
+  const warehouse=await fetchAnalytics('wh-token');
+  assert.doesNotMatch(JSON.stringify(warehouse),/contractValue|overdue|invoices|"ar"|USD|EUR/);
+  const own=await fetchAnalytics('sales2-token');
+  assert.deepEqual(own.rows.map(row=>row.id),['C2']);
+  assert.equal(own.reps.length,0);
+});

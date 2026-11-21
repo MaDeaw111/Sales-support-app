@@ -35,6 +35,18 @@ export function createCustomerHandler({ repo, resolveUser }) {
       return json({ status: 'ERROR', message: 'Authentication required.' }, 401);
     }
     
+    const requestUrl = new URL(request.url);
+    if (requestUrl.pathname === '/api/customers/analytics' && request.method === 'GET') {
+      if (!['ADMIN','MANAGER','SALES_SUPPORT','EXPORT','EXTERNAL_SALES','PRODUCTION_WAREHOUSE'].includes(user.role)) return json({status:'ERROR',message:'Permission denied.'},403);
+      const q = requestUrl.searchParams;
+      const filters = {period:q.get('period')||'all',tier:q.get('tier')||'ALL',grade:q.get('grade')||'ALL',search:q.get('search')||'',repId:q.get('repId')||''};
+      if (!['all','this_month','this_quarter','this_year'].includes(filters.period) || !['ALL','S','A','B','C'].includes(filters.tier)
+        || !['ALL','PET_GRADE','FEED_GRADE'].includes(filters.grade) || filters.search.length>200 || filters.repId.length>100) {
+        return json({status:'ERROR',message:'Invalid analytics filters.'},400);
+      }
+      if (['EXTERNAL_SALES','PRODUCTION_WAREHOUSE'].includes(user.role)) filters.repId='';
+      return json({status:'SUCCESS',data:await repo.analytics(user,filters)});
+    }
     const isAllowedRole = ['ADMIN', 'MANAGER', 'SALES_SUPPORT', 'EXTERNAL_SALES'].includes(user.role);
     if (!isAllowedRole) {
       return json({ status: 'ERROR', message: 'Permission denied.' }, 403);
