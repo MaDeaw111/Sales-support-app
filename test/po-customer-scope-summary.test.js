@@ -278,3 +278,17 @@ test('Admin can rediscover pending cleanup after reloading but other roles canno
     assert.deepEqual(body.data.pendingCleanupPoIds,role==='ADMIN'?[poId]:undefined);
   }
 });
+
+test('PO detail resolves specification and representative names without leaking other commissions',async t=>{
+  const {db,repo,pos}=await fixture(t);
+  db.exec("UPDATE users SET full_name='Sira Sales' WHERE user_id='SIRA'");
+  db.prepare("UPDATE po_revision_lines SET commission_recipient_user_id='SIRA',commission_rate_usd_mt=2 WHERE po_revision_id=?").run(pos[0].revision.revision_id);
+  const poId=pos[0].header.po_id;
+  for(const role of ['ADMIN','EXTERNAL_SALES','EXPORT','PRODUCTION_WAREHOUSE']) {
+    const handler=createPOHandler({repo,db,resolveUser:async()=>({user_id:role==='EXTERNAL_SALES'?'SIRA':'ADMIN',role})});
+    const body=await (await handler(new Request(`https://test/api/pos/${poId}`))).json();
+    const line=body.data.po.revisions[0].lines[0];
+    assert.equal(line.spec_application,'FEED_GRADE');
+    assert.equal(line.commission_recipient_name,['ADMIN','EXTERNAL_SALES'].includes(role)?'Sira Sales':undefined);
+  }
+});

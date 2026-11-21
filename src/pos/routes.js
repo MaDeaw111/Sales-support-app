@@ -41,6 +41,7 @@ function filterPOForRole(po, caller) {
         product_id: line.product_id,
         spec_source: line.spec_source,
         spec_revision_id: line.spec_revision_id,
+        spec_application: line.spec_application,
         spec_override_json: line.spec_override_json,
         currency: line.currency,
         unit_weight_kg: line.unit_weight_kg,
@@ -62,6 +63,7 @@ function filterPOForRole(po, caller) {
       };
       if (line.commission_recipient_user_id === callerUserId) {
         cleanLine.commission_recipient_user_id = line.commission_recipient_user_id;
+        cleanLine.commission_recipient_name = line.commission_recipient_name;
         cleanLine.commission_rate_usd_mt = line.commission_rate_usd_mt;
       }
       return cleanLine;
@@ -123,6 +125,7 @@ function filterPOForRole(po, caller) {
           product_id: line.product_id,
           spec_source: line.spec_source,
           spec_revision_id: line.spec_revision_id,
+        spec_application: line.spec_application,
           contract_qty_mt: line.contract_qty_mt,
           tolerance_pct: line.tolerance_pct,
           min_qty_mt: line.min_qty_mt,
@@ -183,6 +186,7 @@ function filterPOForRole(po, caller) {
           product_id: line.product_id,
           spec_source: line.spec_source,
           spec_revision_id: line.spec_revision_id,
+        spec_application: line.spec_application,
           contract_qty_mt: line.contract_qty_mt,
           container_type: line.container_type,
           loading_pattern: line.loading_pattern,

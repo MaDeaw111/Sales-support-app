@@ -93,9 +93,9 @@ test('Manage renders logistics and limits delete and commission controls',()=>{
   load(ctx,'renderRealPODetailCard');
   ctx.state.currentUser={role:'ADMIN'};
   const po=ctx.state.pos[0];
-  po.revisions[0].lines=[{line_id:'L1',product_id:'P1',incoterm:'EXW',destination_port:'Factory',shipment_type:'Container',container_type:"40 HC",packaging:'Jumbo Bag 850 kg',unit_weight_kg:850,units_per_container:32,target_load_weight_mt:27.2,tolerance_pct:5,max_qty_mt:567,commission_recipient_user_id:'REP',commission_rate_usd_mt:2}];
+  po.revisions[0].lines=[{line_id:'L1',product_id:'P1',incoterm:'EXW',destination_port:'Factory',shipment_type:'Container',container_type:"40 HC",packaging:'Jumbo Bag 850 kg',unit_weight_kg:850,units_per_container:32,target_load_weight_mt:27.2,tolerance_pct:5,max_qty_mt:567,commission_recipient_user_id:'REP',commission_recipient_name:'Representative Name',commission_rate_usd_mt:2}];
   const output=ctx.renderRealPODetailCard(po);
-  for(const value of ['EXW','Factory','27.2','850','567','REP','USD 2','openPODeleteModal']) assert.ok(output.includes(value),value);
+  for(const value of ['EXW','Factory','27.2','850','567','Representative Name','USD 2','openPODeleteModal']) assert.ok(output.includes(value),value);
   ctx.state.currentUser={role:'EXPORT'};
   delete po.revisions[0].lines[0].commission_rate_usd_mt;
   assert.doesNotMatch(ctx.renderRealPODetailCard(po),/openPODeleteModal|USD 2/);
@@ -122,4 +122,32 @@ test('changing draft product selects its active specification',()=>{
   const {ctx,fields}=harness();load(ctx,'updatePODraftLineSpecs');
   fields.draftLineProduct={value:'P1'};fields.draftLineSpec={value:''};
   ctx.updatePODraftLineSpecs();assert.equal(fields.draftLineSpec.value,'STANDARD:SPEC');
+});
+
+test('Manage uses clean labels, named references, totals and three-column logistics panels',()=>{
+  const {ctx}=harness();load(ctx,'renderRealPODetailCard');
+  ctx.state.currentUser={role:'ADMIN'};
+  ctx.t=key=>({'po.fieldCustPoNo':'Customer PO No. *','po.fieldPoDate':'PO Date *','po.fieldProductSpec':'Product & Spec *','po.fieldShipType':'Shipment Type *'}[key]||key);
+  const po=ctx.state.pos[0];
+  po.revisions[0].lines=[{line_id:'L1',line_no:1,product_id:'P1',spec_revision_id:'STD-016',spec_application:'FEED_GRADE',contract_qty_mt:50,min_qty_mt:47.5,max_qty_mt:52.5,unit_price:185,incoterm:'CIF',tolerance_pct:5,commission_recipient_user_id:'USR-0008',commission_recipient_name:'Sira',commission_rate_usd_mt:2,price_override_reason:'Agreed EUR rate'}];
+  const output=ctx.renderRealPODetailCard(po);
+  assert.doesNotMatch(output,/\*|50\.000|USR-0008/);
+  assert.match(output,/50 MT/);assert.match(output,/EUR 9,250\.00/);
+  assert.match(output,/FEED_GRADE \(STD-016\)/);assert.match(output,/Sira/);
+  assert.match(output,/data-po-line-details/);assert.match(output,/md:grid-cols-3/);
+  assert.match(output,/Agreed EUR rate/);assert.match(output,/border-red-200/);
+  delete po.revisions[0].lines[0].unit_price;
+  delete po.revisions[0].lines[0].commission_rate_usd_mt;
+  delete po.revisions[0].lines[0].commission_recipient_name;
+  ctx.state.currentUser.role='EXPORT';
+  const restricted=ctx.renderRealPODetailCard(po);
+  assert.doesNotMatch(restricted,/EUR 9,250|Sira|openPODeleteModal/);
+});
+
+test('Manage respects a cleared line destination and formats fractional USD line totals',()=>{
+  const {ctx}=harness();load(ctx,'renderRealPODetailCard');
+  const po=ctx.state.pos[0];po.revisions[0].currency='USD';po.revisions[0].destination='Old Port';
+  po.revisions[0].lines=[{line_id:'L1',line_no:1,product_id:'P1',contract_qty_mt:27.2,unit_price:100,incoterm:'EXW',destination_port:''}];
+  const output=ctx.renderRealPODetailCard(po);
+  assert.doesNotMatch(output,/Old Port/);assert.match(output,/27.2 MT/);assert.match(output,/USD 2,720.00/);
 });

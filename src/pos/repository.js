@@ -1506,7 +1506,7 @@ export function createPORepository(dbBinding) {
       
       const revsWithDetails = [];
       for (const rev of revisions || []) {
-        const { results: lines } = await db.prepare("SELECT l.*, p.product_name, p.short_name, p.product_code FROM po_revision_lines l LEFT JOIN products p ON p.product_id = l.product_id WHERE l.po_revision_id = ? ORDER BY l.line_no ASC").bind(rev.revision_id).all();
+        const { results: lines } = await db.prepare("SELECT l.*, p.product_name, p.short_name, p.product_code, COALESCE(ss.application, cs.application) AS spec_application, u.full_name AS commission_recipient_name FROM po_revision_lines l LEFT JOIN products p ON p.product_id = l.product_id LEFT JOIN standard_specs ss ON l.spec_source = 'STANDARD' AND ss.standard_spec_id = l.spec_revision_id LEFT JOIN customer_specs cs ON l.spec_source = 'CUSTOMER' AND cs.customer_spec_id = l.spec_revision_id LEFT JOIN users u ON u.user_id = l.commission_recipient_user_id WHERE l.po_revision_id = ? ORDER BY l.line_no ASC").bind(rev.revision_id).all();
         const { results: docs } = await db.prepare("SELECT * FROM po_revision_documents WHERE po_revision_id = ?").bind(rev.revision_id).all();
         revsWithDetails.push({
           ...rev,
