@@ -22,6 +22,16 @@ function extractFunction(name) {
   return html.slice(start, index);
 }
 
+globalThis.phase6EntryText = new Function('return (' + extractFunction('phase6EntryText(').trim() + ');')();
+globalThis.getPhase6EntryDraft = new Function('return (' + extractFunction('getPhase6EntryDraft(').trim() + ');')();
+globalThis.renderPhase6ContainerRows = new Function('return (' + extractFunction('renderPhase6ContainerRows(').trim() + ');')();
+globalThis.renderPhase6ContainerForm = new Function('return (' + extractFunction('renderPhase6ContainerForm(').trim() + ');')();
+globalThis.renderPhase6InvoiceForm = new Function('return (' + extractFunction('renderPhase6InvoiceForm(').trim() + ');')();
+globalThis.updatePhase6EntryTotals = new Function('return (' + extractFunction('updatePhase6EntryTotals(').trim() + ');')();
+globalThis.collectPhase6InvoiceLines = new Function('return (' + extractFunction('collectPhase6InvoiceLines(').trim() + ');')();
+globalThis.phase6EntryError = new Function('return (' + extractFunction('phase6EntryError(').trim() + ');')();
+globalThis.setPhase6EntryBusy = new Function('return (' + extractFunction('setPhase6EntryBusy(').trim() + ');')();
+
 function success(data) {
   return { ok: true, json: async () => ({ status: 'SUCCESS', data }) };
 }
@@ -182,7 +192,8 @@ test('updatePhase6ShipmentSectionToApi uses the focused section endpoint', async
 
 test('finalizePhase6Invoice promotes a PRELIMINARY invoice through the focused FINAL endpoint', async () => {
   const code = extractFunction('finalizePhase6Invoice(shipmentId, invoiceId)');
-  globalThis.document = { getElementById: () => ({ value: '[{"poRevisionLineId":"LINE-1","qtyMt":9.5}]' }) };
+  globalThis.document = { getElementById: () => ({ value: '9.5' }) };
+  globalThis.canEditPhase6Shipping = () => true;
   globalThis.fetch = async (url, options) => {
     assert.equal(url, '/api/shipments-v2/S1/invoices/INV1/finalize');
     assert.equal(options.method, 'PATCH');
@@ -190,7 +201,7 @@ test('finalizePhase6Invoice promotes a PRELIMINARY invoice through the focused F
     return success({ invoice: { invoice_id: 'INV1', version: 'FINAL' } });
   };
   globalThis.selectPhase6DeliveryInstruction = async () => {};
-  globalThis.state = { selectedPhase6DeliveryInstructionId: 'DI1' };
+  globalThis.state = { selectedPhase6DeliveryInstructionId: 'DI1', phase6ShipmentDetail: {shipment_id:'S1',products:[{po_revision_line_id:'LINE-1',planned_qty_mt:9.5,unit_price:100,currency:'USD'}],containers:[]} };
 
   try {
     await new Function(`return (${code.trim()});`)()('S1', 'INV1');

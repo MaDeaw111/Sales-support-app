@@ -1435,6 +1435,35 @@
                 'shipping.applyCredit': 'ตัดใช้เครดิต',
                 'shipping.noHistory': 'ยังไม่มีประวัติการดำเนินการ',
                 'shipping.modalCreateDi': 'สร้าง Delivery Instruction (DI)',
+                'shipping.containerNo': "เลขตู้คอนเทนเนอร์",
+                'shipping.sealNo': "เลขซีล",
+                'shipping.productLine': "รายการสินค้า",
+                'shipping.chooseLine': "เลือกรายการสินค้า",
+                'shipping.bagsUnits': "จำนวนถุง / หน่วย",
+                'shipping.netWeight': "น้ำหนักสุทธิ (MT)",
+                'shipping.removeRow': "ลบแถว",
+                'shipping.addContainer': "เพิ่มตู้คอนเทนเนอร์",
+                'shipping.containerRowHelp': "ใช้เลขตู้และซีลเดียวกันสำหรับสินค้าหลายรายการ การบันทึกจะแทนที่รายการตู้ทั้งหมด",
+                'shipping.totalContainers': "จำนวนตู้ทั้งหมด",
+                'shipping.totalBags': "จำนวนถุง / หน่วยทั้งหมด",
+                'shipping.totalActualWeight': "น้ำหนักสุทธิจริงรวม",
+                'shipping.diPlannedQty': "ปริมาณตาม DI (MT)",
+                'shipping.actualLoadedQty': "ปริมาณบรรทุกจริง (MT)",
+                'shipping.invoiceQty': "ปริมาณในใบแจ้งหนี้ (MT)",
+                'shipping.totalInvoiceAmount': "มูลค่าใบแจ้งหนี้รวม",
+                'shipping.noEntryLines': "ไม่พบรายการสินค้า กรุณารีเฟรชการจัดส่ง",
+                'shipping.invoiceQtyHelp': "ระบุ 0 เพื่อไม่เลือกรายการ ปุ่มบันทึกและยืนยันฉบับจริงใช้ปริมาณที่แสดงในตารางนี้",
+                'shipping.containerInvalid': "กรอกเลขตู้ เลือกสินค้า ระบุจำนวนถุงเป็นจำนวนเต็มบวก และน้ำหนักสุทธิมากกว่า 0",
+                'shipping.containerDuplicate': "สินค้าในตู้เดียวกันต้องไม่ซ้ำ และทุกแถวของตู้นั้นต้องใช้เลขซีลเดียวกัน",
+                'shipping.invoiceInvalid': "กรอกเลขที่ วันที่ และประเภทใบแจ้งหนี้ พร้อมปริมาณสินค้ามากกว่า 0 อย่างน้อยหนึ่งรายการ",
+                'shipping.entryBalanceError': "ปริมาณหรือยอดเงินเกินยอดที่อนุญาต กรุณาตรวจสอบปริมาณตาม DI ปริมาณบรรทุก และใบแจ้งหนี้เดิม",
+                'shipping.entryStateError': "สถานะการจัดส่งยังไม่รองรับการบันทึกนี้ กรุณาตรวจสอบ Booking วันที่บรรทุกจริง และข้อมูลตู้ก่อนออกใบแจ้งหนี้ฉบับจริง",
+                'shipping.invoiceDuplicate': "เลขที่ใบแจ้งหนี้นี้มีอยู่แล้ว กรุณาตรวจสอบหรือใช้เลขที่อื่น",
+                'shipping.entrySaveFailed': "บันทึกไม่สำเร็จ กรุณาตรวจสอบข้อมูลและสถานะล่าสุด แล้วลองอีกครั้ง",
+                'shipping.invoiceDate': "วันที่ใบแจ้งหนี้",
+                'shipping.invoiceType': "ประเภทใบแจ้งหนี้",
+                'shipping.preliminary': "ฉบับเบื้องต้น",
+                'shipping.final': "ฉบับจริง",
                 'shipping.createLoading': "กำลังโหลด PO และข้อมูลการจัดส่ง…",
                 'shipping.guidedHelp': "เลือก PO และระบุปริมาณที่จะจัดส่ง ระบบตรวจสอบยอดคงเหลือก่อนบันทึก",
                 'shipping.poReference': "PO / สัญญาอ้างอิง *",
@@ -2710,6 +2739,35 @@
                 'shipping.applyCredit': 'Apply Credit',
                 'shipping.noHistory': 'No history is available for this view.',
                 'shipping.modalCreateDi': 'Create Delivery Instruction',
+                'shipping.containerNo': "Container No.",
+                'shipping.sealNo': "Seal No.",
+                'shipping.productLine': "Product Line",
+                'shipping.chooseLine': "Select product line",
+                'shipping.bagsUnits': "Bags / Units",
+                'shipping.netWeight': "Net Weight (MT)",
+                'shipping.removeRow': "Remove",
+                'shipping.addContainer': "Add Container",
+                'shipping.containerRowHelp': "Use the same container and seal for multiple product lines. Saving replaces all recorded containers.",
+                'shipping.totalContainers': "Total Containers",
+                'shipping.totalBags': "Total Bags / Units",
+                'shipping.totalActualWeight': "Total Actual Net Weight",
+                'shipping.diPlannedQty': "DI Planned Qty (MT)",
+                'shipping.actualLoadedQty': "Actual Loaded Qty (MT)",
+                'shipping.invoiceQty': "Invoice Qty (MT)",
+                'shipping.totalInvoiceAmount': "Total Invoice Amount",
+                'shipping.noEntryLines': "No product lines available. Refresh the shipment.",
+                'shipping.invoiceQtyHelp': "Enter 0 to omit a line. Save and Finalize use the quantities shown here.",
+                'shipping.containerInvalid': "Enter a container number, select a product, and enter positive whole bags/units and positive net weight.",
+                'shipping.containerDuplicate': "Each product may appear once per container, and all rows for that container must use the same seal.",
+                'shipping.invoiceInvalid': "Enter the invoice number, date and type, with a positive quantity for at least one product line.",
+                'shipping.entryBalanceError': "The quantity or amount exceeds the allowed balance. Check DI quantities, loaded quantities, and existing invoices.",
+                'shipping.entryStateError': "The shipment is not ready for this action. Check booking, actual loading date, and containers before issuing a final invoice.",
+                'shipping.invoiceDuplicate': "This invoice number already exists. Review it or use another number.",
+                'shipping.entrySaveFailed': "Could not save. Check the details and current shipment status, then retry.",
+                'shipping.invoiceDate': "Invoice Date",
+                'shipping.invoiceType': "Invoice Type",
+                'shipping.preliminary': "Preliminary",
+                'shipping.final': "Final",
                 'shipping.createLoading': "Loading purchase orders and shipment details…",
                 'shipping.guidedHelp': "Select a PO and enter shipment quantities. Remaining balances are checked before saving.",
                 'shipping.poReference': "PO Reference *",
@@ -9760,13 +9818,191 @@
             } catch (err) { alert(err.message); }
         }
 
-        async function submitPhase6Containers(shipmentId) {
-            try {
-                const containers = JSON.parse(document.getElementById('phase6ContainersJson')?.value || '[]');
-                await updatePhase6ShipmentSectionToApi(shipmentId, 'containers', { containers });
-                await selectPhase6DeliveryInstruction(state.selectedPhase6DeliveryInstructionId);
-            } catch (err) { alert(`Container data was not saved: ${err.message}`); }
+        function bindPhase6EntryForms(container) {
+            container?.querySelectorAll?.('[data-phase6-container-field]').forEach(input => input.addEventListener(input.tagName === 'SELECT' ? 'change' : 'input', () => changePhase6ContainerRow(Number(input.dataset.phase6ContainerIndex), input.dataset.phase6ContainerField, input.value)));
+            container?.querySelectorAll?.('[data-phase6-entry-action]').forEach(button => button.addEventListener('click', () => button.dataset.phase6EntryAction === 'add-container' ? addPhase6ContainerRow() : removePhase6ContainerRow(Number(button.dataset.phase6ContainerIndex))));
+            container?.querySelectorAll?.('[data-phase6-invoice-qty]').forEach(input => input.addEventListener('input', updatePhase6EntryTotals));
         }
+
+        function phase6EntryText(key, fallback) {
+            return typeof t === 'function' ? t(key) : (fallback || key);
+        }
+
+        function getPhase6EntryDraft() {
+            const shipment = state.phase6ShipmentDetail || {};
+            if (state.phase6EntryDraft?.source === shipment) return state.phase6EntryDraft;
+            const products = (shipment.products || []).filter(product => product.po_revision_line_id);
+            const saved = (shipment.containers || []).filter(container => container.status !== 'CANCELLED');
+            const rows = saved.flatMap(container => (container.lines || []).map(line => ({containerNo:container.container_no || '',sealNo:container.seal_no || '',poRevisionLineId:line.po_revision_line_id || '',numberOfBags:Number(line.number_of_bags || 0),netWeightMt:Number(line.qty_mt || 0)})));
+            const actual = products.map(product => saved.reduce((sum,container)=>sum+(container.lines || []).filter(line=>line.po_revision_line_id===product.po_revision_line_id).reduce((total,line)=>total+Number(line.qty_mt || 0),0),0));
+            state.phase6EntryDraft = {source:shipment,shipmentId:shipment.shipment_id,products,rows:rows.length ? rows : [{containerNo:'',sealNo:'',poRevisionLineId:products.length === 1 ? products[0].po_revision_line_id : '',numberOfBags:0,netWeightMt:0}],actual,quantities:products.map((product,index)=>saved.length ? actual[index] : Number(product.planned_qty_mt || 0)),busy:false};
+            return state.phase6EntryDraft;
+        }
+
+        function renderPhase6ContainerRows() {
+            const draft = getPhase6EntryDraft(), esc = escapePhase6Text;
+            return draft.rows.map((row,index)=>`<tr class="border-t border-slate-100 align-top">
+                <td class="p-2"><input aria-label="${phase6EntryText('shipping.containerNo','Container No.')}" value="${esc(row.containerNo)}" placeholder="MSKU1234567" data-phase6-container-index="${index}" data-phase6-container-field="containerNo" class="w-36 rounded-lg border p-2"></td>
+                <td class="p-2"><input aria-label="${phase6EntryText('shipping.sealNo','Seal No.')}" value="${esc(row.sealNo)}" placeholder="SL998877" data-phase6-container-index="${index}" data-phase6-container-field="sealNo" class="w-32 rounded-lg border p-2"></td>
+                <td class="p-2"><select aria-label="${phase6EntryText('shipping.productLine','Product Line')}" data-phase6-container-index="${index}" data-phase6-container-field="poRevisionLineId" class="min-w-[200px] w-full rounded-lg border p-2"><option value="">${phase6EntryText('shipping.chooseLine','Select product line')}</option>${draft.products.map(product=>`<option value="${esc(product.po_revision_line_id)}" ${product.po_revision_line_id===row.poRevisionLineId?'selected':''}>${esc(product.product_name || product.product_code || '-')} (${esc(product.product_code || '-')})</option>`).join('')}</select></td>
+                <td class="p-2"><input aria-label="${phase6EntryText('shipping.bagsUnits','Bags / Units')}" type="number" min="1" step="1" value="${esc(row.numberOfBags)}" data-phase6-container-index="${index}" data-phase6-container-field="numberOfBags" class="w-24 rounded-lg border p-2"></td>
+                <td class="p-2"><input id="phase6ContainerWeight${index}" aria-label="${phase6EntryText('shipping.netWeight','Net Weight (MT)')}" type="number" min="0.001" step="0.001" value="${esc(row.netWeightMt)}" data-phase6-container-index="${index}" data-phase6-container-field="netWeightMt" class="w-28 rounded-lg border p-2"></td>
+                <td class="p-2"><button type="button" data-phase6-entry-action="remove-container" data-phase6-container-index="${index}" class="rounded-lg border border-red-200 px-3 py-2 text-red-700">${phase6EntryText('shipping.removeRow','Remove')}</button></td>
+            </tr>`).join('');
+        }
+
+        function renderPhase6ContainerForm() {
+            const draft = getPhase6EntryDraft();
+            const totalMt = draft.rows.reduce((sum,row)=>sum+Number(row.netWeightMt || 0),0);
+            const count = new Set(draft.rows.filter(row=>row.containerNo.trim()).map(row=>row.containerNo.trim())).size;
+            return `<div class="space-y-3"><p class="text-xs text-slate-500">${phase6EntryText('shipping.containerRowHelp','Use the same container and seal for multiple product lines. Saved containers are replaced together.')}</p><div class="overflow-x-auto rounded-lg border"><table class="w-full text-xs"><thead class="bg-slate-50 text-left text-slate-500"><tr>${['shipping.containerNo','shipping.sealNo','shipping.productLine','shipping.bagsUnits','shipping.netWeight','common.action'].map(key=>`<th class="p-2">${phase6EntryText(key)}</th>`).join('')}</tr></thead><tbody id="phase6ContainerRows">${renderPhase6ContainerRows()}</tbody></table></div><button type="button" data-phase6-entry-action="add-container" class="rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-xs font-semibold text-blue-700">+ ${phase6EntryText('shipping.addContainer','Add Container')}</button><div id="phase6ContainerSummary" class="rounded-lg bg-slate-50 p-3 text-xs font-semibold">${phase6EntryText('shipping.totalContainers','Total Containers')}: ${count} · ${phase6EntryText('shipping.totalBags','Total Bags / Units')}: ${draft.rows.reduce((sum,row)=>sum+Number(row.numberOfBags || 0),0)} · ${phase6EntryText('shipping.totalActualWeight','Total Actual Net Weight')}: ${totalMt.toLocaleString('en-US',{maximumFractionDigits:3})} MT</div><p id="phase6ContainerError" role="alert" class="text-xs text-red-700"></p></div>`;
+        }
+
+        function renderPhase6InvoiceForm() {
+            const draft = getPhase6EntryDraft(), esc = escapePhase6Text;
+            const money = (amount,currency) => `${esc(currency || '-')} ${Number(amount).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2})}`;
+            const total = draft.products.reduce((sum,product,index)=>sum+draft.quantities[index]*Number(product.unit_price || 0),0);
+            return `<div class="space-y-3"><div class="overflow-x-auto rounded-lg border"><table class="w-full text-xs"><thead class="bg-slate-50 text-left text-slate-500"><tr>${['po.fieldProductSpec','po.detailUnitPrice','shipping.diPlannedQty','shipping.actualLoadedQty','shipping.invoiceQty','po.lineTotal'].map(key=>`<th class="p-3">${phase6EntryText(key).replace(/\*/g,'').trim()}</th>`).join('')}</tr></thead><tbody>${draft.products.map((product,index)=>`<tr class="border-t border-slate-100"><td class="p-3"><div class="font-semibold text-slate-900">${esc(product.product_name || '-')}</div><div class="mt-1 text-[10px] text-slate-500">${esc([product.product_code,product.spec_application,product.spec_revision_id].filter(Boolean).join(' · '))}</div></td><td class="p-3 whitespace-nowrap">${money(product.unit_price || 0,product.currency)} / MT</td><td class="p-3">${Number(product.planned_qty_mt || 0).toLocaleString('en-US',{maximumFractionDigits:3})}</td><td class="p-3">${Number(draft.actual[index]).toLocaleString('en-US',{maximumFractionDigits:3})}</td><td class="p-3"><input id="phase6InvoiceQty${index}" aria-label="${phase6EntryText('shipping.invoiceQty','Invoice Qty (MT)')}" type="number" min="0" step="0.001" value="${draft.quantities[index]}" data-phase6-invoice-qty class="w-28 rounded-lg border p-2"></td><td id="phase6InvoiceAmount${index}" class="p-3 font-semibold whitespace-nowrap">${money(draft.quantities[index]*Number(product.unit_price || 0),product.currency)}</td></tr>`).join('') || `<tr><td colspan="6" class="p-4 text-slate-500">${phase6EntryText('shipping.noEntryLines','No product lines available. Refresh the shipment.')}</td></tr>`}</tbody></table></div><div class="flex justify-between rounded-lg bg-slate-50 p-3 text-sm font-semibold"><span>${phase6EntryText('shipping.totalInvoiceAmount','Total Invoice Amount')}</span><span id="phase6InvoiceTotal">${money(total,draft.products[0]?.currency)}</span></div><p class="text-xs text-slate-500">${phase6EntryText('shipping.invoiceQtyHelp','Enter 0 to omit a line. Save and Finalize use the quantities shown here.')}</p><p id="phase6InvoiceError" role="alert" class="text-xs text-red-700"></p></div>`;
+        }
+
+        function changePhase6ContainerRow(index, field, value) {
+            const draft = getPhase6EntryDraft();
+            if (draft.busy || !canEditPhase6Shipping() || !draft.rows[index]) return;
+            const row = draft.rows[index];
+            if (!['containerNo','sealNo','poRevisionLineId','numberOfBags','netWeightMt'].includes(field)) return;
+            row[field] = ['numberOfBags','netWeightMt'].includes(field) ? Number(value) : value;
+            if (field === 'numberOfBags' || field === 'poRevisionLineId') {
+                const product = draft.products.find(item=>item.po_revision_line_id===row.poRevisionLineId);
+                if (Number(product?.unit_weight_kg)>0) {
+                    row.netWeightMt = Math.round(Number(row.numberOfBags || 0)*Number(product.unit_weight_kg))/1000;
+                    const input = document.getElementById(`phase6ContainerWeight${index}`);
+                    if (input) input.value = row.netWeightMt;
+                }
+            }
+            updatePhase6EntryTotals();
+        }
+
+        function addPhase6ContainerRow() {
+            const draft = getPhase6EntryDraft();
+            if (draft.busy || !canEditPhase6Shipping()) return;
+            draft.rows.push({containerNo:'',sealNo:'',poRevisionLineId:draft.products.length===1?draft.products[0].po_revision_line_id:'',numberOfBags:0,netWeightMt:0});
+            document.getElementById('phase6ContainerRows').innerHTML = renderPhase6ContainerRows();
+            bindPhase6EntryForms(document.getElementById('phase6ContainerRows'));
+            updatePhase6EntryTotals();
+        }
+
+        function removePhase6ContainerRow(index) {
+            const draft = getPhase6EntryDraft();
+            if (draft.busy || !canEditPhase6Shipping()) return;
+            draft.rows.splice(index,1);
+            document.getElementById('phase6ContainerRows').innerHTML = renderPhase6ContainerRows();
+            bindPhase6EntryForms(document.getElementById('phase6ContainerRows'));
+            updatePhase6EntryTotals();
+        }
+
+        function updatePhase6EntryTotals() {
+            const draft = getPhase6EntryDraft();
+            const count = new Set(draft.rows.filter(row=>String(row.containerNo).trim()).map(row=>String(row.containerNo).trim())).size;
+            const bags = draft.rows.reduce((sum,row)=>sum+(Number.isFinite(row.numberOfBags)?row.numberOfBags:0),0);
+            const mt = draft.rows.reduce((sum,row)=>sum+(Number.isFinite(row.netWeightMt)?row.netWeightMt:0),0);
+            const summary = document.getElementById('phase6ContainerSummary');
+            if (summary) summary.innerHTML = `${phase6EntryText('shipping.totalContainers','Total Containers')}: ${count} · ${phase6EntryText('shipping.totalBags','Total Bags / Units')}: ${bags} · ${phase6EntryText('shipping.totalActualWeight','Total Actual Net Weight')}: ${mt.toLocaleString('en-US',{maximumFractionDigits:3})} MT`;
+            let total = 0;
+            draft.products.forEach((product,index)=>{
+                const input = document.getElementById(`phase6InvoiceQty${index}`);
+                if (input) draft.quantities[index] = Number(input.value);
+                const amount = (Number.isFinite(draft.quantities[index])?draft.quantities[index]:0)*Number(product.unit_price || 0);
+                total += amount;
+                const cell = document.getElementById(`phase6InvoiceAmount${index}`);
+                if (cell) cell.textContent = `${product.currency || '-'} ${amount.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2})}`;
+            });
+            const totalNode = document.getElementById('phase6InvoiceTotal');
+            if (totalNode) totalNode.textContent = `${draft.products[0]?.currency || '-'} ${total.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2})}`;
+        }
+
+        function collectPhase6Containers() {
+            const draft = getPhase6EntryDraft(), containers = new Map();
+            if (!draft.rows.length) throw new Error('ENTRY_CONTAINER_INVALID');
+            for (const row of draft.rows) {
+                const containerNo = String(row.containerNo || '').trim(), sealNo = String(row.sealNo || '').trim() || null;
+                if (!containerNo || !draft.products.some(product=>product.po_revision_line_id===row.poRevisionLineId) || !Number.isInteger(row.numberOfBags) || row.numberOfBags<=0 || !Number.isFinite(row.netWeightMt) || row.netWeightMt<=0) throw new Error('ENTRY_CONTAINER_INVALID');
+                if (!containers.has(containerNo)) containers.set(containerNo,{containerNo,sealNo,lines:[]});
+                const container = containers.get(containerNo);
+                if (container.sealNo!==sealNo || container.lines.some(line=>line.poRevisionLineId===row.poRevisionLineId)) throw new Error('ENTRY_CONTAINER_DUPLICATE');
+                container.lines.push({poRevisionLineId:row.poRevisionLineId,numberOfBags:row.numberOfBags,netWeightMt:row.netWeightMt});
+            }
+            return [...containers.values()];
+        }
+
+        function collectPhase6InvoiceLines() {
+            updatePhase6EntryTotals();
+            const draft = getPhase6EntryDraft();
+            if (draft.quantities.some(qty=>!Number.isFinite(qty)||qty<0)) throw new Error('ENTRY_INVOICE_INVALID');
+            const lines = draft.products.map((product,index)=>({poRevisionLineId:product.po_revision_line_id,qtyMt:draft.quantities[index]})).filter(line=>line.qtyMt>0);
+            if (!lines.length) throw new Error('ENTRY_INVOICE_INVALID');
+            return lines;
+        }
+
+        function phase6EntryError(error, target) {
+            const code = String(error?.message || '');
+            const key = code.includes('ENTRY_CONTAINER_DUPLICATE') ? 'shipping.containerDuplicate' : code.includes('ENTRY_CONTAINER') ? 'shipping.containerInvalid' : /ENTRY_INVOICE|INVOICE_LINES_REQUIRED/.test(code) ? 'shipping.invoiceInvalid' : /EXCEEDS|CAPACITY|SETTLEMENT_EXCEEDED/.test(code) ? 'shipping.entryBalanceError' : /NOT_BOOKED|NOT_LOADED|REQUIRES_ACTUAL|ACTUAL_LOADING/.test(code) ? 'shipping.entryStateError' : /INVOICE_NUMBER_DUPLICATE/.test(code) ? 'shipping.invoiceDuplicate' : 'shipping.entrySaveFailed';
+            const node = document.getElementById(target);
+            if (node) node.textContent = phase6EntryText(key);
+        }
+
+        function setPhase6EntryBusy(busy) {
+            getPhase6EntryDraft().busy = busy;
+            document.querySelectorAll?.('[data-phase6-action="save-containers"], [data-phase6-action="save-invoice"], [data-phase6-action="finalize-invoice"], [data-phase6-container-field], [data-phase6-entry-action], [data-phase6-invoice-qty], #phase6InvoiceNo, #phase6InvoiceDate, #phase6InvoiceVersion').forEach(button=>button.disabled=busy);
+        }
+
+        async function submitPhase6Containers(shipmentId) {
+            const draft = getPhase6EntryDraft();
+            if (!canEditPhase6Shipping() || draft.busy || draft.shipmentId !== shipmentId) return;
+            try {
+                const containers = collectPhase6Containers();
+                document.getElementById('phase6ContainerError').textContent = '';
+                setPhase6EntryBusy(true);
+                await updatePhase6ShipmentSectionToApi(shipmentId,'containers',{containers});
+                if (state.phase6ShipmentDetail === draft.source) await selectPhase6DeliveryInstruction(state.selectedPhase6DeliveryInstructionId);
+            } catch (error) { if (state.phase6ShipmentDetail === draft.source) phase6EntryError(error,'phase6ContainerError'); }
+            finally { draft.busy=false; if (state.phase6ShipmentDetail === draft.source) setPhase6EntryBusy(false); }
+        }
+
+        async function submitPhase6Invoice(shipmentId) {
+            const draft = getPhase6EntryDraft();
+            if (!canEditPhase6Shipping() || draft.busy || draft.shipmentId !== shipmentId) return;
+            try {
+                const lines = collectPhase6InvoiceLines();
+                const invoiceNo = document.getElementById('phase6InvoiceNo')?.value.trim();
+                const invoiceDate = document.getElementById('phase6InvoiceDate')?.value;
+                const version = document.getElementById('phase6InvoiceVersion')?.value;
+                if (!invoiceNo || !/^\d{4}-\d{2}-\d{2}$/.test(invoiceDate || '') || !['PRELIMINARY','FINAL'].includes(version)) throw new Error('ENTRY_INVOICE_INVALID');
+                document.getElementById('phase6InvoiceError').textContent = '';
+                setPhase6EntryBusy(true);
+                const response = await fetch(`/api/shipments-v2/${encodeURIComponent(shipmentId)}/invoices`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({invoiceNo,invoiceDate,version,lines})});
+                const body = await response.json();
+                if (!response.ok || body.status!=='SUCCESS') throw new Error(body.message || 'SAVE_FAILED');
+                if (state.phase6ShipmentDetail === draft.source) await selectPhase6DeliveryInstruction(state.selectedPhase6DeliveryInstructionId);
+            } catch (error) { if (state.phase6ShipmentDetail === draft.source) phase6EntryError(error,'phase6InvoiceError'); }
+            finally { draft.busy=false; if (state.phase6ShipmentDetail === draft.source) setPhase6EntryBusy(false); }
+        }
+
+        async function finalizePhase6Invoice(shipmentId, invoiceId) {
+            const draft = getPhase6EntryDraft();
+            if (!canEditPhase6Shipping() || draft.busy || draft.shipmentId !== shipmentId) return;
+            try {
+                const lines = collectPhase6InvoiceLines();
+                document.getElementById('phase6InvoiceError').textContent = '';
+                setPhase6EntryBusy(true);
+                const response = await fetch(`/api/shipments-v2/${encodeURIComponent(shipmentId)}/invoices/${encodeURIComponent(invoiceId)}/finalize`,{method:'PATCH',headers:{'content-type':'application/json'},body:JSON.stringify({lines})});
+                const body = await response.json();
+                if (!response.ok || body.status!=='SUCCESS') throw new Error(body.message || 'SAVE_FAILED');
+                if (state.phase6ShipmentDetail === draft.source) await selectPhase6DeliveryInstruction(state.selectedPhase6DeliveryInstructionId);
+            } catch (error) { if (state.phase6ShipmentDetail === draft.source) phase6EntryError(error,'phase6InvoiceError'); }
+            finally { draft.busy=false; if (state.phase6ShipmentDetail === draft.source) setPhase6EntryBusy(false); }
+        }
+
+
 
         async function submitPhase6Documents(shipmentId) {
             const originalDocsRequired = Boolean(document.getElementById('phase6OriginalDocs')?.checked);
@@ -9810,35 +10046,9 @@
             } catch (err) { alert(err.message); }
         }
 
-        async function submitPhase6Invoice(shipmentId) {
-            try {
-                const lines = JSON.parse(document.getElementById('phase6InvoiceLines')?.value || '[]');
-                const res = await fetch(`/api/shipments-v2/${encodeURIComponent(shipmentId)}/invoices`, {
-                    method: 'POST', headers: { 'content-type': 'application/json' },
-                    body: JSON.stringify({
-                        invoiceNo: document.getElementById('phase6InvoiceNo')?.value.trim(),
-                        invoiceDate: document.getElementById('phase6InvoiceDate')?.value,
-                        version: document.getElementById('phase6InvoiceVersion')?.value,
-                        lines
-                    })
-                });
-                const body = await res.json();
-                if (!res.ok || body.status !== 'SUCCESS') throw new Error(body.message || 'Invoice save failed.');
-                await selectPhase6DeliveryInstruction(state.selectedPhase6DeliveryInstructionId);
-            } catch (err) { alert(err.message); }
-        }
 
-        async function finalizePhase6Invoice(shipmentId, invoiceId) {
-            try {
-                const lines = JSON.parse(document.getElementById('phase6InvoiceLines')?.value || '[]');
-                const res = await fetch(`/api/shipments-v2/${encodeURIComponent(shipmentId)}/invoices/${encodeURIComponent(invoiceId)}/finalize`, {
-                    method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ lines })
-                });
-                const body = await res.json();
-                if (!res.ok || body.status !== 'SUCCESS') throw new Error(body.message || 'Invoice finalization failed.');
-                await selectPhase6DeliveryInstruction(state.selectedPhase6DeliveryInstructionId);
-            } catch (err) { alert(err.message); }
-        }
+
+
 
         async function openCreatePhase6DeliveryInstruction() {
             if (!canEditPhase6Shipping()) return;
@@ -10069,6 +10279,7 @@
         }
 
         function bindPhase6WorkspaceActions(container) {
+            bindPhase6EntryForms(container);
             container.querySelectorAll('[data-phase6-detail-ref]').forEach(button => {
                 button.addEventListener('click', () => selectPhase6DeliveryInstruction(button.dataset.phase6DetailRef));
             });
@@ -10212,8 +10423,8 @@
                 ${section(tr('shipping.secDi', 'DI'), `<div class="grid grid-cols-2 md:grid-cols-4 gap-4">${field(tr('common.customer', 'Customer'), di.customer_id)}<div><div class="font-bold text-slate-900">${escapePhase6Text(String(di.customer_po_no || '').trim() || di.po_id || '-')}</div><div class="text-[10px] font-mono text-slate-400">${tr('po.systemPo', 'System PO')}: ${escapePhase6Text(di.po_id || '-')}</div></div>${field(tr('shipping.colShippingPlan', 'Shipping plan'), [di.shipping_month, di.shipping_period].filter(Boolean).join(' / '))}${field(tr('dashboard.colContainerPlan', 'Container plan'), di.container_plan)}${field(tr('shipping.diStatus', 'DI status'), typeof translateStatus === 'function' ? translateStatus(di.di_status || di.status) : (di.di_status || di.status))}${field(tr('shipping.surveyor', 'Surveyor'), di.surveyor_partner_id)}${field(tr('shipping.forwarderSuggestion', 'Forwarder suggestion'), di.forwarder_partner_id)}${field(tr('shipping.driveLink', 'Drive link'), di.di_drive_url)}</div><div class="text-xs text-slate-600">${escapePhase6Text(di.note || '')}</div>${balances.length ? `<div class="rounded-lg bg-slate-50 p-3 text-[11px]"><strong>${tr('shipping.poBalanceLabel', 'PO balance from API:')}</strong> ${balances.map(balance => `${escapePhase6Text(balance.product_code || balance.po_revision_line_id)} ${tr('shipping.availableMt', '{qty} MT available', { qty: Number(balance.available_qty_mt || 0).toFixed(3) })}`).join(' · ')}</div>` : ''}`)}
                 ${section(tr('shipping.secBooking', 'Booking'), `<div class="grid grid-cols-2 md:grid-cols-5 gap-3 text-xs">${field(tr('shipping.bookingNo', 'Booking No.'), shipment.booking_no)}${field(tr('shipping.blNo', 'BL No.'), shipment.bl_no)}${field(tr('shipping.vessel', 'Vessel'), shipment.vessel)}${field('ETD', shipment.etd)}${field('ETA', shipment.eta)}</div>${write ? `<div class="grid grid-cols-1 md:grid-cols-4 gap-2 text-xs"><input id="phase6BookingNo" value="${escapePhase6Text(shipment.booking_no)}" placeholder="Booking No. *" class="border rounded p-2"><input id="phase6BlNo" value="${escapePhase6Text(shipment.bl_no)}" placeholder="BL No. (optional)" class="border rounded p-2 font-mono"><select id="phase6Forwarder" class="border rounded p-2">${phase6PartnerOptions('FORWARDER', shipment.forwarder_partner_id)}</select><select id="phase6ShippingLine" class="border rounded p-2">${phase6PartnerOptions('SHIPPING_LINE', shipment.shipping_line_partner_id)}</select><select id="phase6Trucking" class="border rounded p-2">${phase6PartnerOptions('TRUCKING', shipment.trucking_partner_id)}</select><input id="phase6Vessel" value="${escapePhase6Text(shipment.vessel)}" placeholder="${tr('shipping.vessel', 'Vessel')}" class="border rounded p-2"><input id="phase6Etd" type="date" value="${escapePhase6Text(shipment.etd)}" class="border rounded p-2"><input id="phase6Eta" type="date" value="${escapePhase6Text(shipment.eta)}" class="border rounded p-2"><input id="phase6PlannedLoading" type="date" value="${escapePhase6Text(shipment.planned_loading_date)}" class="border rounded p-2">${action('save-booking', tr('shipping.saveBooking', 'Save Booking'), 'md:col-span-3 bg-blue-600 text-white rounded p-2 font-bold')}${!bookingWritable && ['BOOKED', 'LOADED', 'DOCS_SENT'].includes(shipment.status) ? action('update-booking', tr('shipping.updateBookingBl', 'Update Booking / BL No.'), 'md:col-span-3 border border-blue-600 text-blue-700 rounded p-2 font-bold') : ''}</div>` : ''}`)}
                 ${section(tr('shipping.secSchedule', 'Schedule'), `<div class="grid grid-cols-2 md:grid-cols-3 gap-3 text-xs">${field(tr('shipping.plannedLoading', 'Planned loading'), shipment.planned_loading_date)}${field(tr('shipping.actualLoading', 'Actual loading'), shipment.actual_loading_date)}${field(tr('shipping.colScheduleResult', 'Schedule result'), typeof translateStatus === 'function' ? translateStatus(shipment.schedule_result) : shipment.schedule_result)}</div>${write ? `<div class="grid grid-cols-1 md:grid-cols-3 gap-2 text-xs"><input id="phase6PlannedLoadingUpdate" type="date" value="${escapePhase6Text(shipment.planned_loading_date)}" class="border rounded p-2">${action('save-schedule', tr('shipping.updatePlannedDate', 'Update Planned Date'), 'border border-blue-600 text-blue-700 rounded p-2 font-bold', ' data-phase6-schedule-kind="planned"')}<span></span><input id="phase6ActualLoading" type="date" value="${escapePhase6Text(shipment.actual_loading_date)}" class="border rounded p-2"><input id="phase6ScheduleNote" value="${escapePhase6Text(shipment.schedule_note)}" placeholder="${tr('shipping.scheduleNotePh', 'Schedule note')}" class="border rounded p-2">${action('save-schedule', tr('shipping.recordActualDate', 'Record Actual Date'), 'bg-blue-600 text-white rounded p-2 font-bold', ' data-phase6-schedule-kind="actual"')}</div>` : ''}`)}
-                ${section(tr('shipping.secContainers', 'Containers'), `<div class="text-xs text-slate-600">${(shipment.containers || []).length ? shipment.containers.map(container => `<div>${escapePhase6Text(container.container_no)} · Seal ${escapePhase6Text(container.seal_no || '-')} · ${escapePhase6Text((container.lines || []).map(line => `${line.product_name || line.product_code}: ${line.qty_mt} MT`).join(', '))}</div>`).join('') : tr('shipping.noContainers', 'No actual containers recorded.')}</div>${write ? `<textarea id="phase6ContainersJson" rows="4" class="w-full border rounded p-2 font-mono text-[11px]" placeholder='[{"containerNo":"CONT-1","sealNo":"SEAL-1","lines":[{"poRevisionLineId":"LINE-1","numberOfBags":20,"netWeightMt":20}]}]'></textarea>${action('save-containers', tr('shipping.saveContainers', 'Save Containers'), 'px-3 py-2 bg-blue-600 text-white rounded text-xs font-bold')}` : ''}`)}
-                ${section(tr('shipping.secInvoice', 'Invoice'), `<div class="text-xs space-y-1">${invoices.length ? invoices.map(invoice => `<div><strong>${escapePhase6Text(invoice.invoice_no)}</strong> · ${escapePhase6Text(invoice.version)} · ${Number(invoice.total_amount || 0).toFixed(2)} ${escapePhase6Text(invoice.currency || '')}${write && invoice.version === 'PRELIMINARY' ? ` ${action('finalize-invoice', tr('shipping.finalizeToFinal', 'Finalize to FINAL'), 'ml-2 text-blue-700 font-bold', ` data-phase6-invoice-id="${escapePhase6Text(invoice.invoice_id)}"`)}` : ''}</div>`).join('') : tr('shipping.noInvoices', 'No invoices recorded.')}</div>${write ? `<div class="grid grid-cols-1 md:grid-cols-4 gap-2 text-xs"><input id="phase6InvoiceNo" placeholder="${tr('shipping.invoiceNoPh', 'Invoice No.')}" class="border rounded p-2"><input id="phase6InvoiceDate" type="date" class="border rounded p-2"><select id="phase6InvoiceVersion" class="border rounded p-2"><option>PRELIMINARY</option><option>FINAL</option></select>${action('save-invoice', tr('shipping.saveInvoice', 'Save Invoice'), 'bg-blue-600 text-white rounded p-2 font-bold')}<textarea id="phase6InvoiceLines" rows="3" class="md:col-span-4 border rounded p-2 font-mono text-[11px]" placeholder='[{"poRevisionLineId":"LINE-1","qtyMt":20}]'></textarea><p class="md:col-span-4 text-[11px] text-slate-500">${tr('shipping.invoiceHint', 'Create PRELIMINARY invoices first when needed, then enter actual FINAL lines above and use Finalize to FINAL.')}</p></div>` : ''}`)}
+                ${section(tr('shipping.secContainers', 'Containers'), `<div class="text-xs text-slate-600">${(shipment.containers || []).length ? shipment.containers.map(container => `<div>${escapePhase6Text(container.container_no)} · Seal ${escapePhase6Text(container.seal_no || '-')} · ${escapePhase6Text((container.lines || []).map(line => `${line.product_name || line.product_code}: ${line.qty_mt} MT`).join(', '))}</div>`).join('') : tr('shipping.noContainers', 'No actual containers recorded.')}</div>${write ? `${renderPhase6ContainerForm()}${action('save-containers', tr('shipping.saveContainers', 'Save Containers'), 'px-3 py-2 bg-blue-600 text-white rounded text-xs font-bold')}` : ''}`)}
+                ${section(tr('shipping.secInvoice', 'Invoice'), `<div class="text-xs space-y-1">${invoices.length ? invoices.map(invoice => `<div><strong>${escapePhase6Text(invoice.invoice_no)}</strong> · ${escapePhase6Text(invoice.version)} · ${Number(invoice.total_amount || 0).toFixed(2)} ${escapePhase6Text(invoice.currency || '')}${write && invoice.version === 'PRELIMINARY' ? ` ${action('finalize-invoice', tr('shipping.finalizeToFinal', 'Finalize to FINAL'), 'ml-2 text-blue-700 font-bold', ` data-phase6-invoice-id="${escapePhase6Text(invoice.invoice_id)}"`)}` : ''}</div>`).join('') : tr('shipping.noInvoices', 'No invoices recorded.')}</div>${write ? `<div class="grid grid-cols-1 md:grid-cols-4 gap-2 text-xs"><label class="text-xs font-semibold text-slate-600">${tr('shipping.invoiceNoPh', 'Invoice No.')}<input id="phase6InvoiceNo" class="mt-1 w-full border rounded-lg p-2"></label><label class="text-xs font-semibold text-slate-600">${tr('shipping.invoiceDate', 'Invoice Date')}<input id="phase6InvoiceDate" type="date" class="mt-1 w-full border rounded-lg p-2"></label><label class="text-xs font-semibold text-slate-600">${tr('shipping.invoiceType', 'Invoice Type')}<select id="phase6InvoiceVersion" class="mt-1 w-full border rounded-lg p-2"><option value="PRELIMINARY">${tr('shipping.preliminary', 'Preliminary')}</option><option value="FINAL">${tr('shipping.final', 'Final')}</option></select></label>${action('save-invoice', tr('shipping.saveInvoice', 'Save Invoice'), 'bg-blue-600 text-white rounded p-2 font-bold')}<div class="md:col-span-4">${renderPhase6InvoiceForm()}</div><p class="md:col-span-4 text-[11px] text-slate-500">${tr('shipping.invoiceHint', 'Create PRELIMINARY invoices first when needed, then enter actual FINAL lines above and use Finalize to FINAL.')}</p></div>` : ''}`)}
                 ${section(tr('shipping.secDocuments', 'Documents'), `<div class="grid grid-cols-2 md:grid-cols-4 gap-3 text-xs">${field(tr('shipping.allShipDocs', 'All Ship Docs'), shipment.all_ship_docs_drive_url)}${field(tr('shipping.digitalSent', 'Digital sent'), shipment.digital_docs_sent_date)}${field(tr('shipping.dhlSent', 'DHL sent'), shipment.dhl_sent_date)}${field(tr('shipping.dhlTracking', 'DHL tracking'), shipment.dhl_tracking_no)}</div>${write ? `<div class="grid grid-cols-1 md:grid-cols-3 gap-2 text-xs"><input id="phase6DocsUrl" value="${escapePhase6Text(shipment.all_ship_docs_drive_url)}" placeholder="Google Drive folder URL" class="border rounded p-2"><input id="phase6DigitalDocsDate" type="date" value="${escapePhase6Text(shipment.digital_docs_sent_date)}" class="border rounded p-2"><label class="border rounded p-2"><input id="phase6OriginalDocs" type="checkbox" ${shipment.original_docs_required ? 'checked' : ''}> ${tr('shipping.originalDocsReq', 'Original docs required')}</label><input id="phase6DhlDate" type="date" value="${escapePhase6Text(shipment.dhl_sent_date)}" class="border rounded p-2"><input id="phase6DhlTracking" value="${escapePhase6Text(shipment.dhl_tracking_no)}" placeholder="${tr('shipping.dhlTracking', 'DHL tracking no.')}" class="border rounded p-2"><input id="phase6DocsNote" value="${escapePhase6Text(shipment.docs_note)}" placeholder="${tr('common.note', 'Document note')}" class="border rounded p-2">${action('save-documents', tr('shipping.saveDocuments', 'Save Documents'), 'md:col-span-3 bg-blue-600 text-white rounded p-2 font-bold')}</div>` : ''}`)}
                 ${section(tr('shipping.secPayment', 'Payment'), `<div class="grid grid-cols-2 md:grid-cols-4 gap-3 text-xs">${field(tr('shipping.colPayStatus', 'Payment status'), typeof translateStatus === 'function' ? translateStatus(shipment.payment_status) : shipment.payment_status)}${field(tr('shipping.finalInvoiceTotal', 'Final invoice total'), shipment.final_invoice_total)}${field(tr('shipping.cashReceived', 'Cash received'), shipment.cash_received_amount)}${field(tr('shipping.creditAllocated', 'Credit allocated'), shipment.allocated_credit_amount)}</div>${write ? `<div class="grid grid-cols-1 md:grid-cols-3 gap-2 text-xs"><input id="phase6CashReceived" type="number" min="0" step="0.01" value="${escapePhase6Text(shipment.cash_received_amount || 0)}" class="border rounded p-2"><input id="phase6PaymentNote" value="${escapePhase6Text(shipment.payment_note)}" placeholder="${tr('payments.paymentNote', 'Payment note')}" class="border rounded p-2">${action('save-payment', tr('shipping.savePayment', 'Save Payment'), 'bg-blue-600 text-white rounded p-2 font-bold')}<select id="phase6CreditId" class="border rounded p-2"><option value="">${tr('shipping.applyCustCreditOpt', 'Apply customer credit')}</option>${credits.filter(credit => Number(credit.remaining_amount || 0) > 0).map(credit => `<option value="${escapePhase6Text(credit.credit_id)}">${escapePhase6Text(credit.credit_id)} · ${Number(credit.remaining_amount).toFixed(2)}</option>`).join('')}</select><input id="phase6CreditAmount" type="number" min="0" step="0.01" placeholder="${tr('shipping.creditAmountPh', 'Credit amount')}" class="border rounded p-2">${action('apply-credit', tr('shipping.applyCredit', 'Apply Credit'), 'border border-blue-600 text-blue-700 rounded p-2 font-bold')}</div>` : ''}`)}
                 ${section(tr('shipping.secHistory', 'History'), history.length ? `<div class="space-y-2 text-xs">${history.map(event => `<div class="border-l-2 border-slate-200 pl-3"><strong>${escapePhase6Text(event.event_type)}</strong> <span class="text-slate-500">${escapePhase6Text(event.created_at || '')} · ${escapePhase6Text(event.actor_id || '')}</span></div>`).join('')}</div>` : `<p class="text-xs text-slate-500">${tr('shipping.noHistory', 'No history is available for this view.')}</p>`)}

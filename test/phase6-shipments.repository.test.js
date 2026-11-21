@@ -1529,3 +1529,13 @@ test('Booking stores, updates, clears, audits, and searches optional bl_no clean
   }, 'U_EXPORT');
   assert.equal(cleared.bl_no, null);
 });
+
+test('shipment entry read model resolves PO line IDs, pricing and saved container lineage',async()=>{
+  const {db,wrappedDb}=await setupTestDb();const repo=createShippingDiRepository(wrappedDb);
+  const shipment=await loadedShipmentForDocuments(repo,db);const detail=await repo.getPhase6ShipmentByShipmentId(shipment.shipment_id);
+  assert.equal(detail.products[0].po_revision_line_id,'LINE-1');
+  assert.equal(typeof detail.products[0].unit_price,'number');
+  assert.equal(detail.products[0].currency,'USD');
+  assert.equal(detail.containers[0].lines[0].po_revision_line_id,'LINE-1');
+  assert.equal(detail.products[0].commission_rate_usd_mt,undefined);
+});

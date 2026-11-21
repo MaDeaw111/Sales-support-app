@@ -274,17 +274,22 @@ async function findPhase6ShipmentReadModel(db, identifier, lookupField) {
   if (!shipment) return null;
 
   const { results: products } = await db.prepare(`
-    SELECT product.product_code, product.product_name, instruction_line.planned_qty_mt,
-           instruction_line.packing_snapshot
+    SELECT po_line.*, product.product_code, product.product_name, instruction_line.planned_qty_mt,
+           instruction_line.packing_snapshot, revision.currency AS po_currency,
+           COALESCE(standard.application, custom.application) AS spec_application
     FROM delivery_instruction_lines instruction_line
     JOIN products product ON product.product_id = instruction_line.product_id
+    JOIN po_revision_lines po_line ON po_line.line_id = instruction_line.po_revision_line_id
+    JOIN po_revisions revision ON revision.revision_id = po_line.po_revision_id
+    LEFT JOIN standard_specs standard ON po_line.spec_source = 'STANDARD' AND standard.standard_spec_id = po_line.spec_revision_id
+    LEFT JOIN customer_specs custom ON po_line.spec_source = 'CUSTOMER' AND custom.customer_spec_id = po_line.spec_revision_id
     WHERE instruction_line.di_id = ?
     ORDER BY instruction_line.di_line_id ASC
   `).bind(shipment.di_id).all();
 
   const { results: containerRows } = await db.prepare(`
     SELECT container.container_no, container.container_type, container.seal_no,
-           product.product_code, product.product_name, container_line.number_of_bags,
+           product.product_code, product.product_name, instruction_line.po_revision_line_id, container_line.number_of_bags,
            container_line.qty_mt
     FROM shipment_containers container
     LEFT JOIN shipment_container_lines container_line ON container_line.container_id = container.container_id
@@ -305,6 +310,7 @@ async function findPhase6ShipmentReadModel(db, identifier, lookupField) {
     }
     if (row.product_code) {
       containersByNumber.get(row.container_no).lines.push({
+        po_revision_line_id: row.po_revision_line_id,
         product_code: row.product_code,
         product_name: row.product_name,
         number_of_bags: Number(row.number_of_bags),
@@ -318,7 +324,13 @@ async function findPhase6ShipmentReadModel(db, identifier, lookupField) {
     final_invoice_total: Number(shipment.final_invoice_total),
     allocated_credit_amount: Number(shipment.allocated_credit_amount),
     payment_total: Number(shipment.payment_total),
-    products: (products || []).map((product) => ({ ...product, planned_qty_mt: Number(product.planned_qty_mt) })),
+    products: (products || []).map(product => ({
+      po_revision_line_id: product.line_id,
+      product_code: product.product_code, product_name: product.product_name,
+      planned_qty_mt: Number(product.planned_qty_mt), packing_snapshot: product.packing_snapshot,
+      spec_revision_id: product.spec_revision_id, spec_application: product.spec_application,
+      unit_weight_kg: Number(product.unit_weight_kg || 0), unit_price: Number(product.unit_price), currency: product.po_currency
+    })),
     containers
   };
 }
