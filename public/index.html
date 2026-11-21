@@ -452,6 +452,19 @@
             [data-executive-dashboard] { print-color-adjust: exact; }
             [data-executive-dashboard] section { break-inside: avoid; }
         }
+        .di-list-scroll { overflow-x: auto; }
+        .di-list-table { width: 100%; table-layout: fixed; border-collapse: collapse; }
+        .di-list-table th, .di-list-table td { vertical-align: middle; padding: 12px 14px; overflow-wrap: anywhere; }
+        .di-list-table td { border-top: 1px solid #e2e8f0; }
+        .di-list-table th:last-child, .di-list-table td:last-child { text-align: right; }
+        .di-list-table tbody tr[data-phase6-row-ref]:not([data-phase6-row-ref=""]) { cursor: pointer; transition: background-color 150ms; }
+        .di-list-table tbody tr:hover { background: #f8fafc; }
+        .di-list-single { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .di-list-pill { display: inline-flex; white-space: nowrap; border-radius: 999px; padding: 2px 9px; font-size: 11px; line-height: 1.2; }
+        .di-list-status { display: flex; flex-direction: column; gap: 4px; align-items: flex-start; }
+        .di-list-status > span { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .di-list-table td .di-list-pill { max-width: 100%; }
+        @media (max-width: 1279px) { .di-list-table { min-width: 480px; } .di-list-table:has(col:nth-child(7)) { min-width: 860px; } }
     </style>
 </head>
 <body class="bg-slate-100 text-slate-800 antialiased min-h-screen flex flex-col">
@@ -1541,6 +1554,14 @@
                 'shipping.applyCredit': 'ตัดใช้เครดิต',
                 'shipping.noHistory': 'ยังไม่มีประวัติการดำเนินการ',
                 'shipping.modalCreateDi': 'สร้าง Delivery Instruction (DI)',
+                'shipping.combinedCustomer': "ลูกค้าและ PO",
+                'shipping.combinedProduct': "สินค้าและแผนโหลด",
+                'shipping.combinedLoading': "การจัดส่งและการโหลด",
+                'shipping.packingColumn': "บรรจุภัณฑ์",
+                'shipping.halfFirstShort': "ครึ่งเดือนแรก",
+                'shipping.halfSecondShort': "ครึ่งเดือนหลัง",
+                'shipping.planShort': "แผน",
+                'shipping.actualShort': "จริง",
                 'shipping.poQuickSearch': 'ค้นหาลูกค้า หรือเลขที่ PO',
                 'shipping.remainingOption': 'คงเหลือ {mt} MT',
                 'shipping.balanceUnavailable': 'ไม่ทราบยอดคงเหลือ',
@@ -2992,6 +3013,14 @@
                 'shipping.applyCredit': 'Apply Credit',
                 'shipping.noHistory': 'No history is available for this view.',
                 'shipping.modalCreateDi': 'Create Delivery Instruction',
+                'shipping.combinedCustomer': "Customer & PO",
+                'shipping.combinedProduct': "Product & Load Plan",
+                'shipping.combinedLoading': "Shipping & Loading",
+                'shipping.packingColumn': "Packing",
+                'shipping.halfFirstShort': "1st Half",
+                'shipping.halfSecondShort': "2nd Half",
+                'shipping.planShort': "Plan",
+                'shipping.actualShort': "Actual",
                 'shipping.poQuickSearch': 'Quick search by customer or PO number',
                 'shipping.remainingOption': 'Rem: {mt} MT',
                 'shipping.balanceUnavailable': 'Balance unavailable',
@@ -10935,6 +10964,13 @@
             container.querySelectorAll('[data-phase6-detail-ref]').forEach(button => {
                 button.addEventListener('click', () => selectPhase6DeliveryInstruction(button.dataset.phase6DetailRef));
             });
+            container.querySelectorAll('[data-phase6-row-ref]').forEach(row => {
+                row.addEventListener('click', event => {
+                    if (row.dataset.phase6RowRef && !event.target.closest('button, a') && !window.getSelection()?.toString()) {
+                        selectPhase6DeliveryInstruction(row.dataset.phase6RowRef);
+                    }
+                });
+            });
             container.querySelectorAll('[data-phase6-action]').forEach(button => {
                 button.addEventListener('click', () => {
                     const action = button.dataset.phase6Action;
@@ -10966,22 +11002,42 @@
             const restricted = externalSales || warehouse;
             const searchable = canSearchPhase6Workspace();
             const showSchedule = canFilterPhase6Schedule();
-            const showPayment = canFilterPhase6Payment();
+            const showPayment = !restricted && canFilterPhase6Payment();
             const showStatusFilters = !warehouse;
             const showShippingMonthFilter = !restricted;
-            const showCustomerAndPo = !restricted;
-            const showProduct = !externalSales;
-            const showPacking = warehouse;
-            const showPlannedQty = !externalSales;
-            const showContainerPlan = !externalSales;
-            const showShippingPlan = !restricted;
-            const showBooking = !warehouse;
-            const showShipmentStatus = !warehouse;
             const showFilterPanel = searchable || showStatusFilters || showShippingMonthFilter || showSchedule || showPayment;
-            const columnCount = 1 + (showCustomerAndPo ? 2 : 0) + (showProduct ? 1 : 0) +
-                (showPacking ? 1 : 0) + (showPlannedQty ? 1 : 0) + (showContainerPlan ? 1 : 0) +
-                (showShippingPlan ? 1 : 0) + 1 + (showSchedule ? 1 : 0) + (showBooking ? 1 : 0) +
-                (showShipmentStatus ? 1 : 0) + (showPayment ? 1 : 0);
+            const esc = escapePhase6Text;
+            const compact = value => `<span class="di-list-single" title="${esc(value)}">${esc(value)}</span>`;
+            const range = (first,last) => [first,last && last!==first ? last : null].filter(Boolean).join(' – ');
+            const columns = [
+                {width:115,label:warehouse ? tr('shipping.colLoading','Loading') : tr('dashboard.colDiNo','DI No.'),cell:di=>{
+                    const label = warehouse ? tr('shipping.openLoadingPlan','Open loading plan') : di.di_no || '—';
+                    const count = Number(di.customer_docs_count || 0);
+                    return `<strong>${compact(label)}</strong>${!restricted && di.invoice_no ? `<div class="text-slate-500">${compact(di.invoice_no)}</div>` : ''}${!warehouse && count>0 ? `<div class="mt-1"><span data-docs-ready-badge class="di-list-pill bg-emerald-100 text-emerald-800">${esc(tr('docs.docsReadyBadge','Docs Ready ({count})',{count}))}</span></div>` : ''}`;
+                }},
+                ...(!restricted ? [{width:210,label:tr('shipping.combinedCustomer','Customer & PO'),cell:di=>{
+                    const customerPO = String(di.customer_po_no || '').trim();
+                    const reference = [customerPO ? 'PO '+customerPO : '',di.po_id].filter(Boolean).join(' · ');
+                    return `<div class="font-bold text-slate-900">${esc(di.customer_name || '—')}</div><div class="text-xs text-slate-500">${compact(reference || '—')}</div>`;
+                }}] : []),
+                ...(!externalSales ? [{width:200,label:warehouse ? tr('shipping.packingColumn','Packing') : tr('shipping.combinedProduct','Product & Load Plan'),cell:di=>`<div class="font-semibold">${esc(di.product_summary || '—')}</div>${warehouse && di.packing_summary ? `<div class="text-slate-500">${esc(di.packing_summary)}</div>` : ''}<div class="tabular-nums text-slate-500">${Number(di.planned_qty_mt || 0).toFixed(3)} MT${di.container_plan ? ' · '+esc(di.container_plan) : ''}</div>`}] : []),
+                {width:175,label:tr('shipping.combinedLoading','Shipping & Loading'),cell:di=>{
+                    const plan = range(di.planned_loading_date,di.planned_loading_end_date);
+                    const actual = di.actual_loading_date;
+                    const half = di.shipping_period==='FIRST_HALF' ? tr('shipping.halfFirstShort','1st Half') : di.shipping_period==='SECOND_HALF' ? tr('shipping.halfSecondShort','2nd Half') : '';
+                    const window = [di.shipping_month,half].filter(Boolean).join(' · ');
+                    return `<div class="tabular-nums">${plan && actual ? `<div>${tr('shipping.planShort','Plan')} ${esc(plan)}</div><div>${tr('shipping.actualShort','Actual')} ${esc(actual)}</div>` : esc(actual || plan || '—')}</div><div class="mt-1 flex flex-wrap items-center gap-1 text-slate-500">${!restricted && window ? `<span>${esc(window)}</span>` : ''}${showSchedule && di.schedule_result ? phase6StatusBadge(di.schedule_result) : ''}</div>`;
+                }},
+                ...(!warehouse ? [
+                    {width:135,label:tr('shipping.colBookingBl','Booking / BL No.'),cell:di=>`<div class="tabular-nums">${compact(di.booking_no || '—')}${!restricted && di.bl_no ? `<div class="text-slate-500">${compact('BL: '+di.bl_no)}</div>` : ''}</div>`},
+                    {width:135,label:tr('common.status','Status'),cell:di=>`<div class="di-list-status">${phase6StatusBadge(di.shipment_status || di.di_status)}${showPayment && di.payment_status ? phase6StatusBadge(di.payment_status) : ''}</div>`}
+                ] : []),
+                {width:90,label:tr('common.action','Action'),cell:di=>{
+                    const id = di.detail_ref || di.di_id;
+                    return id ? `<button type="button" data-phase6-detail-ref="${esc(id)}" class="whitespace-nowrap rounded-lg border border-blue-200 px-2.5 py-1.5 font-semibold text-blue-700 hover:bg-blue-50">${tr('common.open','Open')}</button>` : '—';
+                }}
+            ];
+            const designWidth = columns.reduce((sum,column)=>sum+column.width,0);
             const error = state.phase6ShippingError ? `<div class="rounded-lg border border-red-200 bg-red-50 p-3 text-xs text-red-700">${escapePhase6Text(state.phase6ShippingError)}</div>` : '';
             const activeRecords = records.filter(di => di.di_status !== 'CANCELLED' && di.shipment_status !== 'CANCELLED');
             const summaryStrip = !restricted ? `<div class="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-6 gap-3">
@@ -11017,8 +11073,10 @@
                         ${showPayment ? `<select onchange="setPhase6ShippingFilter('paymentStatus', this.value)" class="border rounded-lg px-2 py-2 text-xs"><option value="ALL">${tr('shipping.allPayment', 'All payment status')}</option>${['UNPAID','PARTIAL','PAID'].map(status => `<option value="${status}" ${state.phase6Filters.paymentStatus === status ? 'selected' : ''}>${typeof translateStatus === 'function' ? translateStatus(status) : status}</option>`).join('')}</select>` : ''}
                     </div>` : ''}
                     <div class="bg-white rounded-xl border border-slate-200 overflow-hidden shadow-sm">
-                        <div class="overflow-x-auto"><table class="ui-table min-w-[900px] w-full text-xs"><thead class="bg-slate-50 text-slate-500"><tr><th class="p-3 text-left">${warehouse ? tr('shipping.colLoading', 'Loading') : tr('dashboard.colDiNo', 'DI No.')}</th>${showCustomerAndPo ? `<th class="p-3 text-left">${tr('common.customer', 'Customer')}</th><th class="p-3 text-left">PO</th>` : ''}${showProduct ? `<th class="p-3 text-left">${tr('shipping.colProductSummary', 'Product summary')}</th>` : ''}${showPacking ? `<th class="p-3 text-left">${tr('shipping.colPacking', 'Packing')}</th>` : ''}${showPlannedQty ? `<th class="p-3 text-right">${tr('dashboard.colPlannedQty', 'Planned Qty')}</th>` : ''}${showContainerPlan ? `<th class="p-3 text-left">${tr('dashboard.colContainerPlan', 'Container Plan')}</th>` : ''}${showShippingPlan ? `<th class="p-3 text-left">${tr('shipping.colShippingPlan', 'Shipping Plan')}</th>` : ''}<th class="p-3 text-left">${tr('shipping.colPlanActualLoad', 'Planned / Actual Loading')}</th>${showSchedule ? `<th class="p-3 text-center">${tr('shipping.colScheduleResult', 'Schedule Result')}</th>` : ''}${showBooking ? `<th class="p-3 text-left">${tr('shipping.colBookingBl', 'Booking / BL No.')}</th>` : ''}${showShipmentStatus ? `<th class="p-3 text-center">${tr('shipping.colShipStatus', 'Shipment Status')}</th>` : ''}${showPayment ? `<th class="p-3 text-center">${tr('shipping.colPayStatus', 'Payment Status')}</th>` : ''}</tr></thead>
-                        <tbody class="divide-y divide-slate-100">${records.length ? records.map(di => { const reference = di.detail_ref || di.di_id; const referenceLabel = warehouse ? tr('shipping.openLoadingPlan', 'Open loading plan') : (di.di_no || '-'); const customerDocsCount = Number(di.customer_docs_count || 0); const docsReadyBadge = (!warehouse && customerDocsCount > 0) ? `<div class="mt-1"><span data-docs-ready-badge class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-emerald-100 text-emerald-800 border border-emerald-200 text-[9px] font-black">${escapePhase6Text(tr('docs.docsReadyBadge', 'Docs Ready ({count})', { count: customerDocsCount }))}</span></div>` : ''; return `<tr class="hover:bg-blue-50/40"><td class="p-3">${reference ? `<button type="button" data-phase6-detail-ref="${escapePhase6Text(reference)}" class="font-black text-blue-700 hover:underline">${escapePhase6Text(referenceLabel)}</button>` : escapePhase6Text(referenceLabel)}${docsReadyBadge}</td>${showCustomerAndPo ? `<td class="p-3 font-semibold">${escapePhase6Text(di.customer_name || '-')}</td><td class="p-3"><div class="font-bold text-slate-900">${escapePhase6Text(String(di.customer_po_no || '').trim() || di.po_id || '-')}</div><div class="text-[10px] font-mono text-slate-400">${tr('po.systemPo', 'System PO')}: ${escapePhase6Text(di.po_id || '-')}</div></td>` : ''}${showProduct ? `<td class="p-3">${escapePhase6Text(di.product_summary || '-')}</td>` : ''}${showPacking ? `<td class="p-3">${escapePhase6Text(di.packing_summary || '-')}</td>` : ''}${showPlannedQty ? `<td class="p-3 text-right font-bold">${Number(di.planned_qty_mt || 0).toFixed(3)} MT</td>` : ''}${showContainerPlan ? `<td class="p-3">${escapePhase6Text(di.container_plan || '-')}</td>` : ''}${showShippingPlan ? `<td class="p-3">${escapePhase6Text([di.shipping_month, di.shipping_period].filter(Boolean).join(' / ') || '-')}</td>` : ''}<td class="p-3">${escapePhase6Text(di.planned_loading_date || '-')}<br><span class="text-slate-400">${escapePhase6Text(di.actual_loading_date || '-')}</span></td>${showSchedule ? `<td class="p-3 text-center">${phase6StatusBadge(di.schedule_result)}</td>` : ''}${showBooking ? `<td class="p-3 font-mono">${escapePhase6Text(di.booking_no || '-')}${!restricted && di.bl_no ? `<div class="text-[10px] text-slate-500">BL: ${escapePhase6Text(di.bl_no)}</div>` : ''}</td>` : ''}${showShipmentStatus ? `<td class="p-3 text-center">${phase6StatusBadge(di.shipment_status)}</td>` : ''}${showPayment ? `<td class="p-3 text-center">${phase6StatusBadge(di.payment_status)}</td>` : ''}</tr>`; }).join('') : `<tr><td colspan="${columnCount}" class="p-8 text-center text-slate-500">${emptyStateLabel}</td></tr>`}</tbody></table></div>
+                        <div class="di-list-scroll"><table class="di-list-table text-xs text-left">
+                        <colgroup>${columns.map(column=>`<col style="width:${column.width/designWidth*100}%">`).join('')}</colgroup>
+                        <thead class="bg-slate-50 text-slate-600"><tr>${columns.map(column=>`<th scope="col">${column.label}</th>`).join('')}</tr></thead>
+                        <tbody>${records.length ? records.map(di => `<tr data-phase6-row-ref="${esc(di.detail_ref || di.di_id || '')}">${columns.map(column=>`<td>${column.cell(di)}</td>`).join('')}</tr>`).join('') : `<tr><td colspan="${columns.length}" class="text-center text-slate-500">${emptyStateLabel}</td></tr>`}</tbody></table></div>
                     </div>
                 </div>`;
         }

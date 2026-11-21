@@ -751,15 +751,28 @@ test('Shipping PO references use customer number first and system number beneath
   const bindings={state:{currentUser:{role:'ADMIN'},deliveryInstructions:[di],phase6Filters:{},phase6ShipmentDetail:null},escapePhase6Text:v=>String(v??''),canEditPhase6Shipping:()=>false,canSearchPhase6Workspace:()=>true,canFilterPhase6Schedule:()=>true,canFilterPhase6Payment:()=>true,phase6StatusBadge:v=>String(v??'')};
   Object.assign(globalThis,bindings);
   try {
+    Object.assign(di,{invoice_no:'WCAT014',customer_docs_count:2,customer_name:'CCE HANSEATIC AGRI GMBH',product_summary:'Tapioca Residue Powder 62.5',planned_qty_mt:50,container_plan:"2 × 40'",shipping_month:'2026-01',shipping_period:'FIRST_HALF',planned_loading_date:'2026-01-22',actual_loading_date:'2026-01-23',schedule_result:'OUT_OF_PLAN',shipment_status:'DOCS_SENT',payment_status:'UNPAID'});
+    const list=renderList();
+    const headings=[...list.matchAll(/<th scope="col">([^<]+)<\/th>/g)].map(match=>match[1]);
+    assert.deepEqual(headings,['DI No.','Customer & PO','Product & Load Plan','Shipping & Loading','Booking / BL No.','Status','Action']);
+    assert.match(list,/PO 1606 · PO-2025-009/);
+    assert.match(list,/WCAT014/);
+    assert.match(list,/data-docs-ready-badge class="di-list-pill[^"]*">Docs Ready \(2\)/);
+    assert.match(list,/di-list-status">DOCS_SENTUNPAID/);
+    assert.match(list,/2026-01 · 1st Half/);
+    assert.match(list,/data-phase6-row-ref="DI1"/);
+    globalThis.state.currentUser.role='PRODUCTION_WAREHOUSE';
+    assert.doesNotMatch(renderList(),/UNPAID|WCAT014|PO-2025-009/);
+    globalThis.state.currentUser.role='ADMIN';
     for(const label of ['System PO','เลขที่ PO ระบบ']) {
       globalThis.t=key=>key==='po.systemPo'?label:key;
-      for(const output of [renderList(),renderDetail(di)]) {
+      for(const output of [renderDetail(di)]) {
         assert.match(output,/font-bold text-slate-900[^>]*>1606<\/div>/);
         assert.ok(output.includes(`${label}: PO-2025-009`));
       }
     }
     di.customer_po_no=' ';
-    assert.match(renderList(),/font-bold text-slate-900[^>]*>PO-2025-009<\/div>/);
+    assert.match(renderList(),/di-list-single[^>]*>PO-2025-009<\/span>/);
   } finally {for(const key of [...Object.keys(bindings),'t'])delete globalThis[key];}
 });
 

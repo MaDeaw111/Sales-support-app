@@ -2232,6 +2232,8 @@ export function createShippingDiRepository(db) {
           COALESCE((SELECT GROUP_CONCAT(product.product_name, ', ') FROM delivery_instruction_lines line JOIN products product ON product.product_id = line.product_id WHERE line.di_id = di.di_id), '') AS product_summary,
           COALESCE((SELECT GROUP_CONCAT(line.packing_snapshot, ', ') FROM delivery_instruction_lines line WHERE line.di_id = di.di_id), '') AS packing_summary,
           shipment.shipment_id, shipment.booking_no, ${hasBlNo ? 'shipment.bl_no' : 'NULL AS bl_no'}, CASE WHEN shipment.shipment_id IS NOT NULL THEN shipment.planned_loading_date ELSE ${requestedLoadingDateExpression('di.di_id')} END AS planned_loading_date, CASE WHEN shipment.shipment_id IS NOT NULL THEN shipment.planned_loading_end_date ELSE ${requestedLoadingDateExpression('di.di_id', 'plannedLoadingEndDate')} END AS planned_loading_end_date, shipment.actual_loading_date,
+          (SELECT invoice_no FROM shipment_invoices WHERE shipment_id=shipment.shipment_id
+            ORDER BY version='FINAL' DESC, invoice_date DESC, invoice_no ASC LIMIT 1) AS invoice_no,
           shipment.schedule_result, shipment.status AS shipment_status, shipment.payment_status
         FROM delivery_instructions di
         JOIN customers customer ON customer.customer_id = di.customer_id
