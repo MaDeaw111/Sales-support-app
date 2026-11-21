@@ -1642,6 +1642,7 @@
                 'calendar.planActualShort': 'แผน: {plan} · จริง: {actual}',
                 'calendar.reference': 'อ้างอิง',
                 'executive.title': "ภาพรวมผู้บริหาร",
+                'executive.subtitle': 'ภาพรวมการดำเนินงานและการเงิน · ข้อมูลหลักและสถานะ D1 แบบสด',
                 'dashboard.fetchError': 'โหลดแดชบอร์ดไม่สำเร็จ กรุณากดรีเฟรชเพื่อลองอีกครั้ง',
                 'dashboard.analyticsError': 'ข้อมูลวิเคราะห์ไม่พร้อมใช้งานชั่วคราว กรุณากดรีเฟรชเพื่อลองอีกครั้ง',
                 'executive.period': "ช่วงเวลา",
@@ -3007,6 +3008,7 @@
                 'calendar.planActualShort': 'Plan: {plan} · Actual: {actual}',
                 'calendar.reference': 'Reference',
                 'executive.title': "Executive Dashboard",
+                'executive.subtitle': 'Operational & financial overview · Master data & live D1 health',
                 'dashboard.fetchError': 'Could not load the dashboard. Use Refresh to try again.',
                 'dashboard.analyticsError': 'Executive analytics are temporarily unavailable. Use Refresh to try again.',
                 'executive.period': "Period",
@@ -6318,9 +6320,9 @@
                 const date = [row.start, row.end !== row.start ? row.end : null].filter(Boolean).join(' – ');
                 return `<tr class="border-t border-slate-100"><td class="p-3">${title}${row.customerPO && row.ref !== row.customerPO ? `<div class="text-slate-500">${esc(row.customerPO)}</div>` : ''}</td><td class="p-3">${row.customer ? `<strong>${esc(row.customer)}</strong><br>` : ''}${esc(row.product)}</td><td class="p-3 whitespace-nowrap">${mt(row.planned)} / ${mt(row.actual)}${!warehouse && row.currency ? `<div class="text-slate-500">${money(row.currency,row.amount)}</div>` : ''}</td><td class="p-3 whitespace-nowrap">${esc(date || '—')}</td><td class="p-3"><span class="rounded-full px-2 py-1 font-semibold ${badgeStyles[row.alert] || ''}">${label(row.alert)}</span></td></tr>`;
             }).join('');
+            const controls = `<div class="flex flex-wrap gap-2 print:hidden"><select aria-label="${label('period')}" class="rounded-lg border bg-white px-3 py-2 text-xs" onchange="setExecutivePeriod(this.value)">${['all','this_month','this_quarter','this_year'].map(value=>`<option value="${value}" ${(data.period || 'all')===value?'selected':''}>${label(value)}</option>`).join('')}</select><button type="button" class="rounded-lg border bg-white px-3 py-2 text-xs font-semibold" onclick="window.print()">${label('print')}</button></div>`;
             return `<div data-executive-dashboard class="space-y-5">
-                ${renderDashboardHeader(label('title'), '', actions.join(''))}
-                <div class="flex flex-wrap gap-2 print:hidden"><select aria-label="${label('period')}" class="rounded-lg border bg-white px-3 py-2 text-xs" onchange="setExecutivePeriod(this.value)">${['all','this_month','this_quarter','this_year'].map(value=>`<option value="${value}" ${(data.period || 'all')===value?'selected':''}>${label(value)}</option>`).join('')}</select><button type="button" class="rounded-lg border bg-white px-3 py-2 text-xs font-semibold" onclick="window.print()">${label('print')}</button></div>
+                ${renderDashboardHeader(label('title'), label('subtitle'), '<div class="flex flex-wrap gap-2 print:hidden">' + actions.join('') + '</div>' + controls)}
                 <div class="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
                     ${card(label('contracts'), mt(data.totalContract), t('dashboard.posCount',{count:data.openCount}) + (data.contractValue && !warehouse ? '<div>' + grouped(data.contractValue) + '</div>' : ''), jump(warehouse ? 'shipping' : 'po_engine',label('contracts')))}
                     ${card(label('fulfillment'), mt(data.actual), `<div>${label('actual')} · ${progress.toFixed(0)}%</div>${bar(progress,'bg-emerald-500')}<div>${label('remaining')} ${mt(data.remaining)}</div>`, jump('shipping',label('fulfillment')))}
@@ -6532,7 +6534,7 @@
                 }).join('');
                 const roleRows = (d?.role_breakdown || []).map(r => `<div class="p-3 flex items-center justify-between text-xs"><span class="font-bold text-slate-800">${escapeDashboardHtml(typeof translateRole === 'function' ? translateRole(r.role) : String(r.role || '').replaceAll('_', ' '))}</span><span class="font-mono text-slate-500">${tr('dashboard.activeOfTotal', '{active} active / {total} total', { active: Number(r.active_count || 0), total: Number(r.total_count || 0) })}</span></div>`).join('');
                 container.innerHTML = `<div class="space-y-5">
-                    ${renderDashboardHeader(tr('dashboard.adminTitle', 'System Administration'), tr('dashboard.adminSub', 'Live D1 health · Master data · Access control · Operational overview'), actions)}
+                    ${executive ? '' : renderDashboardHeader(tr('dashboard.adminTitle', 'System Administration'), tr('dashboard.adminSub', 'Live D1 health · Master data · Access control · Operational overview'), actions)}
                     ${errBanner}${loadingBanner}
                     ${executive || renderTeamOverviewSection(d?.team_overview)}
                     <div class="grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-3">
