@@ -366,3 +366,33 @@ test('WCAT Team Overview calculates active POs, product breakdown, shipped vs re
   assert.equal(decDash.team_overview.next_month.planned_containers, 3);
   assert.equal(decDash.team_overview.next_month.shipment_count, 1);
 });
+
+test('executive dashboard includes draft contracts, scoped watchlists and financial role projections', async () => {
+  const {db, wrappedDb}=await setupTestDb();
+  await seedFullDashboardFixture(db);
+  db.exec("UPDATE po_headers SET current_active_revision_id=NULL WHERE po_id='PO2'; UPDATE po_revisions SET status='DRAFT' WHERE revision_id='REV2'; UPDATE phase6_shipments SET planned_loading_date='2026-11-22', actual_loading_date=NULL WHERE shipment_id='SHP-2'; UPDATE phase6_shipments SET cash_received_amount=7500, status='DOCS_SENT' WHERE shipment_id='SHP-1'; UPDATE shipment_invoices SET invoice_date='2026-09-01' WHERE invoice_id='INV-1'");
+  const repo=createDashboardRepository(wrappedDb);
+  const now=new Date('2026-11-21T00:00:00Z');
+  for(const role of ['ADMIN','MANAGER','SALES_SUPPORT','EXPORT']) {
+    const result=await repo.getExecutiveDashboard({role,user_id:'U_ADMIN'},now);
+    assert.equal(result.totalContract,150);
+    assert.deepEqual(result.contractValue,{USD:50000,EUR:20000});
+    assert.deepEqual(result.receivables,{USD:2500});
+    assert.equal(result.overdue,1);
+    assert.equal(result.upcoming.small,1);
+    assert.ok(result.products.some(item=>item.contract===50));
+    assert.ok(result.months.some(item=>item.planned===15 || item.planned===35));
+    assert.ok(result.watchlist.some(row=>row.ref==='WCAT-001'));
+  }
+  const warehouse=await repo.getExecutiveDashboard({role:'PRODUCTION_WAREHOUSE',user_id:'U_WH'},now);
+  assert.equal(warehouse.totalContract,150);
+  assert.equal(warehouse.contractValue,undefined);
+  assert.equal(warehouse.receivables,undefined);
+  assert.ok(warehouse.watchlist.every(row=>!row.currency && !row.amount && !row.customer && !row.ref));
+  assert.match(warehouse.watchlist[0].diId,/^[0-9a-f]{64}$/);
+  const sales=await repo.getExecutiveDashboard({role:'EXTERNAL_SALES',user_id:'U_SALES2'},now);
+  assert.equal(sales.totalContract,50);
+  assert.deepEqual(sales.contractValue,{EUR:20000});
+  assert.deepEqual(sales.watchlist.map(row=>row.poId),['PO2']);
+  assert.ok(sales.months.every(month=>month.actual===0));
+});

@@ -1617,6 +1617,38 @@
                 'calendar.loadingDates': 'วันโหลดสินค้า',
                 'calendar.planActualShort': 'แผน: {plan} · จริง: {actual}',
                 'calendar.reference': 'อ้างอิง',
+                'executive.title': "ภาพรวมผู้บริหาร",
+                'executive.contracts': "ยอดขายในมือ",
+                'executive.fulfillment': "ความคืบหน้าการส่งมอบ",
+                'executive.upcoming': "แผนส่งออกเร็ว ๆ นี้",
+                'executive.receivables': "ยอดรอรับชำระเงิน",
+                'executive.actual': "ส่งแล้ว",
+                'executive.remaining': "คงเหลือ",
+                'executive.planned': "ตามแผน",
+                'executive.next30': "ภายใน 30 วัน",
+                'executive.nextScheduled': "แผนถัดไปนอกช่วง 30 วัน",
+                'executive.other': "อื่น ๆ",
+                'executive.calendar': "ปฏิทินปฏิบัติการ",
+                'executive.overdue': "ใบแจ้งหนี้เกินกำหนด",
+                'executive.noOverdue': "ไม่มีใบแจ้งหนี้เกินกำหนด",
+                'executive.queue': "ตู้ที่ใช้งาน / คิวโหลด",
+                'executive.containers': "ตู้ที่ใช้งาน",
+                'executive.queued': "งานรอโหลด",
+                'executive.products': "สัดส่วนสินค้าในมือ",
+                'executive.timeline': "แผนส่งมอบรายเดือน",
+                'executive.watch': "รายการเร่งด่วนที่ต้องติดตาม",
+                'executive.reference': "อ้างอิง",
+                'executive.customerProduct': "ลูกค้าและสินค้า",
+                'executive.productsOnly': "สินค้า",
+                'executive.qty': "ตามแผน / ส่งจริง",
+                'executive.qtyValue': "ปริมาณและมูลค่า",
+                'executive.loading': "โหลด / ETD",
+                'executive.alert': "แจ้งเตือน",
+                'executive.empty': "ไม่มีรายการ",
+                'executive.outOfPlan': "นอกแผน",
+                'executive.preliminary': "ใบแจ้งหนี้เบื้องต้น",
+                'executive.awaitingPayment': "รอชำระเงิน",
+                'executive.upcomingLoading': "ใกล้ถึงกำหนดโหลด",
                 'calendar.invoice': 'ใบแจ้งหนี้',
                 'calendar.searchReferences': 'ค้นหาใบแจ้งหนี้, DI, PO, ลูกค้า หรือเลขจอง',
                 'calendar.loadingAuditTitle': 'ประวัติการเปลี่ยนแปลงวันโหลด',
@@ -2930,6 +2962,38 @@
                 'calendar.loadingDates': 'Loading Dates',
                 'calendar.planActualShort': 'Plan: {plan} · Actual: {actual}',
                 'calendar.reference': 'Reference',
+                'executive.title': "Executive Dashboard",
+                'executive.contracts': "Open Contracts",
+                'executive.fulfillment': "Fulfillment Progress",
+                'executive.upcoming': "Upcoming Shipments",
+                'executive.receivables': "Pending Payment / AR",
+                'executive.actual': "Shipped",
+                'executive.remaining': "Remaining",
+                'executive.planned': "Planned",
+                'executive.next30': "Next 30 days",
+                'executive.nextScheduled': "Next scheduled outside 30 days",
+                'executive.other': "Other",
+                'executive.calendar': "Operations Calendar",
+                'executive.overdue': "overdue invoices",
+                'executive.noOverdue': "No overdue invoices",
+                'executive.queue': "Active Containers / Loading Queue",
+                'executive.containers': "active containers",
+                'executive.queued': "queued",
+                'executive.products': "Contract by Product",
+                'executive.timeline': "Monthly Shipment Timeline",
+                'executive.watch': "Action Watchlist",
+                'executive.reference': "Ref",
+                'executive.customerProduct': "Customer & Product",
+                'executive.productsOnly': "Product",
+                'executive.qty': "Planned / Actual",
+                'executive.qtyValue': "Qty & Value",
+                'executive.loading': "Loading / ETD",
+                'executive.alert': "Alert",
+                'executive.empty': "No records",
+                'executive.outOfPlan': "Out of plan",
+                'executive.preliminary': "Prelim inv",
+                'executive.awaitingPayment': "Awaiting payment",
+                'executive.upcomingLoading': "Upcoming loading",
                 'calendar.invoice': 'Invoice',
                 'calendar.searchReferences': 'Search invoice, DI, PO, customer or booking',
                 'calendar.loadingAuditTitle': 'Loading Date Audit History',
@@ -6134,6 +6198,55 @@
             }
         }
 
+        function renderExecutiveDashboard(data, role, refresh) {
+            const esc = escapeDashboardHtml;
+            const label = key => t('executive.' + key);
+            const mt = value => Number(value || 0).toLocaleString('en-US', { maximumFractionDigits: 3 }) + ' MT';
+            const money = (currency, amount) => esc(currency) + ' ' + Number(amount).toLocaleString('en-US', {minimumFractionDigits:2, maximumFractionDigits:2});
+            const grouped = totals => Object.entries(totals || {}).sort().map(([currency, amount]) => money(currency, amount)).join(' · ') || '—';
+            const percent = (part, total) => total > 0 ? Math.max(0, Math.min(100, 100 * part / total)) : 0;
+            const warehouse = role === 'PRODUCTION_WAREHOUSE';
+            const actions = [refresh];
+            if (role === 'ADMIN') actions.unshift(renderDashboardAction(t('dashboard.addUser'), 'user-plus', 'openUserModal()'));
+            if (['ADMIN','MANAGER','SALES_SUPPORT'].includes(role)) actions.push(renderDashboardAction(t('dashboard.addCustomer'), 'user-plus', 'openAddCustomerModal()'));
+            if (!warehouse) actions.push(renderDashboardAction(t('common.products'), 'package', "changeView('products')"));
+            if (['ADMIN','MANAGER','EXPORT'].includes(role)) actions.push(renderDashboardAction(t('dashboard.addLogisticsPartner'), 'building-2', 'openLogisticsPartnerModal()'));
+            const card = (title, primary, detail) => `<section class="rounded-xl border border-slate-200 bg-white p-5"><h2 class="text-xs font-semibold text-slate-500">${title}</h2><div class="mt-3 text-2xl font-bold text-slate-900">${primary}</div><div class="mt-2 space-y-2 text-xs text-slate-600">${detail}</div></section>`;
+            const bar = (value, color) => `<div class="h-2 overflow-hidden rounded-full bg-slate-100"><div class="h-full rounded-full ${color}" style="width:${value}%"></div></div>`;
+            const progress = percent(data.actual, data.totalContract);
+            const upcoming = data.upcoming;
+            const peak = Math.max(1, ...data.months.flatMap(month => [month.actual, month.planned]));
+            const section = (name, body) => `<section class="min-w-0 rounded-xl border border-slate-200 bg-white p-5"><h2 class="text-sm font-bold text-slate-900">${label(name)}</h2><div class="mt-4 space-y-4">${body || '<p class="text-xs text-slate-500">' + label('empty') + '</p>'}</div></section>`;
+            const badgeStyles = {outOfPlan:'bg-rose-100 text-rose-800',preliminary:'bg-amber-100 text-amber-800',awaitingPayment:'bg-amber-100 text-amber-800',upcomingLoading:'bg-blue-100 text-blue-800'};
+            const rows = data.watchlist.map((row, index) => {
+                const target = row.diId || row.poId;
+                const ref = row.ref || row.customerPO || label('loading');
+                const title = target ? `<button type="button" class="font-bold text-blue-700 hover:underline" onclick="openExecutiveWatchlistItem(${index})">${esc(ref)}</button>` : `<strong>${esc(ref)}</strong>`;
+                const date = [row.start, row.end !== row.start ? row.end : null].filter(Boolean).join(' – ');
+                return `<tr class="border-t border-slate-100"><td class="p-3">${title}${row.customerPO && row.ref !== row.customerPO ? `<div class="text-slate-500">${esc(row.customerPO)}</div>` : ''}</td><td class="p-3">${row.customer ? `<strong>${esc(row.customer)}</strong><br>` : ''}${esc(row.product)}</td><td class="p-3 whitespace-nowrap">${mt(row.planned)} / ${mt(row.actual)}${!warehouse && row.currency ? `<div class="text-slate-500">${money(row.currency,row.amount)}</div>` : ''}</td><td class="p-3 whitespace-nowrap">${esc(date || '—')}</td><td class="p-3"><span class="rounded-full px-2 py-1 font-semibold ${badgeStyles[row.alert] || ''}">${label(row.alert)}</span></td></tr>`;
+            }).join('');
+            return `<div data-executive-dashboard class="space-y-5">
+                ${renderDashboardHeader(label('title'), '', actions.join(''))}
+                <div class="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+                    ${card(label('contracts'), mt(data.totalContract), t('dashboard.posCount',{count:data.openCount}) + (data.contractValue && !warehouse ? '<div>' + grouped(data.contractValue) + '</div>' : ''))}
+                    ${card(label('fulfillment'), mt(data.actual), `<div>${label('actual')} · ${progress.toFixed(0)}%</div>${bar(progress,'bg-emerald-500')}<div>${label('remaining')} ${mt(data.remaining)}</div>`)}
+                    ${card(label('upcoming'), mt(upcoming.mt), `<div>${label(upcoming.fallback ? 'nextScheduled' : 'next30')}${upcoming.nextDate ? ' · ' + esc(upcoming.nextDate) : ''}</div><div>20′ · ${upcoming.small} / 40′ · ${upcoming.large}${upcoming.other ? ' / ' + label('other') + ' · ' + upcoming.other : ''}</div><button class="font-semibold text-blue-700 hover:underline" onclick="changeView('calendar')">${label('calendar')}</button>`)}
+                    ${data.receivables && !warehouse ? card(label('receivables'), grouped(data.receivables), data.overdue ? `<span class="rounded-full bg-rose-100 px-2 py-1 font-semibold text-rose-800">${data.overdue} ${label('overdue')}</span>` : label('noOverdue')) : card(label('queue'), data.activeContainers, `${label('containers')} · ${data.queue} ${label('queued')}`)}
+                </div>
+                <div class="grid gap-4 lg:grid-cols-2">
+                    ${section('products', data.products.map(product => `<div><div class="flex justify-between gap-3 text-xs font-semibold"><span>${esc(product.name)}</span><span>${mt(product.contract)}</span></div><div class="my-2">${bar(percent(product.actual,product.contract),'bg-emerald-500')}</div><div class="text-xs text-slate-500">${label('actual')} ${mt(product.actual)} · ${label('remaining')} ${mt(Math.max(0,product.contract-product.actual))}</div></div>`).join(''))}
+                    ${section('timeline', data.months.map(month => `<div class="grid grid-cols-[5rem_1fr] items-center gap-3 text-xs"><strong>${esc(month.month)}</strong><div class="space-y-1"><div class="grid grid-cols-[1fr_6rem] items-center gap-2">${bar(percent(month.actual,peak),'bg-emerald-500')}<span>${label('actual')} ${mt(month.actual)}</span></div><div class="grid grid-cols-[1fr_6rem] items-center gap-2">${bar(percent(month.planned,peak),'bg-blue-400')}<span>${label('planned')} ${mt(month.planned)}</span></div></div></div>`).join(''))}
+                </div>
+                ${section('watch', rows ? `<div class="overflow-x-auto"><table class="w-full text-left text-xs"><thead class="bg-slate-50 text-slate-500"><tr>${['reference',warehouse?'productsOnly':'customerProduct',warehouse?'qty':'qtyValue','loading','alert'].map(key=>`<th scope="col" class="p-3">${label(key)}</th>`).join('')}</tr></thead><tbody>${rows}</tbody></table></div>` : '')}
+            </div>`;
+        }
+
+        function openExecutiveWatchlistItem(index) {
+            const row = state.dashboardSummary?.data?.executive?.watchlist[index];
+            if (row?.diId) return openPhase6ShipmentFromCalendar(row.diId);
+            if (row?.poId) goToPODetail(row.poId);
+        }
+
         function renderDashboard(container) {
             const tr = (k, fb, p) => (typeof t === 'function' ? t(k, p) : (p ? String(fb).replace(/\{(\w+)\}/g, (_, m) => p[m] ?? '') : fb));
             const role = state.currentUser?.role || '';
@@ -6145,6 +6258,11 @@
             }
 
             const refreshBtn = renderDashboardAction(tr('common.refresh', 'Refresh'), 'refresh-cw', 'loadDashboardSummaryFromApi({ force: true })');
+            if (hasLive && ds.data.executive) {
+                container.innerHTML = renderExecutiveDashboard(ds.data.executive, role, refreshBtn);
+                lucide.createIcons();
+                return;
+            }
             const errBanner = ds.error ? `<div class="bg-rose-50 border border-rose-200 text-rose-700 rounded-xl px-4 py-3 text-xs font-bold">${escapeDashboardHtml(ds.error)}</div>` : '';
             const loadingBanner = (!hasLive && ds.loading) ? `<div class="bg-white border border-slate-200 rounded-xl p-6 text-center text-xs text-slate-400">${tr('dashboard.loading', 'Loading live D1 dashboard...')}</div>` : '';
 

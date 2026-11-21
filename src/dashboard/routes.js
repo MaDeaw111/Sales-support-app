@@ -33,8 +33,10 @@ export function createDashboardHandler({ repo, resolveUser, db, now = () => new 
       return json({ status: 'ERROR', message: 'Dashboard route not found.' }, 404);
     }
 
-    const data = await activeRepo.getDashboardForCaller(caller, now());
+    const snapshotTime = now();
+    const data = await activeRepo.getDashboardForCaller(caller, snapshotTime);
     if (!data) return json({ status: 'ERROR', message: 'Permission denied.' }, 403);
+    if (activeRepo.getExecutiveDashboard) data.executive = await activeRepo.getExecutiveDashboard(caller, snapshotTime);
     return json({ status: 'SUCCESS', data });
   };
 }

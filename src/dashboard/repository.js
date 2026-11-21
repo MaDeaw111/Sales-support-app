@@ -1,3 +1,4 @@
+import { buildExecutiveDashboard } from './executive.js';
 import { createPaymentsRepository } from '../payments/repository.js';
 import { createCommissionsRepository } from '../commissions/repository.js';
 
@@ -265,6 +266,9 @@ export function createDashboardRepository(db) {
   const commissionsRepo = createCommissionsRepository(db);
 
   return {
+    async getExecutiveDashboard(caller, now = new Date()) {
+      return buildExecutiveDashboard(db, caller, now);
+    },
     async getDashboardForCaller(caller, now = new Date()) {
       const todayIso = (now instanceof Date && !Number.isNaN(now.getTime()) ? now : new Date()).toISOString().slice(0, 10);
       const monthPrefix = todayIso.slice(0, 7);

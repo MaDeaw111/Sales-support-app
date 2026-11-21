@@ -112,7 +112,7 @@ function isRestrictedPhase6Caller(caller) {
   return caller?.role === 'EXTERNAL_SALES' || caller?.role === 'PRODUCTION_WAREHOUSE';
 }
 
-async function scopedWorkspaceDetailReference(caller, deliveryInstructionId) {
+export async function scopedWorkspaceDetailReference(caller, deliveryInstructionId) {
   const source = `phase6-workspace:${caller.user_id}:${caller.role}:${deliveryInstructionId}`;
   const bytes = new TextEncoder().encode(source);
   const digest = await crypto.subtle.digest('SHA-256', bytes);
