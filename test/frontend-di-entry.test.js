@@ -26,3 +26,24 @@ test('invoice preview totals match backend aggregation before currency rounding'
   assert.match(ctx.renderPhase6InvoiceForm(),/id="phase6InvoiceTotal">USD 0.01</);
   ctx.updatePhase6EntryTotals();assert.equal(fields.phase6InvoiceTotal.textContent,'USD 0.01');
 });
+
+test('recorded preliminary invoices use the primary green finalize button', () => {
+  const {ctx}=harness();
+  load(ctx,'renderPhase6DeliveryInstructionDetail');
+  ctx.phase6PartnerOptions=()=> '';
+  ctx.state.currentUser={role:'EXPORT'};
+  ctx.state.phase6ShipmentInvoices=[
+    {invoice_id:'PRE1',invoice_no:'WCAT014',version:'PRELIMINARY',total_amount:18000,currency:'USD'},
+    {invoice_id:'FIN1',invoice_no:'WCAT015',version:'FINAL'}
+  ];
+  const render=()=>ctx.renderPhase6DeliveryInstructionDetail({di_id:'D1',di_status:'IN_PROGRESS'});
+  const output=render();
+  assert.match(output,/<button[^>]*data-phase6-action="finalize-invoice"[^>]*data-phase6-invoice-id="PRE1"[^>]*class="di-invoice-finalize/);
+  assert.doesNotMatch(output,/data-phase6-invoice-id="FIN1"/);
+  assert.match(output,/WCAT014[\s\S]*bg-amber-100/);
+  assert.match(output,/WCAT015[\s\S]*bg-emerald-100/);
+  assert.match(html,/\.di-invoice-finalize\s*\{[^}]*background: #15803d;[^}]*border: 1px solid #14532d;[^}]*color: #ffffff;/);
+  assert.match(html,/\.di-invoice-finalize:hover:not\(:disabled\)\s*\{\s*background: #166534;/);
+  ctx.canEditPhase6Shipping=()=>false;
+  assert.doesNotMatch(render(),/data-phase6-action="finalize-invoice"/);
+});
