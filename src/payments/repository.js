@@ -1,3 +1,4 @@
+import { listCustomerCreditLedger } from '../shipping-di/repository.js';
 import { getShipmentAttachmentSummaryMap } from '../documents/repository.js';
 
 const CURRENCY_ORDER = ['USD', 'EUR', 'THB'];
@@ -245,50 +246,14 @@ export function createPaymentsRepository(db) {
 
       let customerCredits = [];
       if (includeCustomerCredits) {
-        let creditQuery = `
-          SELECT
-            cc.credit_id,
-            cc.customer_id,
-            c.customer_code,
-            c.customer_name,
-            cc.amount,
-            cc.remaining_amount,
-            cc.reason,
-            cc.created_by,
-            cc.created_at,
-            COALESCE((SELECT COUNT(*) FROM customer_credit_usages u WHERE u.credit_id = cc.credit_id), 0) AS usage_count
-          FROM customer_credits cc
-          JOIN customers c ON c.customer_id = cc.customer_id
-          WHERE 1 = 1
-        `;
-        const creditParams = [];
-        if (options.customerId) {
-          creditQuery += ' AND cc.customer_id = ?';
-          creditParams.push(options.customerId);
-        }
-        creditQuery += ' ORDER BY CASE WHEN cc.remaining_amount > 0 THEN 0 ELSE 1 END ASC, cc.created_at DESC, cc.rowid DESC';
-        const { results: creditRows } = await db.prepare(creditQuery).bind(...creditParams).all();
-        customerCredits = (creditRows || []).map((row) => {
-          const amount = roundMoney(row.amount);
-          const remaining = roundMoney(row.remaining_amount);
-          return {
-            credit_id: row.credit_id,
-            customer_id: row.customer_id,
-            customer_code: row.customer_code || null,
-            customer_name: row.customer_name,
-            amount,
-            remaining_amount: remaining,
-            used_amount: roundMoney(Math.max(0, amount - remaining)),
-            usage_count: Number(row.usage_count || 0),
-            reason: row.reason,
-            created_by: row.created_by,
-            created_at: row.created_at
-          };
-        });
+        customerCredits = await listCustomerCreditLedger(db, options.customerId);
         summary.customer_credits_summary = {
           total_credits: customerCredits.length,
-          active_credits_count: customerCredits.filter((c) => c.remaining_amount > 0).length,
-          total_remaining_amount: roundMoney(customerCredits.reduce((acc, c) => acc + c.remaining_amount, 0))
+          active_credits_count: customerCredits.filter((credit) => credit.remaining_amount > 0).length,
+          total_remaining_amount_by_currency: Object.fromEntries(['USD', 'EUR'].map((currency) => [
+            currency, roundMoney(customerCredits.filter((credit) => credit.currency === currency)
+              .reduce((total, credit) => total + credit.remaining_amount, 0))
+          ]))
         };
       }
 
@@ -348,12 +313,9 @@ export function createPaymentsRepository(db) {
         ORDER BY u.created_at DESC, u.rowid DESC
       `).bind(shipmentId).all();
 
-      const { results: availableCreditRows } = await db.prepare(`
-        SELECT credit_id, customer_id, amount, remaining_amount, reason, created_at
-        FROM customer_credits
-        WHERE customer_id = ? AND remaining_amount > 0
-        ORDER BY created_at DESC, rowid DESC
-      `).bind(shipment.customer_id).all();
+      const finalCurrencies = new Set((invoiceRows || []).filter((invoice) => invoice.version === 'FINAL').map((invoice) => invoice.currency));
+      const availableCredits = (await listCustomerCreditLedger(db, shipment.customer_id))
+        .filter((credit) => credit.remaining_amount > 0 && finalCurrencies.size === 1 && finalCurrencies.has(credit.currency));
 
       const { results: historyRows } = await db.prepare(`
         SELECT
@@ -384,11 +346,7 @@ export function createPaymentsRepository(db) {
           ...u,
           amount: roundMoney(u.amount)
         })),
-        availableCustomerCredits: (availableCreditRows || []).map((c) => ({
-          ...c,
-          amount: roundMoney(c.amount),
-          remaining_amount: roundMoney(c.remaining_amount)
-        })),
+        availableCustomerCredits: availableCredits,
         paymentHistory: historyRows || []
       };
     }

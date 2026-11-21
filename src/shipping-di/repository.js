@@ -613,20 +613,46 @@ function auditAfterMutationStatement(db, entityType, entityId, eventType, actorI
   `).bind(`EVT-${crypto.randomUUID()}`, entityType, entityId, eventType, actorId, JSON.stringify(metadata));
 }
 
+const creditSelect = `SELECT cc.*, c.customer_name, c.customer_code,
+  COALESCE(json_extract(event.metadata_json, '$.currency'), 'USD') AS currency,
+  json_extract(event.metadata_json, '$.reasonType') AS reason_type,
+  json_extract(event.metadata_json, '$.sourceDiId') AS source_di_id,
+  COALESCE(json_extract(event.metadata_json, '$.referenceNo'), '') AS reference_no,
+  COALESCE(json_extract(event.metadata_json, '$.note'), '') AS note,
+  (SELECT json_group_array(json_object('di_no', di.di_no, 'invoice_no', inv.invoice_no, 'amount', u.amount))
+   FROM customer_credit_usages u
+   JOIN phase6_shipments sh ON sh.shipment_id = u.shipment_id
+   JOIN delivery_instructions di ON di.di_id = sh.di_id
+   LEFT JOIN shipment_invoices inv ON inv.invoice_id = u.invoice_id
+   WHERE u.credit_id = cc.credit_id) AS allocations_json
+  FROM customer_credits cc JOIN customers c ON c.customer_id = cc.customer_id
+  LEFT JOIN shipment_audit_events event ON event.entity_type = 'CREDIT'
+    AND event.entity_id = cc.credit_id AND event.event_type = 'CUSTOMER_CREDIT_CREATED'`;
+
 async function findCustomerCredit(db, creditId) {
-  return db.prepare(`
-    SELECT credit_id, customer_id, amount, reason, remaining_amount, request_key, created_by, created_at
-    FROM customer_credits
-    WHERE credit_id = ?
-  `).bind(creditId).first();
+  return db.prepare(creditSelect + ' WHERE cc.credit_id = ?').bind(creditId).first();
 }
 
 async function findCustomerCreditByRequestKey(db, requestKey) {
-  return db.prepare(`
-    SELECT credit_id, customer_id, amount, reason, remaining_amount, request_key, created_by, created_at
-    FROM customer_credits
-    WHERE request_key = ?
-  `).bind(requestKey).first();
+  return db.prepare(creditSelect + ' WHERE cc.request_key = ?').bind(requestKey).first();
+}
+
+function matchesCreditRequest(row, credit) {
+  return row.customer_id === credit.customerId && moneyCents(row.amount) === moneyCents(credit.amount)
+    && row.reason === credit.reason && row.currency === credit.currency && row.reason_type === credit.reasonType
+    && row.source_di_id === credit.sourceDiId && row.reference_no === credit.referenceNo && row.note === credit.note;
+}
+
+export async function listCustomerCreditLedger(db, customerId) {
+  const filter = customerId ? ' WHERE cc.customer_id = ?' : '';
+  const { results } = await db.prepare(creditSelect + filter + ' ORDER BY cc.remaining_amount <= 0, cc.created_at DESC, cc.rowid DESC')
+    .bind(...(customerId ? [customerId] : [])).all();
+  return (results || []).map(({ request_key, allocations_json, ...row }) => {
+    const allocations = JSON.parse(allocations_json);
+    const usedAmount = (moneyCents(row.amount) - moneyCents(row.remaining_amount)) / 100;
+    return { ...row, allocations, usage_count: allocations.length, used_amount: usedAmount,
+      status: row.remaining_amount <= 0 ? 'FULLY_USED' : usedAmount > 0 ? 'PARTIALLY_USED' : 'OPEN' };
+  });
 }
 
 async function findCustomerCreditUsageByRequestKey(db, requestKey) {
@@ -1808,15 +1834,19 @@ export function createShippingDiRepository(db) {
       const credit = validateCustomerCredit(dto);
       const prior = await findCustomerCreditByRequestKey(db, credit.requestKey);
       if (prior) {
-        if (
-          prior.customer_id !== credit.customerId ||
-          moneyCents(prior.amount) !== moneyCents(credit.amount) ||
-          prior.reason !== credit.reason
-        ) throw codedError('CREDIT_REQUEST_KEY_CONFLICT');
+        if (!matchesCreditRequest(prior, credit)) throw codedError('CREDIT_REQUEST_KEY_CONFLICT');
         return prior;
       }
       const customer = await db.prepare('SELECT customer_id FROM customers WHERE customer_id = ?').bind(credit.customerId).first();
       if (!customer) throw codedError('CREDIT_CUSTOMER_NOT_FOUND');
+      if (credit.sourceDiId) {
+        const source = await db.prepare(`
+          SELECT di.customer_id, rev.currency FROM delivery_instructions di
+          JOIN po_revisions rev ON rev.revision_id = di.po_revision_id WHERE di.di_id = ?
+        `).bind(credit.sourceDiId).first();
+        if (source?.customer_id !== credit.customerId) throw codedError('CREDIT_SOURCE_INVALID');
+        if (source.currency !== credit.currency) throw codedError('CREDIT_CURRENCY_MISMATCH');
+      }
       const creditId = `CR-${crypto.randomUUID()}`;
       try {
         await db.batch([
@@ -1827,18 +1857,19 @@ export function createShippingDiRepository(db) {
           auditStatement(db, 'CREDIT', creditId, 'CUSTOMER_CREDIT_CREATED', actorId, {
             customerId: credit.customerId,
             amount: credit.amount,
-            reason: credit.reason
+            reason: credit.reason,
+            currency: credit.currency,
+            reasonType: credit.reasonType,
+            sourceDiId: credit.sourceDiId,
+            referenceNo: credit.referenceNo,
+            note: credit.note
           })
         ]);
       } catch (error) {
         if (!String(error?.message || '').includes('UNIQUE constraint failed: customer_credits.request_key')) throw error;
         const duplicate = await findCustomerCreditByRequestKey(db, credit.requestKey);
         if (duplicate) {
-          if (
-            duplicate.customer_id !== credit.customerId ||
-            moneyCents(duplicate.amount) !== moneyCents(credit.amount) ||
-            duplicate.reason !== credit.reason
-          ) throw codedError('CREDIT_REQUEST_KEY_CONFLICT');
+          if (!matchesCreditRequest(duplicate, credit)) throw codedError('CREDIT_REQUEST_KEY_CONFLICT');
           return duplicate;
         }
         throw error;
@@ -1847,23 +1878,7 @@ export function createShippingDiRepository(db) {
     },
 
     async listCustomerCredits(filters = {}) {
-      let query = `
-        SELECT credit_id, customer_id, amount, reason, remaining_amount, created_by, created_at
-        FROM customer_credits
-        WHERE 1 = 1
-      `;
-      const params = [];
-      if (filters.customerId) {
-        query += ' AND customer_id = ?';
-        params.push(filters.customerId);
-      }
-      query += ' ORDER BY created_at DESC, rowid DESC';
-      const { results } = await db.prepare(query).bind(...params).all();
-      return (results || []).map((credit) => ({
-        ...credit,
-        amount: Number(credit.amount),
-        remaining_amount: Number(credit.remaining_amount)
-      }));
+      return listCustomerCreditLedger(db, filters.customerId);
     },
 
     async recalculateShipmentPayment(shipmentId, actorId) {
@@ -1913,14 +1928,13 @@ export function createShippingDiRepository(db) {
       const credit = await findCustomerCredit(db, usage.creditId);
       if (!credit) throw codedError('CREDIT_NOT_FOUND');
       if (credit.customer_id !== shipment.customer_id) throw codedError('CREDIT_CUSTOMER_MISMATCH');
-      if (usage.invoiceId) {
-        const invoice = await db.prepare(`
-          SELECT invoice_id
-          FROM shipment_invoices
-          WHERE invoice_id = ? AND shipment_id = ?
-        `).bind(usage.invoiceId, shipmentId).first();
-        if (!invoice) throw codedError('CREDIT_INVOICE_SHIPMENT_MISMATCH');
+      const { results: invoices } = await db.prepare(
+        "SELECT invoice_id, currency FROM shipment_invoices WHERE shipment_id = ? AND version = 'FINAL'"
+      ).bind(shipmentId).all();
+      if (usage.invoiceId && !invoices.some((invoice) => invoice.invoice_id === usage.invoiceId)) {
+        throw codedError('CREDIT_INVOICE_SHIPMENT_MISMATCH');
       }
+      if (invoices.some((invoice) => invoice.currency !== credit.currency)) throw codedError('CREDIT_CURRENCY_MISMATCH');
       if (Number(credit.remaining_amount) < usage.amount) throw codedError('CREDIT_BALANCE_EXCEEDED');
       const paymentSummary = await findShipmentPaymentSummary(db, shipmentId);
       if (!paymentSummary || Number(paymentSummary.final_invoice_count) === 0 ||

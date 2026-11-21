@@ -1693,7 +1693,10 @@ test('submitCustomerCreditToApi and submitApplyCustomerCreditToApi call Phase 6 
   const fields = {
     creditCustomerId: { value: 'C1' },
     creditAmount: { value: '1200' },
-    creditReason: { value: 'Overpayment balance' },
+    creditReason: { value: 'QUALITY_CLAIM' },
+    creditCurrency: { value: 'EUR' },
+    creditReference: { value: 'WCAT014' },
+    creditNote: { value: 'Quality deduction' },
     creditFormError: { textContent: '', classList: { add() {}, remove() {} } },
     applyCreditId: { value: 'CR-1' },
     applyCreditAmount: { value: '500' },
@@ -1720,7 +1723,10 @@ test('submitCustomerCreditToApi and submitApplyCustomerCreditToApi call Phase 6 
     assert.equal(calls[0].method, 'POST');
     assert.equal(calls[0].body.customerId, 'C1');
     assert.equal(calls[0].body.amount, 1200);
-    assert.equal(calls[0].body.reason, 'Overpayment balance');
+    assert.equal(calls[0].body.reasonType, 'QUALITY_CLAIM');
+    assert.equal(calls[0].body.currency, 'EUR');
+    assert.equal(calls[0].body.referenceNo, 'WCAT014');
+    assert.equal(calls[0].body.note, 'Quality deduction');
     assert.ok(typeof calls[0].body.requestKey === 'string' && calls[0].body.requestKey.length > 0);
 
     await applyCredit('SHP-1');
@@ -1821,7 +1827,7 @@ test('renderPayments enforces role-aware UI for EXTERNAL_SALES, SALES_SUPPORT, a
         assert.doesNotMatch(container.innerHTML, /System PO: -/);
         assert.match(container.innerHTML, /font-bold text-slate-900[^>]*>CPO-1</);
       }
-      assert.equal(container.innerHTML.includes('+ Add Customer Credit'), expectWrite, `${role} + Add Customer Credit visibility`);
+      assert.equal(container.innerHTML.includes('+ Issue Customer Credit'), expectWrite || role === 'SALES_SUPPORT', `${role} + Add Customer Credit visibility`);
       assert.equal(container.innerHTML.includes('Record Payment'), expectWrite, `${role} Record Payment visibility`);
       assert.equal(container.innerHTML.includes('Customer Credits'), expectCreditsTab, `${role} Customer Credits tab visibility`);
       assert.equal(container.innerHTML.includes('Delete'), false, `${role} must never see Delete Payment button`);

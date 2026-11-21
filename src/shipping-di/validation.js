@@ -41,7 +41,7 @@ const SHIPMENT_DOCUMENT_PROPERTIES = [
   'dhlTrackingNo',
   'docsNote'
 ];
-const CUSTOMER_CREDIT_PROPERTIES = ['customerId', 'amount', 'reason', 'requestKey'];
+const CUSTOMER_CREDIT_PROPERTIES = ['customerId', 'amount', 'reason', 'requestKey', 'currency', 'reasonType', 'referenceNo', 'sourceDiId', 'note'];
 const CUSTOMER_CREDIT_USAGE_PROPERTIES = ['creditId', 'amount', 'invoiceId', 'requestKey'];
 const SHIPMENT_PAYMENT_PROPERTIES = ['cashReceivedAmount', 'paymentNote'];
 
@@ -410,10 +410,18 @@ export function validateCustomerCredit(dto) {
     throw codedError('CREDIT_AMOUNT_INVALID');
   }
   const reason = typeof dto.reason === 'string' ? dto.reason.trim() : '';
-  if (!reason) throw codedError('CREDIT_REASON_REQUIRED');
+  const currency = dto.currency ?? 'USD';
+  const reasonType = dto.reasonType ?? null;
+  if (!['USD', 'EUR'].includes(currency)) throw codedError('CREDIT_CURRENCY_INVALID');
+  if (reasonType !== null && !['QUALITY_CLAIM', 'RETURNED_GOODS', 'WEIGHT_SPEC_ADJUSTMENT', 'OVERPAYMENT_ADVANCE'].includes(reasonType)) throw codedError('CREDIT_REASON_INVALID');
+  if (!reason && !reasonType) throw codedError('CREDIT_REASON_REQUIRED');
+  const sourceDiId = dto.sourceDiId ? requiredId(dto.sourceDiId, 'CREDIT_SOURCE_INVALID') : null;
+  const referenceNo = typeof dto.referenceNo === 'string' ? dto.referenceNo.trim() : '';
+  const note = typeof dto.note === 'string' ? dto.note.trim() : '';
+  if (referenceNo.length > 200 || note.length > 2000) throw codedError('CREDIT_DETAILS_TOO_LONG');
   const requestKey = typeof dto.requestKey === 'string' ? dto.requestKey.trim() : '';
   if (!requestKey || requestKey.length > 200) throw codedError('CREDIT_REQUEST_KEY_INVALID');
-  return { customerId, amount: dto.amount, reason, requestKey };
+  return { customerId, amount: dto.amount, reason: reason || reasonType, requestKey, currency, reasonType, referenceNo, sourceDiId, note };
 }
 
 export function validateCustomerCreditUsage(dto) {

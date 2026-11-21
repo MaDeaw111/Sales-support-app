@@ -362,7 +362,13 @@ test('Customer Credit and Payment routes expose reads and restrict writes to ope
   assert.deepEqual(calls[2], ['payment', 'SHP-1', paymentPayload, 'U_EXPORT']);
 
   caller = { user_id: 'U_SUPPORT', role: 'SALES_SUPPORT' };
-  assert.equal((await handler(request('/api/customer-credits', 'POST', creditPayload))).status, 403);
+  assert.equal((await handler(request('/api/customer-credits', 'POST', creditPayload))).status, 200);
+  for (const role of ['PRODUCTION_WAREHOUSE', 'EXTERNAL_SALES']) {
+    caller = { user_id: 'U_RESTRICTED', role };
+    assert.equal((await handler(request('/api/customer-credits', 'POST', creditPayload))).status, 403);
+    assert.equal((await handler(request('/api/customer-credits?customerId=C1'))).status, 403);
+  }
+  caller = { user_id: 'U_SUPPORT', role: 'SALES_SUPPORT' };
   assert.equal((await handler(request('/api/shipments-v2/SHP-1/payment', 'PUT', paymentPayload))).status, 403);
   assert.equal((await handler(request('/api/customer-credits?customerId=C1'))).status, 200);
 });

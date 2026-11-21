@@ -1,3 +1,4 @@
+import { createPaymentsRepository } from '../src/payments/repository.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
@@ -1579,4 +1580,41 @@ test('single-day loading plan overrides shipping half and rescheduling corrects 
   db.prepare("UPDATE phase6_shipments SET schedule_result='OUT_OF_PLAN' WHERE shipment_id=?").run(id);
   assert.equal((await repo.getPhase6ShipmentByShipmentId(id)).schedule_result,'ON_PLAN');
   assert.ok((await repo.listDeliveryInstructionWorkspace({scheduleResult:'ON_PLAN'})).some(row=>row.shipment_id===id && row.schedule_result==='ON_PLAN'));
+});
+
+
+test('claim notes retain their metadata and only credit a final invoice in the same currency', async () => {
+  const { db, wrappedDb } = await setupTestDb();
+  const repo = createShippingDiRepository(wrappedDb);
+  const shipment = await loadedShipmentWithFinalInvoice(repo, db);
+  const invoice = db.prepare("SELECT invoice_id, invoice_no FROM shipment_invoices WHERE shipment_id = ? AND version = 'FINAL'").get(shipment.shipment_id);
+  const credit = await repo.createCustomerCredit({
+    customerId: 'C1', currency: 'USD', reasonType: 'QUALITY_CLAIM',
+    referenceNo: invoice.invoice_no, note: 'Quality deduction', amount: 100, requestKey: 'quality-credit'
+  }, 'U_EXPORT');
+  const returned = await repo.createCustomerCredit({
+    customerId: 'C1', currency: 'EUR', reasonType: 'RETURNED_GOODS', amount: 50, requestKey: 'return-credit'
+  }, 'U_EXPORT');
+  const before = await repo.listCustomerCredits({ customerId: 'C1' });
+  assert.equal(before.find((row) => row.credit_id === returned.credit_id).status, 'OPEN');
+  await assert.rejects(() => repo.useCustomerCredit(shipment.shipment_id, {
+    creditId: returned.credit_id, invoiceId: invoice.invoice_id, amount: 10, requestKey: 'wrong-currency'
+  }, 'U_EXPORT'), { code: 'CREDIT_CURRENCY_MISMATCH' });
+  const payments = createPaymentsRepository(wrappedDb);
+  const original = (await payments.getShipmentPaymentDetail(shipment.shipment_id)).shipment;
+  await repo.useCustomerCredit(shipment.shipment_id, {
+    creditId: credit.credit_id, invoiceId: invoice.invoice_id, amount: 40, requestKey: 'quality-usage'
+  }, 'U_EXPORT');
+  const updated = (await payments.getShipmentPaymentDetail(shipment.shipment_id)).shipment;
+  assert.equal(updated.outstanding_balance, original.outstanding_balance - 40);
+  assert.equal(updated.allocated_credit_amount, 40);
+  assert.equal(updated.cash_received_amount, 0);
+  const claim = (await repo.listCustomerCredits({ customerId: 'C1' })).find((row) => row.credit_id === credit.credit_id);
+  assert.equal(claim.status, 'PARTIALLY_USED');
+  assert.equal(claim.remaining_amount, 60);
+  assert.equal(claim.reason_type, 'QUALITY_CLAIM');
+  assert.equal(claim.reference_no, invoice.invoice_no);
+  assert.equal(claim.note, 'Quality deduction');
+  assert.equal(claim.allocations[0].invoice_no, invoice.invoice_no);
+  assert.equal(claim.allocations[0].amount, 40);
 });

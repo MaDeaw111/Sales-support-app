@@ -1886,6 +1886,23 @@
                 'payments.viewOnlyBadge': 'ดูได้อย่างเดียว',
                 'payments.subExternal': 'ติดตามสถานะการชำระเงิน ยอด Final Invoice และความพร้อมคอมมิชชั่นของลูกค้าในความดูแล',
                 'payments.subInternal': 'แดชบอร์ดการเงินสดจาก Shipping/DI, Final Invoices, เครดิตลูกค้า และประวัติรับชำระ',
+                'credit.issue': 'ออกเครดิตลูกค้า',
+                'credit.ledger': 'เครดิตลูกค้าและการเคลม',
+                'credit.reference': 'อ้างอิง DI / ใบแจ้งหนี้',
+                'credit.cash': 'ยอดเงินสดที่ได้รับ',
+                'credit.available': 'เครดิตลูกค้าที่ใช้ได้',
+                'credit.applyAmount': 'ยอดเครดิตที่จะใช้',
+                'credit.QUALITY_CLAIM': 'เคลมคุณภาพสินค้า',
+                'credit.RETURNED_GOODS': 'ตีกลับสินค้า',
+                'credit.WEIGHT_SPEC_ADJUSTMENT': 'ปรับส่วนต่างน้ำหนัก-สเปค',
+                'credit.OVERPAYMENT_ADVANCE': 'เงินโอนเกิน-ล่วงหน้า',
+                'credit.OPEN': 'เปิดใช้งาน',
+                'credit.PARTIALLY_USED': 'ใช้บางส่วน',
+                'credit.FULLY_USED': 'ใช้หมดแล้ว',
+                'credit.appliedTo': 'ใช้กับ DI / ใบแจ้งหนี้',
+                'credit.note': 'หมายเหตุ',
+                'credit.currency': 'สกุลเงิน',
+                'credit.failed': 'ออกเครดิตลูกค้าไม่ได้ โปรดตรวจสอบข้อมูลแล้วลองใหม่',
                 'payments.addCredit': '+ เพิ่มเครดิตลูกค้า',
                 'payments.kpiActiveShipments': 'ชิปเมนต์ทั้งหมด',
                 'payments.kpiPaid': 'ชำระแล้ว (Paid)',
@@ -3356,6 +3373,23 @@
                 'payments.viewOnlyBadge': 'VIEW ONLY',
                 'payments.subExternal': 'Track payment statuses, final invoice totals, and commission readiness for your assigned customers.',
                 'payments.subInternal': 'Live Finance dashboard consolidated from Shipping/DI, Final Invoices, Customer Credits, and payment audit history.',
+                'credit.issue': 'Issue Customer Credit',
+                'credit.ledger': 'Customer Credits & Claims',
+                'credit.reference': 'Reference DI / Invoice',
+                'credit.cash': 'Cash Amount Received',
+                'credit.available': 'Available Customer Credit',
+                'credit.applyAmount': 'Credit Amount to Apply',
+                'credit.QUALITY_CLAIM': 'Quality Claim',
+                'credit.RETURNED_GOODS': 'Returned Goods',
+                'credit.WEIGHT_SPEC_ADJUSTMENT': 'Weight / Spec Adjustment',
+                'credit.OVERPAYMENT_ADVANCE': 'Overpayment / Advance',
+                'credit.OPEN': 'Open',
+                'credit.PARTIALLY_USED': 'Partially Used',
+                'credit.FULLY_USED': 'Fully Used',
+                'credit.appliedTo': 'Applied to DI / Invoice',
+                'credit.note': 'Note',
+                'credit.currency': 'Currency',
+                'credit.failed': 'Could not issue the customer credit. Check the details and try again.',
                 'payments.addCredit': '+ Add Customer Credit',
                 'payments.kpiActiveShipments': 'Active Shipments',
                 'payments.kpiPaid': 'Paid',
@@ -7526,6 +7560,7 @@
             const entries = (title, items) => `<section class="rounded-lg border p-3"><h4 class="font-bold">${label(title)}</h4><div class="mt-2 space-y-1">${items.join('') || '—'}</div></section>`;
             openModal(`<div class="max-h-[75vh] space-y-3 overflow-auto p-5 text-xs"><div class="flex justify-between"><h3 class="text-lg font-bold">${label('detail')} · ${esc(row.name)}</h3><button type="button" onclick="closeModal()">${t('common.close')}</button></div>
                 <div class="rounded-lg bg-blue-50 p-3"><strong>${label('tier')} ${row.tier}</strong> · ${label('tierProgress')} ${(row.tierSScore*100).toFixed(1)}%<div>${label('PET_GRADE')} ${row.petGradeMt} / 1,000 MT · ${label('FEED_GRADE')} ${row.feedGradeMt} / 7,000 MT</div></div>
+                ${['ADMIN', 'MANAGER', 'SALES_SUPPORT', 'EXPORT'].includes(state.currentUser?.role) ? `<button type="button" class="rounded-lg bg-blue-700 px-3 py-2 font-bold text-white" data-customer-id="${esc(row.id)}" onclick="openCreateCustomerCreditModal(this.dataset.customerId)">+ ${t('credit.issue')}</button>` : ''}
                 ${entries('orders',row.orders.map(order=>`<div>${esc(order.reference)} · ${esc(order.date)} · ${order.mt} MT</div>`))}
                 ${entries('shipments',row.shipments.map(item=>`<div>${esc(item.reference)} · ${esc(item.date)} · ${item.planned} / ${item.actual} MT · ${esc(typeof translateStatus==='function'?translateStatus(item.status):item.status)}</div>`))}
                 ${row.invoices ? entries('invoices',row.invoices.map(item=>`<div>${esc(item.reference)} · ${esc(item.date)} · ${esc(item.currency)} ${item.balance.toFixed(2)} · ${label(item.overdue?'overdue':item.balance?'pending':'paid')}</div>`)) : ''}
@@ -10731,11 +10766,13 @@
         async function submitPhase6CreditUsage(shipmentId) {
             const creditId = document.getElementById('phase6CreditId')?.value;
             const amount = Number(document.getElementById('phase6CreditAmount')?.value || 0);
-            if (!creditId || amount <= 0) return alert('Choose a credit and enter a positive amount.');
+            if (!creditId || amount <= 0) return alert(t('payments.errCreditGtZero'));
+            const finalInvoices = (state.phase6ShipmentInvoices || []).filter(invoice => invoice.version === 'FINAL');
+            const invoiceId = finalInvoices.length === 1 ? finalInvoices[0].invoice_id : undefined;
             try {
                 const res = await fetch(`/api/shipments-v2/${encodeURIComponent(shipmentId)}/credit-usage`, {
                     method: 'POST', headers: { 'content-type': 'application/json' },
-                    body: JSON.stringify({ creditId, amount, requestKey: `${shipmentId}-${creditId}-${Date.now()}` })
+                    body: JSON.stringify({ creditId, amount, invoiceId, requestKey: `${shipmentId}-${creditId}-${Date.now()}` })
                 });
                 const body = await res.json();
                 if (!res.ok || body.status !== 'SUCCESS') throw new Error(body.message || 'Credit allocation failed.');
@@ -11238,7 +11275,7 @@
                 ${section(tr('shipping.secContainers', 'Containers'), `<div class="text-xs text-slate-600">${(shipment.containers || []).length ? shipment.containers.map(container => `<div>${escapePhase6Text(container.container_no)} · Seal ${escapePhase6Text(container.seal_no || '-')} · ${escapePhase6Text((container.lines || []).map(line => `${line.product_name || line.product_code}: ${line.qty_mt} MT`).join(', '))}</div>`).join('') : tr('shipping.noContainers', 'No actual containers recorded.')}</div>${write ? `${renderPhase6ContainerForm()}${action('save-containers', tr('shipping.saveContainers', 'Save Containers'), 'px-3 py-2 bg-blue-600 text-white rounded text-xs font-bold')}` : ''}`)}
                 ${section(tr('shipping.secInvoice', 'Invoice'), `<div class="text-xs space-y-1">${invoices.length ? invoices.map(invoice => `<div><strong>${escapePhase6Text(invoice.invoice_no)}</strong> · ${invoiceBadge(invoice.version)} · ${Number(invoice.total_amount || 0).toFixed(2)} ${escapePhase6Text(invoice.currency || '')}${write && invoice.version === 'PRELIMINARY' ? ` ${action('finalize-invoice', tr('shipping.finalizeToFinal', 'Finalize to FINAL'), 'di-invoice-finalize ml-2', ` data-phase6-invoice-id="${escapePhase6Text(invoice.invoice_id)}"`)}` : ''}</div>`).join('') : tr('shipping.noInvoices', 'No invoices recorded.')}</div>${write ? `<div class="grid grid-cols-1 md:grid-cols-4 gap-2 text-xs"><label class="text-xs font-semibold text-slate-600">${tr('shipping.invoiceNoPh', 'Invoice No.')}<input id="phase6InvoiceNo" class="mt-1 w-full border rounded-lg p-2"></label><label class="text-xs font-semibold text-slate-600">${tr('shipping.invoiceDate', 'Invoice Date')}<input id="phase6InvoiceDate" type="date" class="mt-1 w-full border rounded-lg p-2"></label><label class="text-xs font-semibold text-slate-600">${tr('shipping.invoiceType', 'Invoice Type')}<select id="phase6InvoiceVersion" class="mt-1 w-full border rounded-lg p-2"><option value="PRELIMINARY">${tr('shipping.preliminary', 'Preliminary')}</option><option value="FINAL">${tr('shipping.final', 'Final')}</option></select></label>${action('save-invoice', tr('shipping.saveInvoice', 'Save Invoice'), 'bg-blue-600 text-white rounded p-2 font-bold')}<div class="md:col-span-4">${renderPhase6InvoiceForm()}</div><p class="md:col-span-4 text-[11px] text-slate-500">${tr('shipping.invoiceHint', 'Create PRELIMINARY invoices first when needed, then enter actual FINAL lines above and use Finalize to FINAL.')}</p></div>` : ''}`)}
                 ${section(tr('shipping.secDocuments', 'Documents'), `<div class="grid grid-cols-2 md:grid-cols-4 gap-3 text-xs">${field(tr('shipping.digitalSent', 'Digital sent'), shipment.digital_docs_sent_date)}${field(tr('shipping.dhlSent', 'DHL sent'), shipment.dhl_sent_date)}${field(tr('shipping.dhlTracking', 'DHL tracking'), shipment.dhl_tracking_no)}</div>${write ? `<div class="grid grid-cols-1 md:grid-cols-3 gap-2 text-xs"><input id="phase6DigitalDocsDate" type="date" value="${escapePhase6Text(shipment.digital_docs_sent_date)}" class="border rounded p-2"><label class="border rounded p-2"><input id="phase6OriginalDocs" type="checkbox" ${shipment.original_docs_required ? 'checked' : ''}> ${tr('shipping.originalDocsReq', 'Original docs required')}</label><input id="phase6DhlDate" type="date" value="${escapePhase6Text(shipment.dhl_sent_date)}" class="border rounded p-2"><input id="phase6DhlTracking" value="${escapePhase6Text(shipment.dhl_tracking_no)}" placeholder="${tr('shipping.dhlTracking', 'DHL tracking no.')}" class="border rounded p-2"><input id="phase6DocsNote" value="${escapePhase6Text(shipment.docs_note)}" placeholder="${tr('common.note', 'Document note')}" class="border rounded p-2">${action('save-documents', tr('shipping.saveDocuments', 'Save Documents'), 'md:col-span-3 bg-blue-600 text-white rounded p-2 font-bold')}</div>` : ''}`)}
-                ${section(tr('shipping.secPayment', 'Payment'), `<div class="grid grid-cols-2 md:grid-cols-4 gap-3 text-xs"><div><div class="text-[10px] uppercase font-bold text-slate-400">${tr('shipping.colPayStatus', 'Payment status')}</div><div class="mt-1">${renderSemanticStatusBadge(shipment.payment_status)}</div></div>${field(tr('shipping.finalInvoiceTotal', 'Final invoice total'), shipment.final_invoice_total)}${field(tr('shipping.cashReceived', 'Cash received'), shipment.cash_received_amount)}${field(tr('shipping.creditAllocated', 'Credit allocated'), shipment.allocated_credit_amount)}</div>${write ? `<div class="grid grid-cols-1 md:grid-cols-3 gap-2 text-xs"><input id="phase6CashReceived" type="number" min="0" step="0.01" value="${escapePhase6Text(shipment.cash_received_amount || 0)}" class="border rounded p-2"><input id="phase6PaymentNote" value="${escapePhase6Text(shipment.payment_note)}" placeholder="${tr('payments.paymentNote', 'Payment note')}" class="border rounded p-2">${action('save-payment', tr('shipping.savePayment', 'Save Payment'), 'bg-blue-600 text-white rounded p-2 font-bold')}<select id="phase6CreditId" class="border rounded p-2"><option value="">${tr('shipping.applyCustCreditOpt', 'Apply customer credit')}</option>${credits.filter(credit => Number(credit.remaining_amount || 0) > 0).map(credit => `<option value="${escapePhase6Text(credit.credit_id)}">${escapePhase6Text(credit.credit_id)} · ${Number(credit.remaining_amount).toFixed(2)}</option>`).join('')}</select><input id="phase6CreditAmount" type="number" min="0" step="0.01" placeholder="${tr('shipping.creditAmountPh', 'Credit amount')}" class="border rounded p-2">${action('apply-credit', tr('shipping.applyCredit', 'Apply Credit'), 'border border-blue-600 text-blue-700 rounded p-2 font-bold')}</div>` : ''}`)}
+                ${section(tr('shipping.secPayment', 'Payment'), `<div class="grid grid-cols-2 md:grid-cols-4 gap-3 text-xs"><div><div class="text-[10px] uppercase font-bold text-slate-400">${tr('shipping.colPayStatus', 'Payment status')}</div><div class="mt-1">${renderSemanticStatusBadge(shipment.payment_status)}</div></div>${field(tr('shipping.finalInvoiceTotal', 'Final invoice total'), shipment.final_invoice_total)}${field(tr('shipping.cashReceived', 'Cash received'), shipment.cash_received_amount)}${field(tr('shipping.creditAllocated', 'Credit allocated'), shipment.allocated_credit_amount)}</div>${write ? `<div class="grid grid-cols-1 md:grid-cols-3 gap-2 text-xs"><label class="font-semibold">${tr('credit.cash', 'Cash Amount Received')}<input id="phase6CashReceived" type="number" min="0" step="0.01" value="${escapePhase6Text(shipment.cash_received_amount || 0)}" class="mt-1 block w-full border rounded p-2"></label><label class="font-semibold">${tr('payments.paymentNote', 'Payment Note')}<input id="phase6PaymentNote" value="${escapePhase6Text(shipment.payment_note)}" placeholder="${tr('payments.paymentNote', 'Payment note')}" class="mt-1 block w-full border rounded p-2"></label>${action('save-payment', tr('shipping.savePayment', 'Save Payment'), 'bg-blue-600 text-white rounded p-2 font-bold')}<label class="font-semibold">${tr('credit.available', 'Available Customer Credit')}<select id="phase6CreditId" class="mt-1 block w-full border rounded p-2"><option value="">${tr('shipping.applyCustCreditOpt', 'Apply customer credit')}</option>${credits.filter(credit => Number(credit.remaining_amount || 0) > 0 && invoices.some(invoice => invoice.version === "FINAL" && invoice.currency === (credit.currency || "USD"))).map(credit => `<option value="${escapePhase6Text(credit.credit_id)}">${escapePhase6Text(credit.credit_id)} · ${escapePhase6Text(credit.reason_type ? tr('credit.' + credit.reason_type, credit.reason) : credit.reason)}${credit.reference_no ? ' (' + escapePhase6Text(tr('credit.reference', 'Reference DI / Invoice')) + ': ' + escapePhase6Text(credit.reference_no) + ')' : ''} · ${tr('payments.colRemaining', 'Remaining')} ${escapePhase6Text(formatMoney(credit.remaining_amount, credit.currency))}</option>`).join('')}</select></label><label class="font-semibold">${tr('credit.applyAmount', 'Credit Amount to Apply')}<input id="phase6CreditAmount" type="number" min="0" step="0.01" placeholder="${tr('shipping.creditAmountPh', 'Credit amount')}" class="mt-1 block w-full border rounded p-2"></label>${action('apply-credit', tr('shipping.applyCredit', 'Apply Credit'), 'border border-blue-600 text-blue-700 rounded p-2 font-bold')}</div>` : ''}`)}
                 ${section(tr('shipping.secHistory', 'History'), history.length ? `<div class="space-y-2 text-xs">${history.map(event => `<div class="border-l-2 border-slate-200 pl-3"><strong>${escapePhase6Text(event.event_type)}</strong> <span class="text-slate-500">${escapePhase6Text(event.created_at || '')} · ${escapePhase6Text(event.actor_id || '')}</span></div>`).join('')}</div>` : `<p class="text-xs text-slate-500">${tr('shipping.noHistory', 'No history is available for this view.')}</p>`)}
             </div>`;
         }
@@ -15727,15 +15764,16 @@
                 const creditRows = credits.map(c => `<tr class="hover:bg-slate-50">
                     <td class="p-3 font-mono font-bold text-slate-700">${escapePaymentHtml(c.credit_id)}</td>
                     <td class="p-3 font-bold text-slate-900">${escapePaymentHtml(c.customer_name || c.customer_id)}</td>
-                    <td class="p-3 text-right font-bold">${Number(c.amount || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
-                    <td class="p-3 text-right text-slate-600">${Number(c.used_amount || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
-                    <td class="p-3 text-right font-black ${Number(c.remaining_amount || 0) > 0 ? 'text-emerald-700' : 'text-slate-400'}">${Number(c.remaining_amount || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
-                    <td class="p-3 text-center">${Number(c.usage_count || 0)}</td>
-                    <td class="p-3 text-slate-700">${escapePaymentHtml(c.reason || '-')}</td>
+                    <td class="p-3 text-right font-bold">${escapePaymentHtml(formatMoney(c.amount, c.currency))}</td>
+                    <td class="p-3 text-right text-slate-600">${escapePaymentHtml(formatMoney(c.used_amount, c.currency))}</td>
+                    <td class="p-3 text-right font-black ${Number(c.remaining_amount || 0) > 0 ? 'text-emerald-700' : 'text-slate-400'}">${escapePaymentHtml(formatMoney(c.remaining_amount, c.currency))}</td>
+                    <td class="p-3 text-center">${(c.allocations || []).map(entry => escapePaymentHtml([entry.di_no, entry.invoice_no, formatMoney(entry.amount, c.currency)].filter(Boolean).join(' / '))).join('<br>') || '-'}</td>
+                    <td class="p-3 text-slate-700">${escapePaymentHtml(c.reason_type ? tr('credit.' + c.reason_type, c.reason) : c.reason || '-')} · ${escapePaymentHtml(c.reference_no || c.source_di_id || '-')}<div>${escapePaymentHtml(c.note || '')}</div></td>
+                    <td class="p-3">${tr('credit.' + (c.status || 'OPEN'), c.status || 'Open')}</td>
                     <td class="p-3 font-mono text-[11px] text-slate-500">${escapePaymentHtml(String(c.created_at || '').slice(0, 10))}</td>
                 </tr>`).join('');
                 tabContentHtml = `<div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
-                    <div class="overflow-x-auto">
+                    <h3 class="p-3 text-sm font-bold">${tr('credit.ledger', 'Customer Credits & Claims')}</h3><div class="overflow-x-auto">
                         <table class="ui-table w-full text-left text-xs min-w-[900px]">
                             <thead class="bg-slate-100 border-b border-slate-200 text-[10px] uppercase text-slate-500 font-bold">
                                 <tr>
@@ -15744,12 +15782,13 @@
                                     <th class="p-3 text-right">${tr('payments.colTotalCredit', 'Total Credit')}</th>
                                     <th class="p-3 text-right">${tr('payments.colUsed', 'Used')}</th>
                                     <th class="p-3 text-right">${tr('payments.colRemaining', 'Remaining')}</th>
-                                    <th class="p-3 text-center">${tr('payments.colAllocations', 'Allocations')}</th>
+                                    <th class="p-3 text-center">${tr('credit.appliedTo', 'Applied to DI / Invoice')}</th>
                                     <th class="p-3">${tr('common.reason', 'Reason')}</th>
+                                    <th class="p-3">${tr('common.status', 'Status')}</th>
                                     <th class="p-3">${tr('payments.colCreated', 'Created')}</th>
                                 </tr>
                             </thead>
-                            <tbody class="divide-y divide-slate-100">${creditRows || `<tr><td colspan="8" class="p-8 text-center text-slate-400">${tr('payments.noCredits', 'No customer credits recorded yet.')}</td></tr>`}</tbody>
+                            <tbody class="divide-y divide-slate-100">${creditRows || `<tr><td colspan="9" class="p-8 text-center text-slate-400">${tr('payments.noCredits', 'No customer credits recorded yet.')}</td></tr>`}</tbody>
                         </table>
                     </div>
                 </div>`;
@@ -15831,7 +15870,7 @@
                 ? `<span class="text-[10px] font-bold bg-blue-50 text-blue-700 px-2 py-1 rounded border border-blue-100">${tr('payments.ownCustomersBadge', 'OWN CUSTOMERS ONLY')}</span>`
                 : (!canWrite ? `<span class="text-[10px] font-bold text-slate-500 bg-white border border-slate-200 rounded px-2 py-1">${tr('payments.viewOnlyBadge', 'VIEW ONLY')}</span>` : '');
 
-            const creditsRemaining = summary.customer_credits_summary ? Number(summary.customer_credits_summary.total_remaining_amount || 0) : 0;
+
 
             container.innerHTML = `<div class="space-y-5">
                 <div class="flex flex-col md:flex-row md:items-center justify-between gap-3">
@@ -15841,7 +15880,7 @@
                     </div>
                     <div class="flex items-center gap-2">
                         <button onclick="loadPaymentsDashboardFromApi({ force: true })" class="px-3 py-2 rounded-lg border bg-white text-slate-600 text-xs font-bold hover:bg-slate-50">${tr('common.refresh', 'Refresh')}</button>
-                        ${canWrite ? `<button onclick="openCreateCustomerCreditModal()" class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-xs font-bold shadow-sm">${tr('payments.addCredit', '+ Add Customer Credit')}</button>` : ''}
+                        ${(canWrite || state.currentUser?.role === 'SALES_SUPPORT') ? `<button onclick="openCreateCustomerCreditModal()" class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-xs font-bold shadow-sm">${'+ ' + tr('credit.issue', 'Issue Customer Credit')}</button>` : ''}
                     </div>
                 </div>
 
@@ -15859,7 +15898,7 @@
 
                 ${!isExternal ? `<div class="flex items-center gap-2 border-b border-slate-200">
                     <button onclick="setPaymentsDashboardTab('SHIPMENTS')" class="px-4 py-2 text-xs font-bold border-b-2 ${activeTab === 'SHIPMENTS' ? 'border-blue-600 text-blue-600' : 'border-transparent text-slate-500 hover:text-slate-700'}">${tr('payments.tabShipments', 'Shipment Payments ({count})', { count: items.length })}</button>
-                    <button onclick="setPaymentsDashboardTab('CREDITS')" class="px-4 py-2 text-xs font-bold border-b-2 ${activeTab === 'CREDITS' ? 'border-blue-600 text-blue-600' : 'border-transparent text-slate-500 hover:text-slate-700'}">${creditsRemaining > 0 ? tr('payments.tabCreditsAvail', 'Customer Credits ({count} · {avail} avail.)', { count: credits.length, avail: creditsRemaining.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }) }) : tr('payments.tabCredits', 'Customer Credits ({count})', { count: credits.length })}</button>
+                    <button onclick="setPaymentsDashboardTab('CREDITS')" class="px-4 py-2 text-xs font-bold border-b-2 ${activeTab === 'CREDITS' ? 'border-blue-600 text-blue-600' : 'border-transparent text-slate-500 hover:text-slate-700'}">${tr('payments.tabCredits', 'Customer Credits ({count})', { count: credits.length })}</button>
                 </div>` : ''}
 
                 ${tabContentHtml}
@@ -16006,18 +16045,18 @@
             }
         }
 
-        function openCreateCustomerCreditModal() {
+        function openCreateCustomerCreditModal(customerId = '') {
             const tr = (k, fb, p) => (typeof t === 'function' ? t(k, p) : (p ? String(fb).replace(/\{(\w+)\}/g, (_, m) => p[m] ?? '') : fb));
-            if (!canEditPayment()) return alert(tr('payments.permUpdateDenied', 'Permission denied: Creating customer credits is limited to Admin, Manager, and Export.'));
+            if (!['ADMIN', 'MANAGER', 'SALES_SUPPORT', 'EXPORT'].includes(state.currentUser?.role)) return;
             const options = (state.customers || []).map(c => {
                 const cid = c.customer_id || c.id;
                 const cname = c.customer_name || c.name || cid;
-                return `<option value="${escapePaymentHtml(cid)}">${escapePaymentHtml(cname)}</option>`;
+                return `<option value="${escapePaymentHtml(cid)}" ${cid === customerId ? "selected" : ""}>${escapePaymentHtml(cname)}</option>`;
             }).join('');
             openModal(`<div class="space-y-4 text-xs">
                 <div class="flex items-start justify-between gap-4 border-b border-slate-100 pb-3">
                     <div>
-                        <h3 class="text-lg font-black text-slate-900">${tr('payments.addCreditTitle', 'Add Customer Credit')}</h3>
+                        <h3 class="text-lg font-black text-slate-900">${tr('credit.issue', 'Issue Customer Credit')}</h3>
                         <p class="text-slate-500 mt-0.5">${tr('payments.addCreditSub', 'Record a reusable customer credit balance (e.g. prior overpayment or claim credit).')}</p>
                     </div>
                     <button onclick="closeModal()" class="text-slate-400 hover:text-slate-700 font-bold">✕</button>
@@ -16029,22 +16068,33 @@
                     <label class="block font-bold text-slate-700">${tr('payments.creditAmtReq', 'Credit Amount *')}
                         <input id="creditAmount" type="number" step="0.01" min="0.01" class="mt-1 w-full border rounded-lg px-3 py-2 font-normal">
                     </label>
-                    <label class="block font-bold text-slate-700">${tr('payments.reasonReq', 'Reason *')}
-                        <input id="creditReason" class="mt-1 w-full border rounded-lg px-3 py-2 font-normal" placeholder="${tr('payments.creditReasonPh', 'e.g. Overpayment from previous shipment')}">
+                    <label class="block font-bold">${tr('credit.currency', 'Currency')}
+                        <select id="creditCurrency" class="mt-1 w-full border rounded-lg p-2"><option>USD</option><option>EUR</option></select>
+                    </label>
+                    <label class="block font-bold">${tr('payments.reasonReq', 'Reason *')}
+                        <select id="creditReason" class="mt-1 w-full border rounded-lg p-2">${['QUALITY_CLAIM', 'RETURNED_GOODS', 'WEIGHT_SPEC_ADJUSTMENT', 'OVERPAYMENT_ADVANCE'].map(reason => `<option value="${reason}">${t('credit.' + reason)}</option>`).join('')}</select>
+                    </label>
+                    <label class="block font-bold">${t('credit.reference')}
+                        <input id="creditReference" maxlength="200" class="mt-1 w-full border rounded-lg p-2">
+                    </label>
+                    <label class="block font-bold">${t('credit.note')}
+                        <textarea id="creditNote" maxlength="2000" class="mt-1 w-full border rounded-lg p-2"></textarea>
                     </label>
                 </div>
                 <div id="creditFormError" class="hidden text-xs font-bold text-rose-700 bg-rose-50 border border-rose-200 rounded-lg px-3 py-2"></div>
                 <div class="flex justify-end gap-2">
                     <button onclick="closeModal()" class="px-4 py-2 border rounded-lg font-bold">${tr('common.cancel', 'Cancel')}</button>
-                    <button onclick="submitCustomerCreditToApi()" class="px-4 py-2 bg-blue-600 text-white rounded-lg font-bold hover:bg-blue-700">${tr('payments.saveCreditBtn', 'Save Customer Credit')}</button>
+                    <button type="button" id="creditSubmit" onclick="submitCustomerCreditToApi()" class="px-4 py-2 bg-blue-600 text-white rounded-lg font-bold hover:bg-blue-700">${tr('payments.saveCreditBtn', 'Save Customer Credit')}</button>
                 </div>
             </div>`);
         }
 
         async function submitCustomerCreditToApi() {
             const tr = (k, fb, p) => (typeof t === 'function' ? t(k, p) : (p ? String(fb).replace(/\{(\w+)\}/g, (_, m) => p[m] ?? '') : fb));
-            if (!canEditPayment()) return;
+            if (!canEditPayment() && state.currentUser?.role !== 'SALES_SUPPORT') return;
             const errorEl = document.getElementById('creditFormError');
+            const submit = document.getElementById('creditSubmit');
+            if (submit?.disabled) return;
             const showErr = (msg) => {
                 if (!errorEl) return;
                 errorEl.textContent = msg || '';
@@ -16060,24 +16110,30 @@
             if (!Number.isFinite(amount) || amount <= 0) return showErr(tr('payments.errCreditGtZero', 'Credit amount must be greater than 0.'));
             if (!reason) return showErr(tr('payments.errReasonReq', 'Reason is required.'));
 
+            const currency = document.getElementById('creditCurrency')?.value || 'USD';
+            const referenceNo = document.getElementById('creditReference')?.value || '';
+            const note = document.getElementById('creditNote')?.value || '';
             const requestKey = (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function')
                 ? `credit-${crypto.randomUUID()}`
                 : `credit-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
 
+            if (submit) submit.disabled = true;
             try {
                 const res = await fetch('/api/customer-credits', {
                     method: 'POST',
                     headers: { 'content-type': 'application/json' },
-                    body: JSON.stringify({ customerId, amount, reason, requestKey })
+                    body: JSON.stringify({ customerId, amount, currency, reasonType: reason, referenceNo, note, requestKey })
                 });
                 const body = await res.json().catch(() => null);
                 if (!res.ok || body?.status !== 'SUCCESS') {
-                    return showErr(body?.message || tr('payments.errCreateCredit', 'Failed to create customer credit.'));
+                    return showErr(tr('credit.failed', 'Could not issue the customer credit.'));
                 }
                 closeModal();
                 await loadPaymentsDashboardFromApi({ force: true });
             } catch (err) {
-                showErr(err?.message || tr('payments.errCreateCredit', 'Failed to create customer credit.'));
+                showErr(tr('credit.failed', 'Could not issue the customer credit.'));
+            } finally {
+                if (submit) submit.disabled = false;
             }
         }
 
@@ -16094,10 +16150,10 @@
             const avail = detail.availableCustomerCredits || [];
             const finalInvoices = (detail.invoices || []).filter(i => i.version === 'FINAL');
             if (!avail.length) {
-                openModal(`<div class="p-4 space-y-3 text-xs"><div class="font-bold text-slate-800">${escapePaymentHtml(tr('payments.noAvailCredit', 'No available credit balance for {customer}.', { customer: s.customer_name }))}</div><div class="flex justify-end gap-2"><button onclick="openCreateCustomerCreditModal()" class="px-3 py-1.5 bg-blue-600 text-white rounded-lg font-bold">${tr('payments.addCredit', '+ Add Customer Credit')}</button><button onclick="closeModal()" class="px-3 py-1.5 border rounded-lg font-bold">${tr('common.close', 'Close')}</button></div></div>`);
+                openModal(`<div class="p-4 space-y-3 text-xs"><div class="font-bold text-slate-800">${escapePaymentHtml(tr('payments.noAvailCredit', 'No available credit balance for {customer}.', { customer: s.customer_name }))}</div><div class="flex justify-end gap-2"><button onclick="openCreateCustomerCreditModal()" class="px-3 py-1.5 bg-blue-600 text-white rounded-lg font-bold">${'+ ' + tr('credit.issue', 'Issue Customer Credit')}</button><button onclick="closeModal()" class="px-3 py-1.5 border rounded-lg font-bold">${tr('common.close', 'Close')}</button></div></div>`);
                 return;
             }
-            const creditOpts = avail.map(c => `<option value="${escapePaymentHtml(c.credit_id)}">${escapePaymentHtml(c.credit_id)} · ${tr('payments.colRemaining', 'Remaining')} ${Number(c.remaining_amount || 0).toFixed(2)} (${escapePaymentHtml(c.reason)})</option>`).join('');
+            const creditOpts = avail.map(c => `<option value="${escapePaymentHtml(c.credit_id)}">${escapePaymentHtml(c.credit_id)} · ${tr('payments.colRemaining', 'Remaining')} ${escapePaymentHtml(formatMoney(c.remaining_amount, c.currency))} (${escapePaymentHtml(c.reason_type ? tr('credit.' + c.reason_type, c.reason) : c.reason)})</option>`).join('');
             const invOpts = `<option value="">${tr('payments.shipmentLevelOpt', '-- Shipment Level --')}</option>` + finalInvoices.map(i => `<option value="${escapePaymentHtml(i.invoice_id)}">${escapePaymentHtml(i.invoice_no)} (${escapePaymentHtml(formatMoney(i.invoice_total, i.currency))})</option>`).join('');
             const suggested = Math.min(Number(avail[0].remaining_amount || 0), Number(s.outstanding_balance || 0));
 

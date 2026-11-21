@@ -180,7 +180,7 @@ test('listPaymentsDashboard consolidates shipments, multi-currency totals, credi
   assert.deepEqual(dashboard.summary.customer_credits_summary, {
     total_credits: 1,
     active_credits_count: 1,
-    total_remaining_amount: 500
+    total_remaining_amount_by_currency: { USD: 500, EUR: 0 }
   });
 });
 

@@ -11,6 +11,7 @@ const SHIPMENT_CONTAINER_WRITE_ROLES = ['ADMIN', 'MANAGER', 'EXPORT'];
 const SHIPMENT_INVOICE_WRITE_ROLES = ['ADMIN', 'MANAGER', 'EXPORT'];
 const SHIPMENT_DOCUMENT_WRITE_ROLES = ['ADMIN', 'MANAGER', 'EXPORT'];
 const CUSTOMER_CREDIT_WRITE_ROLES = ['ADMIN', 'MANAGER', 'EXPORT'];
+const CUSTOMER_CREDIT_ISSUE_ROLES = ['ADMIN', 'MANAGER', 'SALES_SUPPORT', 'EXPORT'];
 const SHIPMENT_PAYMENT_WRITE_ROLES = ['ADMIN', 'MANAGER', 'EXPORT'];
 
 function json(body, status = 200) {
@@ -280,7 +281,7 @@ export function createShippingDiHandler({ repo, resolveUser, db }) {
     }
 
     if (path === '/api/customer-credits' && method === 'POST') {
-      if (!CUSTOMER_CREDIT_WRITE_ROLES.includes(caller.role)) return json({ status: 'ERROR', message: 'Permission denied.' }, 403);
+      if (!CUSTOMER_CREDIT_ISSUE_ROLES.includes(caller.role)) return json({ status: 'ERROR', message: 'Permission denied.' }, 403);
       const body = await readJson(request);
       try {
         const credit = await activeRepo.createCustomerCredit(body, caller.user_id);
