@@ -163,3 +163,118 @@ test('currency migration preserves sibling price provenance and cloned packaging
   assert.equal(draft.lines[1].unit_weight_kg, 850);
   assert.equal(draft.lines[1].units_per_container, 32);
 });
+
+test('only ADMIN can delete unused POs and all PO attachments are cleaned from R2', async t => {
+  const { db, repo, pos } = await fixture(t);
+  const poId = pos[0].header.po_id;
+  db.prepare("INSERT INTO document_attachments (id, entity_type, entity_id, doc_category, file_name, content_type, file_size, r2_key, uploaded_by) VALUES ('DOC-DELETE','PO',?,'PO','po.pdf','application/pdf',10,'po/file.pdf','ADMIN')").run(poId);
+  let role = 'ADMIN';
+  const deleted = [];
+  const handler = createPOHandler({ repo, db, bucket: { delete: async keys => deleted.push(...keys) }, resolveUser: async () => ({ user_id: 'ADMIN', role }) });
+  const request = () => new Request(`https://test/api/pos/${poId}`, { method: 'DELETE' });
+  for (role of ['MANAGER', 'SALES_SUPPORT', 'EXPORT', 'PRODUCTION_WAREHOUSE', 'EXTERNAL_SALES']) assert.equal((await handler(request())).status, 403, role);
+  assert.deepEqual(deleted, []);
+  role = 'ADMIN';
+  assert.equal((await handler(request())).status, 200);
+  assert.deepEqual(deleted, ['po/file.pdf']);
+  assert.equal(await repo.getPO(poId), null);
+  assert.equal(db.prepare("SELECT COUNT(*) AS n FROM document_attachments WHERE entity_id = ?").get(poId).n, 0);
+  assert.equal(db.prepare('SELECT COUNT(*) AS n FROM po_revision_lines WHERE po_revision_id = ?').get(pos[0].revision.revision_id).n, 0);
+});
+
+test('deleting a used PO returns 409 and preserves attachments even for cancelled downstream records', async t => {
+  const { db, repo, pos } = await fixture(t);
+  const poId = pos[0].header.po_id;
+  db.prepare("INSERT INTO delivery_instructions (di_id, customer_id, po_id, po_revision_id, di_no, shipping_month, shipping_period, container_plan, status, created_by) VALUES ('DI-USED','MEELUNIE',?,?,'DI-USED','2026-11','FIRST_HALF','1','CANCELLED','ADMIN')").run(poId, pos[0].revision.revision_id);
+  db.exec("INSERT INTO phase6_shipments (shipment_id, di_id, status, cash_received_amount, payment_status, created_by) VALUES ('S-USED','DI-USED','CANCELLED',100,'PAID','ADMIN')");
+  const handler = createPOHandler({ repo, db, bucket: { delete: async () => assert.fail('Used PO files must not be deleted') }, resolveUser: async () => ({ user_id: 'ADMIN', role: 'ADMIN' }) });
+  const result = await handler(new Request(`https://test/api/pos/${poId}`, { method: 'DELETE' }));
+  assert.equal(result.status, 409);
+  assert.equal((await result.json()).code, 'PO_IN_USE');
+  assert.ok(await repo.getPO(poId));
+});
+
+test('R2 deletion failures retain cleanup keys and an ADMIN retry finishes cleanup', async t => {
+  const { db, repo, pos } = await fixture(t);
+  const poId = pos[0].header.po_id;
+  db.prepare("INSERT INTO document_attachments (id, entity_type, entity_id, doc_category, file_name, content_type, file_size, r2_key, uploaded_by) VALUES ('DOC-RETRY','PO',?,'PO','po.pdf','application/pdf',10,'po/retry.pdf','ADMIN')").run(poId);
+  let fail = true;
+  const handler = createPOHandler({ repo, db, bucket: { delete: async () => { if (fail) throw Error('R2 unavailable'); } }, resolveUser: async () => ({ user_id: 'ADMIN', role: 'ADMIN' }) });
+  const request = () => new Request(`https://test/api/pos/${poId}`, { method: 'DELETE' });
+  assert.equal((await handler(request())).status, 503);
+  assert.equal(db.prepare('SELECT COUNT(*) AS n FROM po_attachment_cleanup WHERE po_id = ?').get(poId).n, 1);
+  fail = false;
+  assert.equal((await handler(request())).status, 200);
+  assert.equal(db.prepare('SELECT COUNT(*) AS n FROM po_attachment_cleanup WHERE po_id = ?').get(poId).n, 0);
+});
+
+test('items aliases persist line logistics and commercial overrides', async t => {
+  const { db, repo, pos } = await fixture(t);
+  const poId = pos[0].header.po_id, revisionId = pos[0].revision.revision_id;
+  const handler = createPOHandler({ repo, db, resolveUser: async () => ({ user_id: 'ADMIN', role: 'ADMIN' }) });
+  const payload = { currency: 'EUR', productId: 'P1', contractQtyMt: 540, tolerancePct: 5, unitPrice: 185, packaging: 'Jumbo Bag 850 kg', unitWeightKg: 850, unitsPerContainer: 32, targetLoadWeightMt: 27.2, shipmentType: 'Container', containerType: '40HC', incoterm: 'CIF', destinationPort: 'Rotterdam' };
+  const created = await handler(new Request(`https://test/api/pos/${poId}/revisions/${revisionId}/items`, { method: 'POST', body: JSON.stringify(payload) }));
+  assert.equal(created.status, 200);
+  const line = (await created.json()).data.line;
+  assert.equal(line.incoterm, 'CIF');
+  assert.equal(line.destination_port, 'Rotterdam');
+  assert.equal(line.shipment_type, 'Container');
+  assert.equal(line.target_load_weight_mt, 27.2);
+  assert.equal(line.spec_revision_id, 'SPEC');
+  const edited = await handler(new Request(`https://test/api/pos/${poId}/revisions/${revisionId}/items/${line.line_id}`, { method: 'PATCH', body: JSON.stringify({ ...payload, incoterm: 'EXW', destinationPort: 'Factory', unitsPerContainer: 30, targetLoadWeightMt: 25.5 }) }));
+  assert.equal(edited.status, 200);
+  const saved = (await repo.getPO(poId)).revisions[0].lines.find(l => l.line_id === line.line_id);
+  assert.equal(saved.incoterm, 'EXW');
+  assert.equal(saved.target_load_weight_mt, 25.5);
+  assert.equal(saved.max_qty_mt, 567);
+});
+
+test('deleted PO numbers are never reused and cleanup retries preserve new POs', async t => {
+  const {db,repo,pos}=await fixture(t);
+  const poId=pos.at(-1).header.po_id;
+  db.prepare("INSERT INTO document_attachments (id,entity_type,entity_id,doc_category,file_name,content_type,file_size,r2_key,uploaded_by) VALUES ('LAST','PO',?,'PO','x','application/pdf',1,'last/file','ADMIN')").run(poId);
+  await repo.deleteUnusedPO(poId);
+  const next=await repo.createDraftPO({customerId:'HOUSE',customerPoNo:'AFTER-DELETE'},'ADMIN');
+  assert.notEqual(next.header.po_id,poId);
+  assert.deepEqual(await repo.deleteUnusedPO(poId),['last/file']);
+  await repo.finishPOFileCleanup(poId);
+  await assert.rejects(repo.deleteUnusedPO(poId),{code:'PO_NOT_FOUND'});
+  assert.ok(await repo.getPO(next.header.po_id));
+});
+
+test('initial PO logistics survive cloning and operational role projections exclude commission', async t => {
+  const {db,repo}=await fixture(t);
+  const created=await repo.createDraftPO({customerId:'MEELUNIE',customerPoNo:'LOGISTICS',currency:'EUR',destination:'Rotterdam',lines:[{productId:'P1',contractQtyMt:540,tolerancePct:5,unitPrice:185,packaging:'Jumbo Bag 850 kg',unitWeightKg:850,unitsPerContainer:32,shipmentType:'Container',containerType:'40HC',incoterm:'CIF',destinationPort:'Rotterdam',commissionRecipientUserId:'SIRA',commissionRateUsdMt:2}]},'ADMIN');
+  const poId=created.header.po_id;
+  const line=(await repo.getPO(poId)).revisions[0].lines[0];
+  assert.equal(line.target_load_weight_mt,27.2);
+  assert.equal(line.incoterm,'CIF');
+  db.prepare("UPDATE po_revisions SET status='ACTIVE' WHERE revision_id=?").run(created.revision.revision_id);
+  db.prepare('UPDATE po_headers SET current_active_revision_id=?,current_draft_revision_id=NULL WHERE po_id=?').run(created.revision.revision_id,poId);
+  await repo.createNextRevision(poId,'ADMIN');
+  const clone=(await repo.getPO(poId)).revisions.find(r=>r.status==='DRAFT').lines[0];
+  assert.equal(clone.target_load_weight_mt,27.2);
+  assert.equal(clone.destination_port,'Rotterdam');
+  for(const role of ['EXPORT','PRODUCTION_WAREHOUSE']) {
+    const handler=createPOHandler({repo,db,resolveUser:async()=>({user_id:'ADMIN',role})});
+    const body=await (await handler(new Request(`https://test/api/pos/${poId}`))).json();
+    const projected=body.data.po.revisions[0].lines[0];
+    assert.equal(projected.incoterm,'CIF');
+    assert.equal(projected.target_load_weight_mt,27.2);
+    assert.equal(projected.commission_rate_usd_mt,undefined);
+    assert.equal(projected.unit_price,undefined);
+  }
+  const admin=createPOHandler({repo,db,resolveUser:async()=>({user_id:'ADMIN',role:'ADMIN'})});
+  assert.equal((await admin(new Request(`https://test/api/pos/${poId}`,{method:'DELETE'}))).status,409);
+});
+
+test('Admin can rediscover pending cleanup after reloading but other roles cannot', async t=>{
+  const {db,repo,pos}=await fixture(t);
+  const poId=pos[0].header.po_id;
+  db.prepare("INSERT INTO po_attachment_cleanup (po_id,r2_key) VALUES (?,'pending/file')").run(poId);
+  for(const role of ['ADMIN','MANAGER','EXTERNAL_SALES']) {
+    const handler=createPOHandler({repo,db,resolveUser:async()=>({user_id:role==='EXTERNAL_SALES'?'SIRA':'ADMIN',role})});
+    const body=await (await handler(new Request('https://test/api/pos'))).json();
+    assert.deepEqual(body.data.pendingCleanupPoIds,role==='ADMIN'?[poId]:undefined);
+  }
+});

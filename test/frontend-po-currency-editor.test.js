@@ -61,3 +61,65 @@ test('Manage exposes line actions only for drafts and displays the saved EUR pri
   po.revisions[0].status = 'ACTIVE';
   assert.doesNotMatch(ctx.renderRealPODetailCard(po), /openPODraftLineModal/);
 });
+
+test('draft editor calculates ceiling and load weight and saves logistics', async () => {
+  const {ctx, fields} = harness();
+  load(ctx, 'recalcPODraftLine');
+  load(ctx, 'updatePODraftPackaging');
+  for (const [id,value] of Object.entries({draftLineQty:'540',draftLineTolerance:'5',draftLineWeight:'0',draftLineUnits:'32',draftLinePackaging:'Jumbo Bag 850 kg',draftLineTarget:'0'})) fields[id]={value};
+  fields.draftLineCeiling={};
+  fields.draftLinePackagingCustom={classList:{toggle(){}}};
+  ctx.updatePODraftPackaging();
+  assert.equal(Number(fields.draftLineTarget.value),27.2);
+  assert.equal(Number(fields.draftLineCeiling.value),567);
+  ctx.openPODraftLineModal('PO1','REV0');
+  for(const id of ['draftLineShipment','draftLineContainer','draftLineIncoterm','draftLineDestination','draftLineTarget']) assert.ok(ctx.markup.includes(id));
+  fields.draftLineSpec={value:'STANDARD:SPEC'};
+  fields.draftLineIncoterm={value:'CIF'};
+  fields.draftLineDestination={value:'Rotterdam'};
+  fields.draftLineShipment={value:'Container'};
+  fields.draftLineContainer={value:"40' HC"};
+  let payload;
+  ctx.fetch=async(url,options)=>{payload=JSON.parse(options.body);return {ok:true,json:async()=>({status:'SUCCESS'})};};
+  await ctx.savePODraftLine({preventDefault(){}},'PO1','REV0');
+  assert.equal(payload.incoterm,'CIF');
+  assert.equal(payload.destinationPort,'Rotterdam');
+  assert.equal(payload.targetLoadWeightMt,27.2);
+  assert.equal(payload.shipmentType,'Container');
+});
+
+test('Manage renders logistics and limits delete and commission controls',()=>{
+  const {ctx}=harness();
+  load(ctx,'renderRealPODetailCard');
+  ctx.state.currentUser={role:'ADMIN'};
+  const po=ctx.state.pos[0];
+  po.revisions[0].lines=[{line_id:'L1',product_id:'P1',incoterm:'EXW',destination_port:'Factory',shipment_type:'Container',container_type:"40 HC",packaging:'Jumbo Bag 850 kg',unit_weight_kg:850,units_per_container:32,target_load_weight_mt:27.2,tolerance_pct:5,max_qty_mt:567,commission_recipient_user_id:'REP',commission_rate_usd_mt:2}];
+  const output=ctx.renderRealPODetailCard(po);
+  for(const value of ['EXW','Factory','27.2','850','567','REP','USD 2','openPODeleteModal']) assert.ok(output.includes(value),value);
+  ctx.state.currentUser={role:'EXPORT'};
+  delete po.revisions[0].lines[0].commission_rate_usd_mt;
+  assert.doesNotMatch(ctx.renderRealPODetailCard(po),/openPODeleteModal|USD 2/);
+});
+
+test('deletion confirmation and cleanup retry are restricted to Admin',async()=>{
+  const {ctx,fields}=harness();
+  load(ctx,'openPODeleteModal');load(ctx,'deleteUnusedPOFromUi');
+  ctx.state.currentUser={role:'MANAGER'};
+  ctx.openPODeleteModal('PO1');assert.equal(ctx.markup,undefined);
+  let calls=0;ctx.fetch=async()=>{calls++;return {ok:false,json:async()=>({code:'PO_DELETE_CLEANUP_PENDING'})};};
+  await ctx.deleteUnusedPOFromUi('PO1');assert.equal(calls,0);
+  ctx.state.currentUser.role='ADMIN';ctx.state.customers=[{id:'C1',name:'Customer One'}];
+  ctx.t=(key,params)=>params?`${key}: ${params.po} ${params.customer}`:key;
+  ctx.openPODeleteModal('PO1');assert.match(ctx.markup,/PO1 Customer One/);
+  await ctx.deleteUnusedPOFromUi('PO1');assert.equal(ctx.state.poDeletePendingId,'PO1');
+  assert.equal(ctx.state.poNotice.message,'po.deletePending');
+  ctx.fetch=async()=>({ok:true,json:async()=>({status:'SUCCESS'})});
+  await ctx.deleteUnusedPOFromUi('PO1');assert.equal(ctx.state.poDeletePendingId,null);
+  assert.equal(ctx.state.poNotice.message,'po.deleteSuccess');
+});
+
+test('changing draft product selects its active specification',()=>{
+  const {ctx,fields}=harness();load(ctx,'updatePODraftLineSpecs');
+  fields.draftLineProduct={value:'P1'};fields.draftLineSpec={value:''};
+  ctx.updatePODraftLineSpecs();assert.equal(fields.draftLineSpec.value,'STANDARD:SPEC');
+});

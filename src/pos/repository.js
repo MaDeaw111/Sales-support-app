@@ -300,6 +300,12 @@ async function preparePORevisionLine(db, revisionId, revision, header, dto, acto
         if (!spec) throw new Error('An active product specification is required.');
         dto = { ...dto, specSource: 'STANDARD', specRevisionId: spec.standard_spec_id };
       }
+      const hasLogistics = ['shipmentType', 'targetLoadWeightMt', 'incoterm', 'destinationPort'].some(key => dto[key] !== undefined);
+      const lineIncoterm = dto.incoterm || revision.incoterm;
+      if (hasLogistics && !['EXW','FCA','FAS','FOB','CFR','CIF','CPT','CIP','DAP','DPU','DDP'].includes(lineIncoterm)) throw new Error('Unsupported Incoterm.');
+      if (dto.shipmentType !== undefined && !['', 'Container', 'Bulk Vessel', 'Bulk', 'Truck'].includes(dto.shipmentType)) throw new Error('Unsupported shipment type.');
+      const targetLoadWeight = dto.targetLoadWeightMt ?? Math.round((dto.unitWeightKg || 0) * (dto.unitsPerContainer || 0) / 1000 * 10000) / 10000;
+      if (!Number.isFinite(targetLoadWeight) || targetLoadWeight < 0) throw new Error('Invalid target load weight.');
       // Validate the line before preparing any writes.
       if (dto.contractQtyMt < 0) throw new Error('Contract quantity cannot be negative');
       if (dto.tolerancePct < 0 || dto.tolerancePct > 100) throw new Error('Tolerance must be between 0 and 100');
@@ -329,7 +335,7 @@ async function preparePORevisionLine(db, revisionId, revision, header, dto, acto
         db,
         header.customer_id,
         dto.productId,
-        revision.incoterm,
+        lineIncoterm,
         revision.ownership_type_snapshot,
         revision.sales_owner_user_id_snapshot
       );
@@ -397,6 +403,7 @@ async function preparePORevisionLine(db, revisionId, revision, header, dto, acto
       if (dto.unitWeightKg !== undefined || dto.unitsPerContainer !== undefined) {
         statements.push(db.prepare('UPDATE po_revision_lines SET unit_weight_kg = ?, units_per_container = ? WHERE line_id = ?').bind(dto.unitWeightKg || 0, dto.unitsPerContainer || 0, lineId));
       }
+      if (hasLogistics) statements.push(db.prepare('UPDATE po_revision_lines SET shipment_type = ?, target_load_weight_mt = ?, incoterm = ?, destination_port = ? WHERE line_id = ?').bind(dto.shipmentType ?? existingLine?.shipment_type ?? '', targetLoadWeight, lineIncoterm, dto.destinationPort ?? revision.destination ?? null, lineId));
       if (actorId && !existingLine) statements.push(db.prepare("INSERT INTO po_audit_events (event_id, po_id, po_revision_id, event_type, actor_id, metadata_json) VALUES (?, ?, ?, 'PO_LINE_ADDED', ?, ?)").bind('EVT-' + crypto.randomUUID(), revision.po_id, revisionId, actorId, JSON.stringify({ lineNo: dto.lineNo, productId: dto.productId, action: existingLine ? 'UPDATED' : 'ADDED' })));
       return { lineId, statements };
 }
@@ -453,9 +460,10 @@ export function createPORepository(dbBinding) {
       }
       
       const prefix = `PO-${year}-`;
+      const hasDeletionHistory = await db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'po_deleted_ids'").first();
       const row = await db.prepare(`
         SELECT COALESCE(MAX(CAST(SUBSTR(po_id, 9) AS INTEGER)), 0) AS max_seq
-        FROM po_headers
+        FROM ${hasDeletionHistory ? '(SELECT po_id FROM po_headers UNION SELECT po_id FROM po_deleted_ids)' : 'po_headers'}
         WHERE po_id LIKE ?
       `).bind(prefix + '%').first();
       
@@ -550,7 +558,7 @@ export function createPORepository(dbBinding) {
         const lineNo = line.lineNo ?? index + 1;
         if (lineNumbers.has(lineNo)) throw new Error('Duplicate line number');
         lineNumbers.add(lineNo);
-        const prepared = await preparePORevisionLine(db, revisionId, { po_id: poId, currency, incoterm, ownership_type_snapshot, sales_owner_user_id_snapshot }, { customer_id: dto.customerId }, { ...line, lineNo }, creatorId);
+        const prepared = await preparePORevisionLine(db, revisionId, { po_id: poId, currency, incoterm, destination, ownership_type_snapshot, sales_owner_user_id_snapshot }, { customer_id: dto.customerId }, { ...line, lineNo }, creatorId);
         initialLineStatements.push(...prepared.statements);
       }
       await db.batch([headerStmt, revisionStmt, updateHeaderStmt, logPoCreatedStmt, logRevCreatedStmt, ...initialLineStatements]);
@@ -675,6 +683,7 @@ export function createPORepository(dbBinding) {
       });
 
       for (const [index, line] of (lines || []).entries()) {
+        if (line.shipment_type !== undefined) insertLineStmts.push(db.prepare('UPDATE po_revision_lines SET shipment_type = ?, target_load_weight_mt = ?, incoterm = ?, destination_port = ? WHERE po_revision_id = ? AND line_no = ?').bind(line.shipment_type, line.target_load_weight_mt, line.incoterm, line.destination_port, newRevId, line.line_no));
         if (line.unit_weight_kg !== undefined) {
           insertLineStmts.push(db.prepare('UPDATE po_revision_lines SET unit_weight_kg = ?, units_per_container = ? WHERE po_revision_id = ? AND line_no = ?').bind(line.unit_weight_kg, line.units_per_container, newRevId, line.line_no));
         }
@@ -801,8 +810,9 @@ export function createPORepository(dbBinding) {
       const existing = lineId ? await db.prepare('SELECT * FROM po_revision_lines WHERE line_id = ? AND po_revision_id = ?').bind(lineId, revisionId).first() : null;
       if (lineId && !existing) throw new Error('Line not found in this revision.');
       if (existing && dto.productId && dto.productId !== existing.product_id) throw new Error('Product cannot be replaced on an existing line');
-      const fields = { lineNo: 'line_no', previousLineId: 'previous_line_id', productId: 'product_id', specSource: 'spec_source', specRevisionId: 'spec_revision_id', contractQtyMt: 'contract_qty_mt', tolerancePct: 'tolerance_pct', unitPrice: 'unit_price', priceUnit: 'price_unit', packaging: 'packaging', containerType: 'container_type', loadingPattern: 'loading_pattern', commissionRecipientUserId: 'commission_recipient_user_id', commissionRateUsdMt: 'commission_rate_usd_mt', priceOverrideReason: 'price_override_reason', commercialLineTerm: 'commercial_line_term', operationalLineNote: 'operational_line_note', unitWeightKg: 'unit_weight_kg', unitsPerContainer: 'units_per_container' };
+      const fields = { lineNo: 'line_no', previousLineId: 'previous_line_id', productId: 'product_id', specSource: 'spec_source', specRevisionId: 'spec_revision_id', contractQtyMt: 'contract_qty_mt', tolerancePct: 'tolerance_pct', unitPrice: 'unit_price', priceUnit: 'price_unit', packaging: 'packaging', containerType: 'container_type', loadingPattern: 'loading_pattern', commissionRecipientUserId: 'commission_recipient_user_id', commissionRateUsdMt: 'commission_rate_usd_mt', priceOverrideReason: 'price_override_reason', commercialLineTerm: 'commercial_line_term', operationalLineNote: 'operational_line_note', unitWeightKg: 'unit_weight_kg', unitsPerContainer: 'units_per_container', shipmentType: 'shipment_type', targetLoadWeightMt: 'target_load_weight_mt', incoterm: 'incoterm', destinationPort: 'destination_port' };
       const defaults = existing ? Object.fromEntries(Object.entries(fields).map(([key, column]) => [key, existing[column]])) : {};
+      if (dto.targetLoadWeightMt === undefined && (dto.unitWeightKg !== undefined || dto.unitsPerContainer !== undefined)) delete defaults.targetLoadWeightMt;
       if (existing?.spec_override_json) defaults.specOverrideJson = JSON.parse(existing.spec_override_json);
       if (!existing && dto.lineNo === undefined) {
         const next = await db.prepare('SELECT COALESCE(MAX(line_no), 0) + 1 AS next_line FROM po_revision_lines WHERE po_revision_id = ?').bind(revisionId).first();
@@ -892,7 +902,7 @@ export function createPORepository(dbBinding) {
         db,
         header.customer_id,
         existingLine.product_id,
-        revision.incoterm,
+        existingLine.incoterm || revision.incoterm,
         revision.ownership_type_snapshot,
         revision.sales_owner_user_id_snapshot
       );
@@ -1379,6 +1389,55 @@ export function createPORepository(dbBinding) {
 
       // Execute transaction batch
       await db.batch(statements);
+    },
+
+    async listPendingPOCleanup() {
+      const exists = await db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'po_attachment_cleanup'").first();
+      if (!exists) return [];
+      const { results } = await db.prepare('SELECT DISTINCT po_id FROM po_attachment_cleanup ORDER BY po_id').all();
+      return (results || []).map(row => row.po_id);
+    },
+
+    async getPODeleteKeys(poId) {
+      const { results } = await db.prepare("SELECT r2_key FROM document_attachments WHERE entity_type = 'PO' AND entity_id = ? UNION SELECT r2_key FROM po_attachment_cleanup WHERE po_id = ?").bind(poId, poId).all();
+      return (results || []).map(row => row.r2_key);
+    },
+
+    async deleteUnusedPO(poId) {
+      const header = await db.prepare('SELECT * FROM po_headers WHERE po_id = ?').bind(poId).first();
+      if (!header) {
+        const keys = await this.getPODeleteKeys(poId);
+        if (keys.length) return keys;
+        const error = new Error('PO not found.'); error.code = 'PO_NOT_FOUND'; throw error;
+      }
+      const used = await db.prepare(`
+        SELECT 1 AS used WHERE
+          EXISTS (SELECT 1 FROM po_revisions WHERE po_id = ? AND status IN ('ACTIVE','SUPERSEDED'))
+          OR EXISTS (SELECT 1 FROM delivery_instructions WHERE po_id = ? OR po_revision_id IN (SELECT revision_id FROM po_revisions WHERE po_id = ?))
+          OR EXISTS (SELECT 1 FROM delivery_instruction_lines WHERE po_id = ? OR po_revision_line_id IN (SELECT l.line_id FROM po_revision_lines l JOIN po_revisions r ON r.revision_id = l.po_revision_id WHERE r.po_id = ?))
+          OR EXISTS (SELECT 1 FROM shipment_invoice_lines WHERE po_revision_line_id IN (SELECT l.line_id FROM po_revision_lines l JOIN po_revisions r ON r.revision_id = l.po_revision_id WHERE r.po_id = ?))
+          OR EXISTS (SELECT 1 FROM shipments WHERE po_id = ?)
+          OR EXISTS (SELECT 1 FROM commission_settlements WHERE po_id = ?)
+      `).bind(poId, poId, poId, poId, poId, poId, poId, poId).first();
+      if (used || header.current_active_revision_id) {
+        const error = new Error('Active or used POs cannot be deleted. Delivery, shipment, invoice, or payment records must be retained.'); error.code = 'PO_IN_USE'; throw error;
+      }
+      try {
+        await db.batch([
+          db.prepare("INSERT OR IGNORE INTO po_attachment_cleanup (po_id, r2_key) SELECT entity_id, r2_key FROM document_attachments WHERE entity_type = 'PO' AND entity_id = ?").bind(poId),
+          db.prepare("DELETE FROM document_attachments WHERE entity_type = 'PO' AND entity_id = ?").bind(poId),
+          db.prepare('DELETE FROM pos WHERE po_id = ? AND customer_id = ?').bind(poId, header.customer_id),
+          db.prepare('DELETE FROM po_headers WHERE po_id = ?').bind(poId)
+        ]);
+      } catch (error) {
+        if (/PO_IN_USE|FOREIGN KEY constraint/i.test(error.message || '')) error.code = 'PO_IN_USE';
+        throw error;
+      }
+      return this.getPODeleteKeys(poId);
+    },
+
+    async finishPOFileCleanup(poId) {
+      await db.prepare('DELETE FROM po_attachment_cleanup WHERE po_id = ?').bind(poId).run();
     },
 
     async deleteDraftPO(poId) {

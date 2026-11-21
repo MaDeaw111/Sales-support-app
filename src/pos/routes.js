@@ -45,6 +45,10 @@ function filterPOForRole(po, caller) {
         currency: line.currency,
         unit_weight_kg: line.unit_weight_kg,
         units_per_container: line.units_per_container,
+        shipment_type: line.shipment_type,
+        target_load_weight_mt: line.target_load_weight_mt,
+        incoterm: line.incoterm,
+        destination_port: line.destination_port,
         contract_qty_mt: line.contract_qty_mt,
         tolerance_pct: line.tolerance_pct,
         min_qty_mt: line.min_qty_mt,
@@ -126,6 +130,12 @@ function filterPOForRole(po, caller) {
           packaging: line.packaging,
           container_type: line.container_type,
           loading_pattern: line.loading_pattern,
+          shipment_type: line.shipment_type,
+          target_load_weight_mt: line.target_load_weight_mt,
+          incoterm: line.incoterm,
+          destination_port: line.destination_port,
+          unit_weight_kg: line.unit_weight_kg,
+          units_per_container: line.units_per_container,
           commercial_line_term: line.commercial_line_term
         };
       });
@@ -174,7 +184,15 @@ function filterPOForRole(po, caller) {
           spec_source: line.spec_source,
           spec_revision_id: line.spec_revision_id,
           contract_qty_mt: line.contract_qty_mt,
+          container_type: line.container_type,
+          loading_pattern: line.loading_pattern,
           packaging: line.packaging,
+          shipment_type: line.shipment_type,
+          target_load_weight_mt: line.target_load_weight_mt,
+          incoterm: line.incoterm,
+          destination_port: line.destination_port,
+          unit_weight_kg: line.unit_weight_kg,
+          units_per_container: line.units_per_container,
           commercial_line_term: line.commercial_line_term
         };
       });
@@ -203,7 +221,7 @@ function filterPOForRole(po, caller) {
   return null;
 }
 
-export function createPOHandler({ repo, resolveUser, db }) {
+export function createPOHandler({ repo, resolveUser, db, bucket }) {
   return async function handle(request, env) {
     const caller = await resolveUser(request, env);
     if (!caller) {
@@ -232,7 +250,8 @@ export function createPOHandler({ repo, resolveUser, db }) {
           filtered.push(clean);
         }
       }
-      return json({ status: 'SUCCESS', data: { pos: filtered } });
+      const pendingCleanupPoIds = isAdmin && repo.listPendingPOCleanup ? await repo.listPendingPOCleanup() : [];
+      return json({ status: 'SUCCESS', data: { pos: filtered, ...(isAdmin ? { pendingCleanupPoIds } : {}) } });
     }
 
     // POST /api/pos (Create PO)
@@ -272,13 +291,24 @@ export function createPOHandler({ repo, resolveUser, db }) {
       }
 
       if (method === 'DELETE') {
-        if (!canWrite) {
-          return json({ status: 'ERROR', message: 'Permission denied.' }, 403);
-        }
+        if (caller.role !== 'ADMIN') return json({ status: 'ERROR', message: 'Permission denied.' }, 403);
         try {
-          await repo.deleteDraftPO(poId);
+          const activeBucket = bucket || env?.DOCS_BUCKET;
+          const keys = await repo.getPODeleteKeys(poId);
+          if (keys.length && !activeBucket) return json({ status: 'ERROR', code: 'PO_DELETE_STORAGE_UNAVAILABLE', message: 'PO attachment storage is unavailable.' }, 503);
+          const pending = await repo.deleteUnusedPO(poId);
+          if (pending.length) {
+            try {
+              for (let offset = 0; offset < pending.length; offset += 1000) await activeBucket.delete(pending.slice(offset, offset + 1000));
+              await repo.finishPOFileCleanup(poId);
+            } catch {
+              return json({ status: 'ERROR', code: 'PO_DELETE_CLEANUP_PENDING', message: 'PO removed; attachment cleanup is pending. Retry deletion to finish cleanup.' }, 503);
+            }
+          }
           return json({ status: 'SUCCESS', message: 'PO deleted.' });
         } catch (err) {
+          if (err.code === 'PO_IN_USE') return json({ status: 'ERROR', code: 'PO_IN_USE', message: 'Active or used POs cannot be deleted. Delivery, shipment, invoice, or payment records must be retained.' }, 409);
+          if (err.code === 'PO_NOT_FOUND') return json({ status: 'ERROR', code: 'PO_NOT_FOUND', message: err.message }, 404);
           return handleRepoError(err);
         }
       }
@@ -461,7 +491,7 @@ export function createPOHandler({ repo, resolveUser, db }) {
     }
 
     // POST /api/pos/:poId/revisions/:revisionId/lines
-    const linesMatch = path.match(/^\/api\/pos\/([^/]+)\/revisions\/([^/]+)\/lines$/);
+    const linesMatch = path.match(/^\/api\/pos\/([^/]+)\/revisions\/([^/]+)\/(?:lines|items)$/);
     if (linesMatch && method === 'POST') {
       if (!canWrite) {
         return json({ status: 'ERROR', message: 'Permission denied.' }, 403);
@@ -471,7 +501,7 @@ export function createPOHandler({ repo, resolveUser, db }) {
       try {
         const detail = await repo.getPO(linesMatch[1]);
         if (!detail?.revisions.some(r => r.revision_id === revisionId)) return json({ status: 'ERROR', message: 'Revision not found.' }, 404);
-        const line = body?.currency
+        const line = (body?.currency || ['shipmentType', 'targetLoadWeightMt', 'incoterm', 'destinationPort', 'unitWeightKg', 'unitsPerContainer'].some(key => body?.[key] !== undefined))
           ? await repo.saveDraftRevisionLine(revisionId, null, body, caller.user_id)
           : await repo.createPORevisionLine(revisionId, body, caller.user_id);
         return json({ status: 'SUCCESS', data: { line } });
@@ -481,7 +511,7 @@ export function createPOHandler({ repo, resolveUser, db }) {
     }
 
     // PATCH/DELETE /api/pos/:poId/revisions/:revisionId/lines/:lineId
-    const patchLineMatch = path.match(/^\/api\/pos\/([^/]+)\/revisions\/([^/]+)\/lines\/([^/]+)$/);
+    const patchLineMatch = path.match(/^\/api\/pos\/([^/]+)\/revisions\/([^/]+)\/(?:lines|items)\/([^/]+)$/);
     if (patchLineMatch) {
       const lineId = patchLineMatch[3];
       const revisionId = patchLineMatch[2];
@@ -494,7 +524,7 @@ export function createPOHandler({ repo, resolveUser, db }) {
         try {
           const detail = await repo.getPO(patchLineMatch[1]);
           if (!detail?.revisions.some(r => r.revision_id === revisionId && r.lines.some(l => l.line_id === lineId))) return json({ status: 'ERROR', message: 'Line not found.' }, 404);
-          const line = body?.currency
+          const line = (body?.currency || ['shipmentType', 'targetLoadWeightMt', 'incoterm', 'destinationPort', 'unitWeightKg', 'unitsPerContainer'].some(key => body?.[key] !== undefined))
             ? await repo.saveDraftRevisionLine(revisionId, lineId, body, caller.user_id)
             : await repo.updatePORevisionLine(lineId, body);
           return json({ status: 'SUCCESS', data: { line } });
@@ -517,7 +547,7 @@ export function createPOHandler({ repo, resolveUser, db }) {
     }
 
     // PATCH /api/pos/:poId/revisions/:revisionId/lines/:lineId/operational-note
-    const patchLineOpNoteMatch = path.match(/^\/api\/pos\/([^/]+)\/revisions\/([^/]+)\/lines\/([^/]+)\/operational-note$/);
+    const patchLineOpNoteMatch = path.match(/^\/api\/pos\/([^/]+)\/revisions\/([^/]+)\/(?:lines|items)\/([^/]+)\/operational-note$/);
     if (patchLineOpNoteMatch && method === 'PATCH') {
       if (!canWrite) {
         return json({ status: 'ERROR', message: 'Permission denied.' }, 403);
@@ -613,6 +643,7 @@ export function createPOHandlerFromEnv(env) {
   return createPOHandler({
     repo: createPORepository(env.DB),
     resolveUser: (req) => resolveAuthenticatedUser(req, env),
-    db: env.DB
+    db: env.DB,
+    bucket: env.DOCS_BUCKET
   });
 }

@@ -1492,6 +1492,24 @@
                 'po.poCurrency': "สกุลเงิน PO",
                 'po.lineSaveFailed': "ไม่สามารถบันทึกรายการ PO ได้",
                 'po.lineSaved': "บันทึกรายการ PO แล้ว",
+                'po.deletePO': "ลบ PO",
+                'po.deleteConfirm': "ลบ PO {po} ของลูกค้า {customer} หรือไม่? การดำเนินการนี้ไม่สามารถย้อนกลับได้",
+                'po.deleteSuccess': "ลบ PO และไฟล์แนบแล้ว",
+                'po.deleteUsed': "ไม่สามารถลบ PO ที่ใช้งานแล้ว หรือมี DI การจัดส่ง ใบแจ้งหนี้ หรือการชำระเงิน",
+                'po.deleteFailed': "ลบ PO ไม่สำเร็จ กรุณาลองใหม่",
+                'po.deletePending': "ลบ PO แล้ว แต่ยังลบไฟล์แนบไม่ครบ กรุณาลองลบไฟล์อีกครั้ง",
+                'po.retryCleanup': "ลองลบไฟล์อีกครั้ง",
+                'po.bulkPackaging': "สินค้าเทกอง / ไม่มีบรรจุภัณฑ์",
+                'po.customPackaging': "บรรจุภัณฑ์อื่น",
+                'po.jumbo850': "ถุงจัมโบ้ 850 กก.",
+                'po.jumbo950': "ถุงจัมโบ้ 950 กก.",
+                'po.bulkContainer': "ตู้สินค้าเทกอง",
+                'po.bulkLiner': "ตู้สินค้าเทกองพร้อมไลเนอร์",
+                'po.shipmentContainer': "ตู้คอนเทนเนอร์",
+                'po.shipmentBulk': "เรือสินค้าเทกอง",
+                'po.shipmentTruck': "รถบรรทุก",
+                'po.incotermLabel': "เงื่อนไขการส่งมอบ",
+                'po.destinationLabel': "ท่าเรือปลายทาง",
                 'po.deliveryRequired': "กรุณาระบุวันเริ่มต้นและสิ้นสุดการส่งมอบ",
                 'po.deliveryInvalid': "วันสิ้นสุดต้องไม่ก่อนวันเริ่มต้นการส่งมอบ",
                 'po.priceSource': "แหล่งราคา",
@@ -2710,6 +2728,24 @@
                 'po.poCurrency': "PO Currency",
                 'po.lineSaveFailed': "Unable to save the PO line.",
                 'po.lineSaved': "PO line saved.",
+                'po.deletePO': "Delete PO",
+                'po.deleteConfirm': "Delete PO {po} for {customer}? This action cannot be undone.",
+                'po.deleteSuccess': "PO and attachments deleted.",
+                'po.deleteUsed': "Active or used POs with delivery, shipment, invoice, or payment records cannot be deleted.",
+                'po.deleteFailed': "Could not delete the PO. Please retry.",
+                'po.deletePending': "PO removed; attachment cleanup is pending. Retry cleanup.",
+                'po.retryCleanup': "Retry attachment cleanup",
+                'po.bulkPackaging': "In Bulk / Loose Cargo",
+                'po.customPackaging': "Custom Packaging",
+                'po.jumbo850': "Jumbo Bag 850 kg",
+                'po.jumbo950': "Jumbo Bag 950 kg",
+                'po.bulkContainer': "Bulk Container",
+                'po.bulkLiner': "Bulk Container + Liner",
+                'po.shipmentContainer': "Container",
+                'po.shipmentBulk': "Bulk Vessel",
+                'po.shipmentTruck': "Truck",
+                'po.incotermLabel': "Incoterm",
+                'po.destinationLabel': "Destination Port",
                 'po.deliveryRequired': "Delivery start and end are required.",
                 'po.deliveryInvalid': "Delivery end must not precede delivery start.",
                 'po.priceSource': "Price Source",
@@ -7139,6 +7175,7 @@
                     renderView();
                     return;
                 }
+                state.poPendingCleanupIds = state.currentUser?.role === 'ADMIN' ? (data.data.pendingCleanupPoIds || []) : [];
                 state.pos = data.data.pos.sort((a, b) => String(b.header?.created_at || '').localeCompare(String(a.header?.created_at || '')) || String(b.header?.po_id || '').localeCompare(String(a.header?.po_id || ''), undefined, { numeric: true }));
                 state.posLoaded = true;
                 state.posLoading = false;
@@ -7204,10 +7241,12 @@
 
                     ${state.poNotice?.message ? `
                         <div data-po-notice="${state.poNotice.tone || 'success'}" class="rounded-xl border px-4 py-3 text-xs font-semibold flex items-start justify-between gap-3 ${state.poNotice.tone === 'warning' ? 'bg-amber-50 border-amber-300 text-amber-900' : 'bg-emerald-50 border-emerald-200 text-emerald-900'}">
-                            <span>${typeof escapeDocHtml === 'function' ? escapeDocHtml(state.poNotice.message) : state.poNotice.message}</span>
+                            <span>${typeof escapeDocHtml === 'function' ? escapeDocHtml(state.poNotice.message) : state.poNotice.message}${state.poDeletePendingId && state.currentUser?.role === 'ADMIN' ? `<button class="ml-3 underline" onclick="deleteUnusedPOFromUi('${state.poDeletePendingId}')">${t('po.retryCleanup')}</button>` : ''}</span>
                             <button type="button" onclick="state.poNotice=null; renderView();" class="text-slate-500 hover:text-slate-800 font-bold leading-none">&times;</button>
                         </div>
                     ` : ''}
+
+                    ${state.currentUser?.role === 'ADMIN' ? (state.poPendingCleanupIds || []).map(poId => `<div class="rounded border border-amber-300 p-3 text-sm">${escapePricingHtml(poId)}: ${t('po.deletePending')} <button class="underline" onclick="deleteUnusedPOFromUi('${escapePricingHtml(poId)}')">${t('po.retryCleanup')}</button></div>`).join('') : ''}
 
                     ${selectedPo ? renderRealPODetailCard(selectedPo) : renderRealPOListTable()}
                 </div>
@@ -7232,20 +7271,78 @@
             const editable = canWritePO() && revision?.status === 'DRAFT' && header.header_status !== 'CANCELLED';
             const lineRows = lines.length ? lines.map(line => {
                 const product = (state.products || []).find(p => p.id === line.product_id);
-                return `<tr><td class="p-3">${line.line_no}</td><td class="p-3">${renderPricingProduct(product || { productName: line.product_name || line.product_id, shortName: line.short_name, productCode: line.product_code })}</td><td class="p-3 text-right">${Number(line.contract_qty_mt || 0).toFixed(3)} MT</td><td class="p-3 text-right">${Number(line.min_qty_mt || 0).toFixed(3)}–${Number(line.max_qty_mt || 0).toFixed(3)} MT</td><td class="p-3">${escapePricingHtml(line.packaging || '-')}</td><td class="p-3 text-right">${line.unit_price === undefined ? '-' : escapePricingHtml(revision.currency || line.currency || 'USD') + ' ' + Number(line.unit_price).toFixed(2) + ' / MT'}</td><td class="p-3">${editable ? `<button class="text-blue-600 font-bold" onclick="openPODraftLineModal('${poId}', '${revision.revision_id}', '${line.line_id}')">${tr('po.editLine', 'Edit Line')}</button>` : ''}</td></tr>`;
+                return `<tr><td class="p-3">${line.line_no}</td><td class="p-3">${renderPricingProduct(product || { productName: line.product_name || line.product_id, shortName: line.short_name, productCode: line.product_code })}</td><td class="p-3 text-right">${Number(line.contract_qty_mt || 0).toFixed(3)} MT</td><td class="p-3 text-right">${Number(line.min_qty_mt || 0).toFixed(3)}–${Number(line.max_qty_mt || 0).toFixed(3)} MT</td><td class="p-3"><div>${escapePricingHtml(line.packaging || '-')}</div>${[['po.incotermLabel',line.incoterm || revision.incoterm],['po.destinationLabel',line.destination_port ?? revision.destination],['po.fieldShipType',line.shipment_type || line.loading_pattern],['po.fieldContType',line.container_type],['po.packageWeight',line.unit_weight_kg],['po.unitsPerContainer',line.units_per_container],['po.fieldTargetWt',line.target_load_weight_mt],['po.qtyTolTitle',line.tolerance_pct],['po.fieldMaxInv',line.max_qty_mt],['po.spec',line.spec_revision_id]].map(([key,value])=>`<div class="text-xs text-slate-500">${t(key)}: ${escapePricingHtml(value ?? '-')}</div>`).join('')}${line.commission_rate_usd_mt !== undefined ? `<div class="text-xs">${t('po.commRecipient')}: ${escapePricingHtml((state.users || []).find(user=>user.id === line.commission_recipient_user_id)?.name || line.commission_recipient_user_id || '-')} · USD ${Number(line.commission_rate_usd_mt)} / MT</div>` : ''}</td><td class="p-3 text-right">${line.unit_price === undefined ? '-' : escapePricingHtml(revision.currency || line.currency || 'USD') + ' ' + Number(line.unit_price).toFixed(2) + ' / MT'}</td><td class="p-3">${editable ? `<button class="text-blue-600 font-bold" onclick="openPODraftLineModal('${poId}', '${revision.revision_id}', '${line.line_id}')">${tr('po.editLine', 'Edit Line')}</button>` : ''}</td></tr>`;
             }).join('') : `<tr><td colspan="7" class="p-5 text-center text-slate-400">${tr('po.noLines', 'No lines in this revision.')}</td></tr>`;
 
             const documentRows = documents.length ? documents.map(document => `<li class="flex justify-between gap-3 py-2 border-b last:border-0"><span>${document.label || document.document_type}</span>${document.url ? `<a class="text-blue-600 font-bold" href="${document.url}" target="_blank" rel="noopener">${tr('common.open', 'Open')}</a>` : ''}</li>`).join('') : `<li class="py-3 text-slate-400">${tr('po.noDocs', 'No documents.')}</li>`;
             const historyRows = history.length ? history.map(event => `<li class="py-2 border-b last:border-0"><span class="font-bold">${event.event_type || event.type || 'Event'}</span><span class="text-slate-500"> · ${event.created_at || event.createdAt || '-'}</span></li>`).join('') : `<li class="py-3 text-slate-400">${tr('po.noHistory', 'No history entries.')}</li>`;
             const poAttachmentsHtml = typeof renderPoAttachmentsSection === 'function' ? renderPoAttachmentsSection(poId) : '';
-            return `<div class="space-y-4"><section class="bg-white rounded-xl border border-blue-200 p-5"><div class="flex justify-between gap-4"><div><div class="text-xs text-slate-400 font-mono">${poId}</div><h3 class="text-xl font-black">${revision?.customer_po_no || poId}</h3><p class="text-sm text-slate-600">${customer?.name || customerId || '-'}</p></div><span class="px-2 py-1 h-fit rounded text-xs font-bold bg-blue-100 text-blue-800">${typeof translateStatus === 'function' ? translateStatus(header.header_status || 'OPEN') : (header.header_status || 'OPEN')}</span></div><div class="mt-4 flex flex-wrap gap-2">${revisionTabs}</div></section><section class="bg-white rounded-xl border border-slate-200 p-5"><h4 class="font-black">${tr('po.overview', 'Overview')}</h4><div class="grid md:grid-cols-3 gap-3 mt-3 text-xs"><div>${tr('po.revisionLabel', 'Revision:')} <strong>${revision ? `Rev. ${revision.revision_no} · ${typeof translateStatus === 'function' ? translateStatus(revision.status) : revision.status}` : '-'}</strong></div><div>Incoterm: <strong>${revision?.incoterm || '-'}</strong></div><div>${tr('po.deliveryLabel', 'Delivery:')} <strong>${revision?.delivery_start || '-'} – ${revision?.delivery_end || '-'}</strong></div></div></section><section class="bg-white rounded-xl border border-slate-200 overflow-hidden"><div class="p-4 border-b font-black flex justify-between">${tr('po.lines', 'Lines')}${editable ? `<button class="text-blue-600" onclick="openPODraftLineModal('${poId}', '${revision.revision_id}')">${tr('po.addLine', 'Add Line')}</button>` : ''}</div><table class="ui-table w-full text-xs"><thead><tr><th class="p-3">#</th><th class="p-3">${tr('common.product', 'Product')}</th><th class="p-3 text-right">${tr('po.colContractQty', 'Contract Qty')}</th><th class="p-3 text-right">${tr('po.colAllowedQty', 'Allowed Qty')}</th><th class="p-3">${tr('po.colPackaging', 'Packaging')}</th><th class="p-3">${tr('common.price', 'Price')}</th><th class="p-3">${tr('common.action', 'Action')}</th></tr></thead><tbody>${lineRows}</tbody></table></section><section class="bg-white rounded-xl border border-slate-200 p-5 space-y-4"><h4 class="font-black">${tr('po.documents', 'Documents')}</h4>${poAttachmentsHtml}<ul class="mt-2 text-xs">${documentRows}</ul></section><section class="bg-white rounded-xl border border-slate-200 p-5"><h4 class="font-black">${tr('po.history', 'History')}</h4><ul class="mt-2 text-xs">${historyRows}</ul></section></div>`;
+            return `<div class="space-y-4"><section class="bg-white rounded-xl border border-blue-200 p-5"><div class="flex justify-between gap-4"><div><div class="text-xs text-slate-400 font-mono">${poId}</div><h3 class="text-xl font-black">${revision?.customer_po_no || poId}</h3><p class="text-sm text-slate-600">${customer?.name || customerId || '-'}</p></div><span class="px-2 py-1 h-fit rounded text-xs font-bold bg-blue-100 text-blue-800">${typeof translateStatus === 'function' ? translateStatus(header.header_status || 'OPEN') : (header.header_status || 'OPEN')}</span></div><div class="mt-4 flex flex-wrap gap-2">${revisionTabs}${state.currentUser?.role === 'ADMIN' ? `<button class="text-red-700 font-bold" onclick="openPODeleteModal('${poId}')">${t('po.deletePO')}</button>` : ''}</div></section><section class="bg-white rounded-xl border border-slate-200 p-5"><h4 class="font-black">${tr('po.overview', 'Overview')}</h4><div class="grid md:grid-cols-3 gap-3 mt-3 text-xs"><div>${tr('po.revisionLabel', 'Revision:')} <strong>${revision ? `Rev. ${revision.revision_no} · ${typeof translateStatus === 'function' ? translateStatus(revision.status) : revision.status}` : '-'}</strong></div><div>${tr('po.fieldCustPoNo', 'Customer PO No.')}: <strong>${escapePricingHtml(revision?.customer_po_no || '-')}</strong></div><div>${tr('po.fieldPoDate', 'PO Date')}: <strong>${escapePricingHtml(revision?.po_date || '-')}</strong></div><div>${tr('common.currency', 'Currency')}: <strong>${escapePricingHtml(revision?.currency || 'USD')}</strong></div><div>${tr('po.deliveryLabel', 'Delivery:')} <strong>${revision?.delivery_start || '-'} – ${revision?.delivery_end || '-'}</strong></div></div></section><section class="bg-white rounded-xl border border-slate-200 overflow-hidden"><div class="p-4 border-b font-black flex justify-between">${tr('po.lines', 'Lines')}${editable ? `<button class="text-blue-600" onclick="openPODraftLineModal('${poId}', '${revision.revision_id}')">${tr('po.addLine', 'Add Line')}</button>` : ''}</div><table class="ui-table w-full text-xs"><thead><tr><th class="p-3">#</th><th class="p-3">${tr('common.product', 'Product')}</th><th class="p-3 text-right">${tr('po.colContractQty', 'Contract Qty')}</th><th class="p-3 text-right">${tr('po.colAllowedQty', 'Allowed Qty')}</th><th class="p-3">${tr('po.colPackaging', 'Packaging')}</th><th class="p-3">${tr('common.price', 'Price')}</th><th class="p-3">${tr('common.action', 'Action')}</th></tr></thead><tbody>${lineRows}</tbody></table></section><section class="bg-white rounded-xl border border-slate-200 p-5 space-y-4"><h4 class="font-black">${tr('po.documents', 'Documents')}</h4>${poAttachmentsHtml}<ul class="mt-2 text-xs">${documentRows}</ul></section><section class="bg-white rounded-xl border border-slate-200 p-5"><h4 class="font-black">${tr('po.history', 'History')}</h4><ul class="mt-2 text-xs">${historyRows}</ul></section></div>`;
+        }
+
+        function recalcPODraftLine() {
+            const value = id => Number(document.getElementById(id)?.value || 0);
+            const ceiling = document.getElementById('draftLineCeiling');
+            const target = document.getElementById('draftLineTarget');
+            if (ceiling) ceiling.value = Number((value('draftLineQty') * (1 + value('draftLineTolerance') / 100)).toFixed(3));
+            if (target && document.getElementById('draftLinePackaging')?.value !== 'NONE') target.value = Number((value('draftLineWeight') * value('draftLineUnits') / 1000).toFixed(4));
+        }
+
+        function updatePODraftPackaging() {
+            const packaging = document.getElementById('draftLinePackaging')?.value;
+            document.getElementById('draftLinePackagingCustom')?.classList.toggle('hidden', packaging !== 'CUSTOM');
+            const weight = document.getElementById('draftLineWeight');
+            const units = document.getElementById('draftLineUnits');
+            const target = document.getElementById('draftLineTarget');
+            if (weight && packaging === 'Jumbo Bag 850 kg') weight.value = 850;
+            if (weight && packaging === 'Jumbo Bag 950 kg') weight.value = 950;
+            if (weight && ['Bulk Container', 'Bulk Container + Liner'].includes(packaging)) weight.value = 1000;
+            if (units && !Number(units.value) && packaging !== 'NONE') units.value = 32;
+            if (target) target.readOnly = packaging !== 'NONE';
+            recalcPODraftLine();
+        }
+
+        function openPODeleteModal(poId) {
+            if (state.currentUser?.role !== 'ADMIN') return;
+            const po = (state.pos || []).find(item => item.header?.po_id === poId);
+            if (!po) return;
+            const customer = (state.customers || []).find(item => item.id === po.header.customer_id);
+            openModal(`<div class="space-y-4"><h3 class="font-bold text-red-700">${t('po.deletePO')}</h3><p>${escapePricingHtml(t('po.deleteConfirm', { po: poId, customer: customer?.name || po.header.customer_id }))}</p><div class="flex justify-end gap-3"><button onclick="closeModal()">${t('common.cancel')}</button><button id="poDeleteSubmit" class="bg-red-700 text-white rounded p-2" onclick="deleteUnusedPOFromUi('${poId}')">${t('po.deletePO')}</button></div></div>`);
+        }
+
+        async function deleteUnusedPOFromUi(poId) {
+            if (state.currentUser?.role !== 'ADMIN') return;
+            const button = document.getElementById('poDeleteSubmit');
+            if (button) button.disabled = true;
+            try {
+                const response = await fetch(`/api/pos/${encodeURIComponent(poId)}`, { method: 'DELETE' });
+                const body = await response.json();
+                const pending = body.code === 'PO_DELETE_CLEANUP_PENDING';
+                if (response.ok && body.status === 'SUCCESS') {
+                    state.poDeletePendingId = null;
+                    state.poNotice = { tone: 'success', message: t('po.deleteSuccess') };
+                    state.selectedPoId = null;
+                    state.selectedRevisionId = null;
+                } else {
+                    if (pending) { state.poDeletePendingId = poId; state.selectedPoId = null; }
+                    state.poNotice = { tone: 'warning', message: t(pending ? 'po.deletePending' : body.code === 'PO_IN_USE' ? 'po.deleteUsed' : 'po.deleteFailed') };
+                }
+                closeModal();
+                await loadPOsFromApi();
+            } catch {
+                closeModal();
+                state.poNotice = { tone: 'warning', message: t('po.deleteFailed') };
+                renderView();
+            } finally { if (button) button.disabled = false; }
         }
 
         function updatePODraftLineSpecs() {
             const product = (state.products || []).find(p => p.id === document.getElementById('draftLineProduct')?.value);
             const select = document.getElementById('draftLineSpec');
             if (!select) return;
-            select.innerHTML = (product?.standardSpecs || []).filter(spec => !spec.status || spec.status === 'ACTIVE').map(spec => `<option value="STANDARD:${escapePricingHtml(spec.id)}">${escapePricingHtml(spec.application || '')} · Rev. ${spec.revisionNo ?? 0}</option>`).join('');
+            const specs = (product?.standardSpecs || []).filter(spec => !spec.status || spec.status === 'ACTIVE');
+            select.innerHTML = specs.map(spec => `<option value="STANDARD:${escapePricingHtml(spec.id)}">${escapePricingHtml(spec.application || '')} · Rev. ${spec.revisionNo ?? 0}</option>`).join('');
+            select.value = specs.length ? `STANDARD:${specs[0].id}` : '';
         }
 
         function openPODraftLineModal(poId, revisionId, lineId = '') {
@@ -7260,6 +7357,10 @@
             const productId = line?.product_id || state.products?.[0]?.id || '';
             const product = (state.products || []).find(p => p.id === productId);
             const specs = (product?.standardSpecs || []).filter(spec => !spec.status || spec.status === 'ACTIVE');
+            const packageOptions = [['Jumbo Bag 850 kg','po.jumbo850'],['Jumbo Bag 950 kg','po.jumbo950'],['Bulk Container','po.bulkContainer'],['Bulk Container + Liner','po.bulkLiner'],['NONE','po.bulkPackaging'],['CUSTOM','po.customPackaging']];
+            const packaging = line?.packaging || 'Jumbo Bag 850 kg';
+            const customPackaging = !packageOptions.some(([value]) => value === packaging);
+            const selectedPackaging = customPackaging ? 'CUSTOM' : packaging;
             const currentSpec = line ? `<option value="${line.spec_source}:${esc(line.spec_revision_id)}">${esc(line.spec_revision_id)}</option>` : '';
             openModal(`<form onsubmit="savePODraftLine(event, '${poId}', '${revisionId}', '${lineId}')" class="space-y-4 text-sm">
                 <h3 class="text-lg font-bold">${t(lineId ? 'po.editLine' : 'po.addLine')}</h3>
@@ -7267,10 +7368,13 @@
                 <label class="block">${t('po.spec')}<select id="draftLineSpec" required class="w-full border rounded p-2">${currentSpec}${specs.map(spec => `<option value="STANDARD:${esc(spec.id)}">${esc(spec.application || '')} · Rev. ${spec.revisionNo ?? 0}</option>`).join('')}</select></label>
                 <label class="block">${t('common.currency')}<select id="draftLineCurrency" onchange="document.getElementById('draftLinePriceLabel').textContent=t('po.sellingPriceCurrency',{currency:this.value})" class="w-full border rounded p-2"><option value="USD" ${currency === 'USD' ? 'selected' : ''}>USD</option><option value="EUR" ${currency === 'EUR' ? 'selected' : ''}>EUR</option></select></label>
                 <p class="text-xs text-slate-500">${t('po.currencyApplies')}</p>
-                <div class="grid grid-cols-2 gap-3"><label><span id="draftLinePriceLabel">${t('po.sellingPriceCurrency', { currency })}</span><input id="draftLinePrice" required type="number" min="0" step="any" value="${line?.unit_price ?? ''}" class="w-full border rounded p-2"></label><label>${t('po.fieldContractMt')}<input id="draftLineQty" required type="number" min="0" step="any" value="${line?.contract_qty_mt ?? ''}" class="w-full border rounded p-2"></label></div>
-                <label class="block">${t('po.qtyTolTitle')}<input id="draftLineTolerance" type="number" min="0" max="100" step="any" value="${line?.tolerance_pct ?? 5}" class="w-full border rounded p-2"></label>
-                <label class="block">${t('po.colPackaging')}<input id="draftLinePackaging" required value="${esc(line?.packaging || '')}" class="w-full border rounded p-2"></label>
-                <div class="grid grid-cols-2 gap-3"><label>${t('po.packageWeight')}<input id="draftLineWeight" type="number" min="0" step="any" value="${line?.unit_weight_kg ?? 0}" class="w-full border rounded p-2"></label><label>${t('po.unitsPerContainer')}<input id="draftLineUnits" type="number" min="0" step="any" value="${line?.units_per_container ?? 0}" class="w-full border rounded p-2"></label></div>
+                <div class="grid grid-cols-2 gap-3"><label><span id="draftLinePriceLabel">${t('po.sellingPriceCurrency', { currency })}</span><input id="draftLinePrice" required type="number" min="0" step="any" value="${line?.unit_price ?? ''}" class="w-full border rounded p-2"></label><label>${t('po.fieldContractMt')}<input id="draftLineQty" oninput="recalcPODraftLine()" required type="number" min="0" step="any" value="${line?.contract_qty_mt ?? ''}" class="w-full border rounded p-2"></label></div>
+                <div class="grid grid-cols-2 gap-3"><label>${t('po.qtyTolTitle')}<select id="draftLineTolerance" onchange="recalcPODraftLine()" class="w-full border rounded p-2">${[...new Set([5,10,0,Number(line?.tolerance_pct ?? 5)])].map(value => `<option value="${value}" ${value === Number(line?.tolerance_pct ?? 5) ? 'selected' : ''}>+/- ${value}%</option>`).join('')}</select></label><label>${t('po.fieldMaxInv')}<input id="draftLineCeiling" readonly value="${Number(line?.contract_qty_mt || 0) * (1 + Number(line?.tolerance_pct ?? 5) / 100)}" class="w-full border rounded p-2"></label></div>
+                <label class="block">${t('po.colPackaging')}<select id="draftLinePackaging" onchange="updatePODraftPackaging()" class="w-full border rounded p-2">${packageOptions.map(([value,key]) => `<option value="${esc(value)}" ${value === selectedPackaging ? 'selected' : ''}>${t(key)}</option>`).join('')}</select><input id="draftLinePackagingCustom" value="${customPackaging ? esc(packaging) : ''}" class="w-full border rounded p-2 ${customPackaging ? '' : 'hidden'}"></label>
+                <div class="grid grid-cols-2 gap-3"><label>${t('po.packageWeight')}<input id="draftLineWeight" oninput="recalcPODraftLine()" type="number" min="0" step="any" value="${line?.unit_weight_kg ?? 850}" class="w-full border rounded p-2"></label><label>${t('po.unitsPerContainer')}<input id="draftLineUnits" oninput="recalcPODraftLine()" type="number" min="0" step="any" value="${line?.units_per_container ?? 32}" class="w-full border rounded p-2"></label></div>
+                <label class="block">${t('po.fieldTargetWt')}<input id="draftLineTarget" type="number" min="0" step="any" ${selectedPackaging === 'NONE' ? '' : 'readonly'} value="${line?.target_load_weight_mt ?? Number(line?.unit_weight_kg ?? 850) * Number(line?.units_per_container ?? 32) / 1000}" class="w-full border rounded p-2"></label>
+                <div class="grid grid-cols-2 gap-3"><label>${t('po.fieldShipType')}<select id="draftLineShipment" class="w-full border rounded p-2">${[['Container','po.shipmentContainer'],['Bulk Vessel','po.shipmentBulk'],['Bulk','po.shipmentBulk'],['Truck','po.shipmentTruck']].map(([value,key]) => `<option value="${value}" ${value === (line?.shipment_type || line?.loading_pattern || 'Container') ? 'selected' : ''}>${t(key)}</option>`).join('')}</select></label><label>${t('po.fieldContType')}<select id="draftLineContainer" class="w-full border rounded p-2">${[...new Set(["20' GP","40' GP","40' HC",line?.container_type || ''])].map(value=>`<option value="${esc(value)}" ${value === (line?.container_type || "20' GP") ? 'selected' : ''}>${esc(value || '-')}</option>`).join('')}</select></label></div>
+                <div class="grid grid-cols-2 gap-3"><label>${t('po.incotermLabel')}<select id="draftLineIncoterm" class="w-full border rounded p-2">${['FOB','CIF','CFR','EXW','DDP','FCA','FAS','CPT','CIP','DAP','DPU'].map(value=>`<option value="${value}" ${value === (line?.incoterm || revision.incoterm || 'FOB') ? 'selected' : ''}>${value}</option>`).join('')}</select></label><label>${t('po.destinationLabel')}<input id="draftLineDestination" value="${esc(line?.destination_port ?? revision.destination ?? '')}" class="w-full border rounded p-2"></label></div>
                 <label class="block">${t('po.priceOverrideReason')}<input id="draftLineReason" value="${esc(line?.price_override_reason || '')}" class="w-full border rounded p-2"></label>
                 <p id="draftLineError" class="text-red-700"></p><div class="flex justify-end gap-2"><button type="button" onclick="closeModal()" class="border rounded p-2">${t('common.cancel')}</button><button id="draftLineSave" class="bg-blue-600 text-white rounded p-2">${t('po.saveLine')}</button></div>
             </form>`);
@@ -7286,7 +7390,7 @@
             try {
                 const response = await fetch(`/api/pos/${encodeURIComponent(poId)}/revisions/${encodeURIComponent(revisionId)}/lines${lineId ? '/' + encodeURIComponent(lineId) : ''}`, {
                     method: lineId ? 'PATCH' : 'POST', headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ productId: value('draftLineProduct'), specSource, specRevisionId: specParts.join(':'), currency: value('draftLineCurrency'), unitPrice: Number(value('draftLinePrice')), contractQtyMt: Number(value('draftLineQty')), tolerancePct: Number(value('draftLineTolerance')), packaging: value('draftLinePackaging'), unitWeightKg: Number(value('draftLineWeight')), unitsPerContainer: Number(value('draftLineUnits')), priceOverrideReason: value('draftLineReason') })
+                    body: JSON.stringify({ productId: value('draftLineProduct'), specSource, specRevisionId: specParts.join(':'), currency: value('draftLineCurrency'), unitPrice: Number(value('draftLinePrice')), contractQtyMt: Number(value('draftLineQty')), tolerancePct: Number(value('draftLineTolerance')), packaging: value('draftLinePackaging') === 'CUSTOM' ? value('draftLinePackagingCustom') : value('draftLinePackaging'), shipmentType: value('draftLineShipment'), containerType: value('draftLineContainer'), incoterm: value('draftLineIncoterm') || undefined, destinationPort: value('draftLineDestination'), targetLoadWeightMt: Number(value('draftLineTarget')), unitWeightKg: Number(value('draftLineWeight')), unitsPerContainer: Number(value('draftLineUnits')), priceOverrideReason: value('draftLineReason') })
                 });
                 const body = await response.json();
                 if (!response.ok || body.status !== 'SUCCESS') throw new Error(body.message || t('po.lineSaveFailed'));
@@ -7479,7 +7583,7 @@
                                                     <span class="px-2 py-0.5 rounded text-[10px] font-bold ${header.header_status === 'OPEN' ? 'bg-blue-100 text-blue-800' : 'bg-slate-200 text-slate-600'}">${typeof translateStatus === 'function' ? translateStatus(header.header_status || 'OPEN') : (header.header_status || 'OPEN')}</span>
                                                 </td>
                                                 <td class="p-3 text-right">
-                                                    <button onclick="state.selectedPoId='${poId}'; renderView();" class="px-2.5 py-1.5 rounded bg-blue-100 text-blue-700 font-bold text-[10px] hover:bg-blue-200">${tr('po.manageBtn', 'Manage')}</button>
+                                                    <button onclick="state.selectedPoId='${poId}'; renderView();" class="px-2.5 py-1.5 rounded bg-blue-100 text-blue-700 font-bold text-[10px] hover:bg-blue-200">${tr('po.manageBtn', 'Manage')}</button>${state.currentUser?.role === 'ADMIN' ? `<button class="ml-2 text-red-700 font-bold" onclick="openPODeleteModal('${poId}')">${tr('po.deletePO', 'Delete PO')}</button>` : ''}
                                                 </td>
                                             </tr>
                                         `;
@@ -8097,6 +8201,10 @@
                             unitsPerContainer: Number(document.getElementById('newPoUnitsPerCont')?.value || 0),
                             containerType: document.getElementById('newPoContainerType')?.value || '',
                             loadingPattern: document.getElementById('newPoShipmentType')?.value || '',
+                            shipmentType: document.getElementById('newPoShipmentType')?.value || '',
+                            targetLoadWeightMt: Number(document.getElementById('newPoTotalWeightMt')?.value || 0),
+                            incoterm: document.getElementById('newPoIncoterm')?.value || 'FOB',
+                            destinationPort: document.getElementById('newPoPort')?.value || '',
                             commissionRecipientUserId: state.currentUser.role === 'EXTERNAL_SALES' ? null : document.getElementById('newPoCommissionRecipient')?.value || null,
                             commissionRateUsdMt: state.currentUser.role === 'EXTERNAL_SALES' ? 0 : Number(document.getElementById('newPoCommissionRate')?.value || 0)
                         }],
