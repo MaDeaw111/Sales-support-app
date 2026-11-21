@@ -68,3 +68,19 @@ test('draft POs feed customer-scoped dashboard and shipment adapters', () => {
   assert.deepEqual(Array.from(ctx.getScopedDIRecords(), p => p.id), ['DI0']);
   assert.deepEqual(Array.from(ctx.getScopedShipments(), p => p.id), ['S0']);
 });
+
+test('PO list prioritizes customer contract number and searches both identifiers',()=>{
+  const ctx=context();
+  ctx.state.pos=[{header:{po_id:'PO-2025-009',customer_id:'C1'},revisions:[{status:'DRAFT',revision_no:0,customer_po_no:'1606',po_date:'2025-12-10',lines:[]}]}];
+  for(const search of ['1606','PO-2025-009']) {
+    ctx.state.poFilters={search,customerId:'ALL',status:'ALL'};
+    const output=ctx.renderRealPOListTable();
+    assert.match(output,/font-bold text-blue-600[^>]*>1606<\/button>/);
+    assert.match(output,/text-\[10px\][^>]*>PO-2025-009 · 2025-12-10<\/div>/);
+  }
+  ctx.state.poFilters.search='';
+  ctx.state.pos[0].revisions[0].customer_po_no='   ';
+  assert.match(ctx.renderRealPOListTable(),/font-bold text-blue-600[^>]*>PO-2025-009<\/button>/);
+  ctx.state.pos[0].revisions[0].customer_po_no='<Contract & One>';
+  assert.match(ctx.renderRealPOListTable(),/&lt;Contract &amp; One&gt;/);
+});

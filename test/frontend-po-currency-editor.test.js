@@ -151,3 +151,16 @@ test('Manage respects a cleared line destination and formats fractional USD line
   const output=ctx.renderRealPODetailCard(po);
   assert.doesNotMatch(output,/Old Port/);assert.match(output,/27.2 MT/);assert.match(output,/USD 2,720.00/);
 });
+
+test('Manage prioritizes customer contract number with a bilingual system PO subtitle',()=>{
+  const {ctx}=harness();load(ctx,'renderRealPODetailCard');
+  const po=ctx.state.pos[0];po.header.po_id='PO-2025-005';po.revisions[0].customer_po_no='b10212151';
+  for(const label of ['System PO','เลขที่ PO ระบบ']) {
+    ctx.t=key=>key==='po.systemPo'?label:key;
+    const output=ctx.renderRealPODetailCard(po);
+    assert.match(output,/<h3[^>]*>b10212151<\/h3>/);
+    assert.ok(output.includes(`${label}: PO-2025-005`));
+  }
+  po.revisions[0].customer_po_no=' ';
+  assert.match(ctx.renderRealPODetailCard(po),/<h3[^>]*>PO-2025-005<\/h3>/);
+});
