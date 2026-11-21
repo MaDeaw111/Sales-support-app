@@ -1447,6 +1447,9 @@
                 'shipping.applyCredit': 'ตัดใช้เครดิต',
                 'shipping.noHistory': 'ยังไม่มีประวัติการดำเนินการ',
                 'shipping.modalCreateDi': 'สร้าง Delivery Instruction (DI)',
+                'shipping.poQuickSearch': 'ค้นหาลูกค้า หรือเลขที่ PO',
+                'shipping.remainingOption': 'คงเหลือ {mt} MT',
+                'shipping.balanceUnavailable': 'ไม่ทราบยอดคงเหลือ',
                 'shipping.loadingStart': "วันเริ่มบรรทุกตามแผน",
                 'shipping.loadingEnd': "วันสิ้นสุดบรรทุกตามแผน",
                 'shipping.invoiceFinalizeRequired': "กรุณายืนยันใบแจ้งหนี้เบื้องต้นเป็นฉบับจริง",
@@ -2792,6 +2795,9 @@
                 'shipping.applyCredit': 'Apply Credit',
                 'shipping.noHistory': 'No history is available for this view.',
                 'shipping.modalCreateDi': 'Create Delivery Instruction',
+                'shipping.poQuickSearch': 'Quick search by customer or PO number',
+                'shipping.remainingOption': 'Rem: {mt} MT',
+                'shipping.balanceUnavailable': 'Balance unavailable',
                 'shipping.loadingStart': "Planned Loading Start",
                 'shipping.loadingEnd': "Planned Loading End",
                 'shipping.invoiceFinalizeRequired': "Finalize the preliminary invoice instead.",
@@ -7620,6 +7626,7 @@
                         <div class="min-w-0"><div class="flex flex-wrap items-center gap-3"><h3 class="text-xl font-bold tracking-tight text-slate-900">${esc(String(revision?.customer_po_no || '').trim() || poId)}</h3><span class="rounded-full bg-blue-50 px-2.5 py-1 text-[10px] font-semibold text-blue-700">${esc(status(header.header_status || 'OPEN'))}</span></div><p class="mt-2 text-sm font-semibold text-slate-700">${esc(customer?.name || customerId || '-')}</p><p class="mt-1 text-xs text-slate-500">${tr('po.systemPo', 'System PO')}: ${esc(poId)}</p><div class="mt-4 flex flex-wrap gap-2">${revisionTabs}</div></div>
                         <dl class="grid grid-cols-1 sm:grid-cols-3 gap-5 rounded-xl bg-slate-50 p-4 lg:min-w-[420px]">${field(tr('po.totalContractQty', 'Total Contract Qty'), `${number(totalQty)} MT`)}${field(tr('po.totalPOValue', 'Total PO Value'), totalValue)}${field(tr('po.incotermLabel', 'Incoterm'), terms.join(' / ') || revision?.incoterm || '-')}</dl>
                     </div>
+                    ${typeof canEditPhase6Shipping === 'function' && canEditPhase6Shipping() && ['OPEN','PARTIALLY_SHIPPED'].includes(header.header_status) ? `<button type="button" data-po-id="${esc(poId)}" onclick="openCreatePhase6DeliveryInstruction(this.dataset.poId)" class="mt-4 rounded-lg bg-blue-600 px-3 py-2 text-xs font-semibold text-white hover:bg-blue-700">+ ${tr('shipping.createDi', 'Create DI')}</button>` : ''}
                     ${state.currentUser?.role === 'ADMIN' ? `<div class="mt-5 flex justify-end border-t border-slate-100 pt-4"><button type="button" class="${buttonClass} border-red-200 bg-white text-red-700 hover:bg-red-50" onclick="openPODeleteModal('${poId}')">${tr('po.deletePO', 'Delete PO')}</button></div>` : ''}
                 </section>
                 <section class="rounded-xl border border-slate-200 bg-white p-5 sm:p-6"><h4 class="text-sm font-semibold text-slate-900">${tr('po.overview', 'Overview')}</h4><dl class="mt-5 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-x-6 gap-y-5">${overview.map(([label, value]) => field(label, value)).join('')}</dl></section>
@@ -10199,7 +10206,39 @@
 
 
 
-        async function openCreatePhase6DeliveryInstruction() {
+        function phase6CreatePOOptions(pos) {
+            const esc = escapePhase6Text;
+            const empty = '<option value="">' + esc(t(pos.length ? 'shipping.choosePo' : 'shipping.noEligiblePo')) + '</option>';
+            return empty + pos.map(po => {
+                const revision = po.effectiveRevision;
+                const poNumber = String(revision.customer_po_no || '').trim() || po.header.po_id;
+                const revisionLabel = t(revision.status === 'DRAFT' ? 'shipping.draftRevision' : 'shipping.activeRevision');
+                const balance = po.remainingMt === null ? t('shipping.balanceUnavailable') : t('shipping.remainingOption', {
+                    mt:po.remainingMt.toLocaleString('en-US',{minimumFractionDigits:1,maximumFractionDigits:3})
+                });
+                const title = poNumber + ' — ' + po.customerName + ' (' + po.header.po_id + ') · ' + balance + ' · ' + revisionLabel + ' ' + revision.revision_no;
+                return '<option value="' + esc(po.header.po_id) + '"' + (po.remainingMt === 0 ? ' disabled' : '') + '>' + esc(title) + '</option>';
+            }).join('');
+        }
+
+        async function filterPhase6CreatePO(preferredPoId = '') {
+            const session = state.phase6Create;
+            const select = document.getElementById('phase6NewPo');
+            if (!session || session.saving || !select) return;
+            const customerId = document.getElementById('phase6NewCustomerFilter').value;
+            const search = document.getElementById('phase6NewPoSearch').value.trim().toLowerCase();
+            const matches = session.pos.filter(po => (!customerId || po.header.customer_id === customerId)
+                && [po.customerName, po.effectiveRevision.customer_po_no, po.header.po_id].some(value => String(value || '').toLowerCase().includes(search)));
+            const current = select.value;
+            select.innerHTML = phase6CreatePOOptions(matches);
+            const selectable = matches.filter(po => po.remainingMt !== 0);
+            const preferred = selectable.find(po => po.header.po_id === (preferredPoId || current));
+            const onlyCustomerPO = customerId && matches.length === 1 && selectable[0];
+            select.value = (preferred || onlyCustomerPO)?.header.po_id || '';
+            if (select.value !== current || (select.value && !session.po)) await selectPhase6CreatePO();
+        }
+
+        async function openCreatePhase6DeliveryInstruction(preferredPoId = '') {
             if (!canEditPhase6Shipping()) return;
             openModal(`<div class="p-6 text-sm text-slate-500">${t('shipping.createLoading')}</div>`);
             const session = { pos: [], lines: [], balances: [], ready: false, saving: false, selectionVersion: 0 };
@@ -10209,16 +10248,37 @@
                 const body = await response.json();
                 if (!response.ok || body.status !== 'SUCCESS' || !Array.isArray(body.data?.pos)) throw new Error();
                 if (state.phase6Create !== session) return;
-                session.pos = body.data.pos.filter(po => po.header?.header_status !== 'CANCELLED' && po.header?.header_status !== 'CLOSED').map(po => {
+                session.pos = body.data.pos.filter(po => ['OPEN', 'PARTIALLY_SHIPPED'].includes(po.header?.header_status)).map(po => {
                     const revision = po.revisions?.find(item => item.status === 'ACTIVE') || po.revisions?.find(item => item.status === 'DRAFT');
-                    return { ...po, effectiveRevision: revision };
+                    const customerName = po.header.customer_name || (state.customers || []).find(c => c.id === po.header.customer_id)?.name || po.header.customer_id;
+                    return { ...po, effectiveRevision: revision, customerName, remainingMt: null };
                 }).filter(po => po.effectiveRevision);
+                for (let index = 0; index < session.pos.length; index += 8) {
+                    await Promise.all(session.pos.slice(index, index + 8).map(async po => {
+                        try {
+                            const result = await fetch('/api/delivery-instructions/po-balance/' + encodeURIComponent(po.header.po_id));
+                            const payload = await result.json();
+                            const balances = payload.data?.poLineBalances;
+                            if (!result.ok || payload.status !== 'SUCCESS' || !Array.isArray(balances)) return;
+                            po.remainingMt = balances.filter(line => line.po_revision_id === po.effectiveRevision.revision_id)
+                                .reduce((total,line) => total + Math.max(0,Number(line.available_qty_mt) || 0),0);
+                        } catch {
+                            // Keep unavailable balances distinct from exhausted balances.
+                        }
+                    }));
+                    if (state.phase6Create !== session) return;
+                }
+                const customers = new Map(session.pos.map(po => [po.header.customer_id, po.customerName]));
                 const esc = escapePhase6Text;
                 const control = 'mt-1 w-full rounded-lg border border-slate-200 bg-white p-2.5 text-sm';
                 const label = (key, input) => `<label class="block text-xs font-semibold text-slate-600">${t(key)}${input}</label>`;
                 openModal(`<form onsubmit="event.preventDefault();submitNewPhase6DeliveryInstruction()" class="space-y-5">
                     <div><h3 class="text-lg font-bold text-slate-900">${t('shipping.modalCreateDi')}</h3><p class="mt-1 text-xs text-slate-500">${t('shipping.guidedHelp')}</p></div>
-                    ${label('shipping.poReference', `<select id="phase6NewPo" required onchange="selectPhase6CreatePO()" class="${control}"><option value="">${t(session.pos.length ? 'shipping.choosePo' : 'shipping.noEligiblePo')}</option>${session.pos.map(po => { const rev = po.effectiveRevision; const name = po.header.customer_name || (state.customers || []).find(c => c.id === po.header.customer_id)?.name || '-'; return `<option value="${esc(po.header.po_id)}">${esc(`${String(rev.customer_po_no || '').trim() || po.header.po_id} — ${name} (${po.header.po_id})`)} · ${rev.status === 'DRAFT' ? t('shipping.draftRevision') : t('shipping.activeRevision')} ${rev.revision_no}</option>`; }).join('')}</select>`)}
+                    <div class="grid gap-3 sm:grid-cols-2">
+                        ${label('common.customer', `<select id="phase6NewCustomerFilter" onchange="filterPhase6CreatePO()" class="${control}"><option value="">${t('common.allCustomers')}</option>${[...customers].sort((a,b)=>a[1].localeCompare(b[1])).map(([id,name]) => `<option value="${esc(id)}">${esc(name)}</option>`).join('')}</select>`)}
+                        ${label('shipping.poQuickSearch', `<input type="search" id="phase6NewPoSearch" oninput="filterPhase6CreatePO()" class="${control}">`)}
+                    </div>
+                    ${label('shipping.poReference', `<select id="phase6NewPo" required onchange="selectPhase6CreatePO()" class="${control}">${phase6CreatePOOptions(session.pos)}</select>`)}
                     <input type="hidden" id="phase6NewCustomer"><div id="phase6NewLineCards" class="space-y-3"></div>
                     <div class="grid grid-cols-1 sm:grid-cols-2 gap-4 rounded-xl bg-slate-50 p-4">
                         ${label('shipping.optionalDiNo', `<input id="phase6NewDiNo" class="${control}">`)}
@@ -10232,6 +10292,11 @@
                         <div class="sm:col-span-2">${label('common.note', `<textarea id="phase6NewNote" rows="2" class="${control}"></textarea>`)}</div>
                     </div><p id="phase6NewError" role="alert" class="text-xs text-red-700"></p><div class="flex justify-end gap-2"><button type="button" onclick="state.phase6Create=null;closeModal()" class="rounded-lg border px-4 py-2 text-sm">${t('common.cancel')}</button><button id="phase6NewSave" disabled class="rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white disabled:opacity-40">${t('shipping.saveDi')}</button></div>
                 </form>`);
+                const preferred = session.pos.find(po => po.header.po_id === preferredPoId);
+                if (preferred && document.getElementById('phase6NewCustomerFilter')) {
+                    document.getElementById('phase6NewCustomerFilter').value = preferred.header.customer_id;
+                    await filterPhase6CreatePO(preferredPoId);
+                }
             } catch {
                 if (state.phase6Create === session) openModal(`<div class="p-5 text-sm text-red-700">${t('shipping.createLoadFailed')}<button onclick="openCreatePhase6DeliveryInstruction()" class="ml-3 underline">${t('common.retry')}</button></div>`);
             }

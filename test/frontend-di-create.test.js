@@ -2,8 +2,8 @@ import test from 'node:test';import assert from 'node:assert/strict';import vm f
 const html=await readFile(new URL('../public/index.html',import.meta.url),'utf8');
 function load(ctx,name){const start=Math.max(html.indexOf(`        function ${name}(`),html.indexOf(`        async function ${name}(`));assert.ok(start>=0,name);const end=html.indexOf('\n        }',start)+'\n        }'.length;vm.runInContext(html.slice(start,end),ctx);}
 function harness(){const fields={};const po={header:{po_id:'PO-2025-009',customer_id:'C1',customer_name:'Meelunie',header_status:'OPEN'},revisions:[{revision_id:'REV0',revision_no:0,status:'DRAFT',customer_po_no:'1606',incoterm:'CIF',destination:'Rotterdam',lines:[{line_id:'L1',product_name:'Organic Tapioca Pellet',spec_application:'FEED_GRADE',spec_revision_id:'SPEC1',packaging:'Jumbo Bag 850 kg',unit_weight_kg:850,units_per_container:32,contract_qty_mt:100,container_type:'40HC'}]}]};
-const ctx=vm.createContext({state:{currentUser:{role:'EXPORT'}},document:{getElementById:id=>fields[id]},t:key=>key,canEditPhase6Shipping:()=>true,loadPhase6ServicePartnersFromApi:async()=>{},phase6PartnerOptions:()=>'<option value="">-</option>',applyPhase6PartnerSuggestions:async()=>{},openModal:markup=>{ctx.markup=markup;for(const m of markup.matchAll(/id="([^"]+)"/g))fields[m[1]]={value:'',textContent:'',innerHTML:'',disabled:false};},closeModal:()=>{ctx.closed=true;},refreshPhase6ShippingWorkspace:async()=>{},fetch:async url=>({ok:true,json:async()=>({status:'SUCCESS',data:url==='/api/pos'?{pos:[po]}:{poLineBalances:[{po_revision_line_id:'L1',po_revision_id:'REV0',actual_qty_mt:10,unrepresented_planned_qty_mt:20,available_qty_mt:70}]}})}),saveDeliveryInstructionToApi:async payload=>{ctx.saved=payload;}});
-for(const name of ['escapePhase6Text','openCreatePhase6DeliveryInstruction','selectPhase6CreatePO','recalculatePhase6CreateLine','updatePhase6CreatePlan','submitNewPhase6DeliveryInstruction'])load(ctx,name);return {ctx,fields,po};}
+const ctx=vm.createContext({state:{currentUser:{role:'EXPORT'}},document:{getElementById:id=>fields[id]},t:(key,args)=>key==='shipping.remainingOption' ? 'Rem: '+args.mt+' MT' : key,canEditPhase6Shipping:()=>true,loadPhase6ServicePartnersFromApi:async()=>{},phase6PartnerOptions:()=>'<option value="">-</option>',applyPhase6PartnerSuggestions:async()=>{},openModal:markup=>{ctx.markup=markup;for(const m of markup.matchAll(/id="([^"]+)"/g))fields[m[1]]={value:'',textContent:'',innerHTML:'',disabled:false};},closeModal:()=>{ctx.closed=true;},refreshPhase6ShippingWorkspace:async()=>{},fetch:async url=>({ok:true,json:async()=>({status:'SUCCESS',data:url==='/api/pos'?{pos:[po]}:{poLineBalances:[{po_revision_line_id:'L1',po_revision_id:'REV0',actual_qty_mt:10,unrepresented_planned_qty_mt:20,available_qty_mt:70}]}})}),saveDeliveryInstructionToApi:async payload=>{ctx.saved=payload;}});
+for(const name of ['escapePhase6Text','phase6CreatePOOptions','filterPhase6CreatePO','openCreatePhase6DeliveryInstruction','selectPhase6CreatePO','recalculatePhase6CreateLine','updatePhase6CreatePlan','submitNewPhase6DeliveryInstruction'])load(ctx,name);return {ctx,fields,po};}
 test('guided DI loads live PO labels, calculates quantities and sends structured lines without raw JSON',async()=>{const {ctx,fields}=harness();await ctx.openCreatePhase6DeliveryInstruction();assert.match(ctx.markup,/1606 — Meelunie \(PO-2025-009\)/);assert.doesNotMatch(ctx.markup,/undefined|phase6NewLines|PO ID \*|Customer ID \*|PO Revision ID/);fields.phase6NewPo.value='PO-2025-009';await ctx.selectPhase6CreatePO();assert.match(fields.phase6NewLineCards.innerHTML,/Organic Tapioca Pellet|Rotterdam/);assert.match(fields.phase6NewLineCards.innerHTML,/70 MT/);fields.phase6LineContainers0={value:'2'};fields.phase6LineQty0={value:'0'};ctx.recalculatePhase6CreateLine(0);assert.equal(Number(fields.phase6LineQty0.value),54.4);fields.phase6NewMonth.value='2026-11';fields.phase6NewPeriod.value='FIRST_HALF';fields.phase6NewLoadingDate.value='2026-11-25';await ctx.submitNewPhase6DeliveryInstruction();assert.equal(ctx.saved.lines[0].plannedQtyMt,54.4);assert.equal(ctx.saved.customerId,'C1');assert.equal(ctx.saved.poRevisionId,'REV0');assert.equal(ctx.saved.plannedLoadingDate,'2026-11-25');assert.equal(ctx.closed,true);});
 test('guided DI blocks overbalance and keeps manual MT overrides',async()=>{const {ctx,fields}=harness();await ctx.openCreatePhase6DeliveryInstruction();fields.phase6NewPo.value='PO-2025-009';await ctx.selectPhase6CreatePO();fields.phase6LineQty0={value:'71'};fields.phase6LineContainers0={value:'0'};await ctx.submitNewPhase6DeliveryInstruction();assert.equal(ctx.saved,undefined);assert.ok(fields.phase6NewError.textContent);fields.phase6LineQty0.value='27.2';ctx.updatePhase6CreatePlan();fields.phase6NewMonth.value='2026-11';fields.phase6NewPeriod.value='FIRST_HALF';await ctx.submitNewPhase6DeliveryInstruction();assert.equal(ctx.saved.lines[0].plannedQtyMt,27.2);});
 
@@ -19,4 +19,34 @@ test('guided DI prefers active revision, assembles multiple lines, and skips zer
 test('balance loading failure disables saving and forbidden roles cannot open create form',async()=>{
   const {ctx,fields}=harness();await ctx.openCreatePhase6DeliveryInstruction();fields.phase6NewPo.value='PO-2025-009';ctx.fetch=async()=>{throw Error('offline');};await ctx.selectPhase6CreatePO();assert.equal(fields.phase6NewSave.disabled,true);assert.equal(ctx.state.phase6Create.ready,false);await ctx.submitNewPhase6DeliveryInstruction();assert.equal(ctx.saved,undefined);
   ctx.canEditPhase6Shipping=()=>false;ctx.markup='unchanged';await ctx.openCreatePhase6DeliveryInstruction();assert.equal(ctx.markup,'unchanged');
+});
+
+test('Create DI filters by customer and either PO number, displays live balances and selects a single customer PO', async () => {
+  const {ctx,fields,po}=harness();
+  const other=structuredClone(po);
+  Object.assign(other.header,{po_id:'PO-2025-010',customer_id:'C2',customer_name:'Second Customer'});
+  other.revisions[0].customer_po_no='1800';
+  const fetch=ctx.fetch;
+  ctx.fetch=async url=>{
+    if(url==='/api/pos') return {ok:true,json:async()=>({status:'SUCCESS',data:{pos:[po,other]}})};
+    if(url.endsWith('/PO-2025-010')) return {ok:true,json:async()=>({status:'SUCCESS',data:{poLineBalances:[{po_revision_id:'REV0',available_qty_mt:0}]}})};
+    return fetch(url);
+  };
+  await ctx.openCreatePhase6DeliveryInstruction();
+  assert.match(ctx.markup,/Rem: 70\.0 MT/);
+  assert.match(ctx.markup,/value="PO-2025-010" disabled>1800 [^<]*Rem: 0\.0 MT/);
+  fields.phase6NewCustomerFilter.value='C1';
+  await ctx.filterPhase6CreatePO();
+  assert.equal(fields.phase6NewPo.value,po.header.po_id);
+  assert.doesNotMatch(fields.phase6NewPo.innerHTML,/Second Customer/);
+  assert.match(fields.phase6NewLineCards.innerHTML,/70 MT/);
+  fields.phase6NewCustomerFilter.value='';
+  for(const search of ['1606','po-2025-009','meelunie']) {
+    fields.phase6NewPoSearch.value=search;
+    await ctx.filterPhase6CreatePO();
+    assert.doesNotMatch(fields.phase6NewPo.innerHTML,/Second Customer/);
+  }
+  await ctx.openCreatePhase6DeliveryInstruction(po.header.po_id);
+  assert.equal(fields.phase6NewCustomerFilter.value,'C1');
+  assert.equal(fields.phase6NewPo.value,po.header.po_id);
 });
