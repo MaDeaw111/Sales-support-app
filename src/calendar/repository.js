@@ -60,8 +60,8 @@ export function createCalendarRepository(db) {
 
       if (includeShipments) {
         const datePredicates = loadingOnly
-          ? '(s.planned_loading_date BETWEEN ? AND ? OR s.actual_loading_date BETWEEN ? AND ?)'
-          : '(s.planned_loading_date BETWEEN ? AND ? OR s.actual_loading_date BETWEEN ? AND ? OR s.etd BETWEEN ? AND ? OR s.eta BETWEEN ? AND ?)';
+          ? '((COALESCE(s.planned_loading_end_date,s.planned_loading_date) >= ? AND s.planned_loading_date <= ?) OR s.actual_loading_date BETWEEN ? AND ?)'
+          : '((COALESCE(s.planned_loading_end_date,s.planned_loading_date) >= ? AND s.planned_loading_date <= ?) OR s.actual_loading_date BETWEEN ? AND ? OR s.etd BETWEEN ? AND ? OR s.eta BETWEEN ? AND ?)';
         const params = loadingOnly
           ? [from, to, from, to]
           : [from, to, from, to, from, to, from, to];
@@ -101,7 +101,7 @@ export function createCalendarRepository(db) {
             s.vessel,
             s.etd,
             s.eta,
-            s.planned_loading_date,
+            s.planned_loading_date, s.planned_loading_end_date,
             s.actual_loading_date,
             s.schedule_result,
             di.di_no,
@@ -278,21 +278,25 @@ export function createCalendarRepository(db) {
             loading_date_history: loadingDateHistory
           };
 
+          const start = s.planned_loading_date;
+          const end = s.planned_loading_end_date || start;
+          const span = start ? Math.max(1, Math.round((Date.parse(end) - Date.parse(start)) / 86400000) + 1) : 1;
           const emit = (type, date) => {
             if (!inRange(date, from, to)) return;
             if (loadingOnly && !WAREHOUSE_EVENT_TYPES.includes(type)) return;
             if (eventType && eventType !== type) return;
             events.push({
               ...base,
-              event_id: `${type}:${s.shipment_id}`,
+              event_id: `${type}:${s.shipment_id}${span > 1 && type === "LOADING_PLANNED" ? ":" + date : ""}`,
+              ...(span > 1 ? { loading_day_count: span, loading_day: Math.round((Date.parse(date) - Date.parse(start)) / 86400000) + 1 } : {}),
               event_type: type,
               event_date: date
             });
           };
 
           // Suppress duplicate same-day LOADING_PLANNED when actual loading is already recorded on the same date
-          if (s.planned_loading_date && s.actual_loading_date !== s.planned_loading_date) {
-            emit('LOADING_PLANNED', s.planned_loading_date);
+          if (start && (span > 1 || s.actual_loading_date !== start)) {
+            for (let day = Date.parse(from > start ? from : start); day <= Date.parse(to < end ? to : end); day += 86400000) emit('LOADING_PLANNED', new Date(day).toISOString().slice(0, 10));
           }
           if (s.actual_loading_date) {
             emit('LOADING_ACTUAL', s.actual_loading_date);
@@ -446,7 +450,7 @@ export function createCalendarRepository(db) {
         if (!bucket.shipmentIds.has(e.shipment_id)) {
           bucket.shipmentIds.add(e.shipment_id);
           bucket.actual_container_count += Number(e.actual_container_count || 0);
-          bucket.planned_qty_mt = roundQty(bucket.planned_qty_mt + Number(e.planned_qty_mt || 0));
+          bucket.planned_qty_mt = roundQty(bucket.planned_qty_mt + (e.loading_day_count > 1 ? (e.loading_day > 0 && e.loading_day <= e.loading_day_count ? roundQty(Number(e.planned_qty_mt || 0) * e.loading_day / e.loading_day_count) - roundQty(Number(e.planned_qty_mt || 0) * (e.loading_day - 1) / e.loading_day_count) : 0) : Number(e.planned_qty_mt || 0)));
         }
       }
 

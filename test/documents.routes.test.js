@@ -49,7 +49,7 @@ async function setupDocumentsTestEnv() {
     '0004_commercial_shipment_control.sql',
     '0005_po_management.sql',
     '0006_customer_ownership_type.sql',
-    '0007_shipping_di_integration.sql',
+    '0007_shipping_di_integration.sql', '0015_di_loading_date_range.sql',
     '0008_logistics_partners.sql',
     '0009_commission_settlement.sql',
     '0010_booking_bl_no.sql',

@@ -7,6 +7,7 @@ const DELIVERY_INSTRUCTION_PROPERTIES = [
   'poRevisionId',
   'diNo',
   'plannedLoadingDate',
+  'plannedLoadingEndDate',
   'shippingMonth',
   'shippingPeriod',
   'containerPlan',
@@ -28,7 +29,7 @@ const SHIPMENT_BOOKING_PROPERTIES = [
   'eta',
   'plannedLoadingDate'
 ];
-const SHIPMENT_SCHEDULE_PROPERTIES = ['plannedLoadingDate', 'actualLoadingDate', 'scheduleNote'];
+const SHIPMENT_SCHEDULE_PROPERTIES = ['plannedLoadingDate', 'plannedLoadingEndDate', 'actualLoadingDate', 'scheduleNote'];
 const SHIPMENT_CONTAINER_PROPERTIES = ['containerNo', 'sealNo', 'lines'];
 const SHIPMENT_CONTAINER_LINE_PROPERTIES = ['poRevisionLineId', 'numberOfBags', 'netWeightMt'];
 const SHIPMENT_INVOICE_PROPERTIES = ['invoiceNo', 'version', 'invoiceDate', 'lines'];
@@ -156,6 +157,7 @@ export function validateDeliveryInstruction(dto) {
     poId,
     poRevisionId,
     diNo,
+    plannedLoadingEndDate: plannedEnd(dto),
     plannedLoadingDate: dto.plannedLoadingDate === undefined ? undefined : optionalBookingDate(dto.plannedLoadingDate),
     shippingMonth: dto.shippingMonth,
     shippingPeriod: dto.shippingPeriod,
@@ -263,7 +265,15 @@ export function validateShipmentBooking(dto) {
   };
 }
 
-export function calculateScheduleResult(shippingMonth, shippingPeriod, actualLoadingDate) {
+function plannedEnd(dto) {
+  if (!dto.plannedLoadingEndDate) return undefined;
+  const end = requiredScheduleDate(dto.plannedLoadingEndDate);
+  if (!dto.plannedLoadingDate || end < dto.plannedLoadingDate) throw codedError('LOADING_DATE_RANGE_INVALID');
+  return end;
+}
+
+export function calculateScheduleResult(shippingMonth, shippingPeriod, actualLoadingDate, start, end) {
+  if (start && end && end > start) return actualLoadingDate >= start && actualLoadingDate <= end ? 'ON_PLAN' : 'OUT_OF_PLAN';
   const actualDate = requiredScheduleDate(actualLoadingDate);
   const actualMonth = actualDate.slice(0, 7);
   const actualDay = Number(actualDate.slice(8, 10));
@@ -292,6 +302,7 @@ export function validateShipmentSchedule(dto) {
   }
 
   return {
+    plannedLoadingEndDate: plannedEnd(dto),
     plannedLoadingDate: hasPlannedLoadingDate ? requiredScheduleDate(dto.plannedLoadingDate) : undefined,
     actualLoadingDate: hasActualLoadingDate ? requiredScheduleDate(dto.actualLoadingDate) : undefined,
     scheduleNote: dto.scheduleNote === undefined ? undefined : dto.scheduleNote?.trim() || null
@@ -459,13 +470,11 @@ function optionalDocumentDate(value, invalidCode) {
 
 export function isDocumentRequirementSatisfied(documents) {
   const value = (camelCase, snakeCase) => documents?.[camelCase] ?? documents?.[snakeCase];
-  const allShipDocsDriveUrl = value('allShipDocsDriveUrl', 'all_ship_docs_drive_url');
   const digitalDocsSentDate = value('digitalDocsSentDate', 'digital_docs_sent_date');
   const originalDocsRequired = value('originalDocsRequired', 'original_docs_required');
   const dhlSentDate = value('dhlSentDate', 'dhl_sent_date');
   const dhlTrackingNo = value('dhlTrackingNo', 'dhl_tracking_no');
   return Boolean(
-    allShipDocsDriveUrl &&
     digitalDocsSentDate &&
     (!originalDocsRequired || (dhlSentDate && dhlTrackingNo))
   );
@@ -478,7 +487,6 @@ export function validateShipmentDocuments(dto) {
   }
 
   const allShipDocsDriveUrl = validateGoogleDriveFolderUrl(dto.allShipDocsDriveUrl);
-  if (!allShipDocsDriveUrl) throw codedError('ALL_SHIP_DOCS_DRIVE_URL_REQUIRED');
   const digitalDocsSentDate = requiredDocumentDate(
     dto.digitalDocsSentDate,
     'DIGITAL_DOCS_SENT_DATE_REQUIRED',

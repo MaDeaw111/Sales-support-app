@@ -9,7 +9,7 @@ async function setupCalendarFixture() {
   for (const migration of [
     '0001_auth.sql', '0002_customers.sql', '0003_product_specs.sql',
     '0004_commercial_shipment_control.sql', '0005_po_management.sql',
-    '0006_customer_ownership_type.sql', '0007_shipping_di_integration.sql'
+    '0006_customer_ownership_type.sql', '0007_shipping_di_integration.sql', '0015_di_loading_date_range.sql'
   ]) {
     db.exec(await readFile(new URL(`../migrations/${migration}`, import.meta.url), 'utf8'));
   }
@@ -179,4 +179,14 @@ test('repository supports loadingOnly, ownedByUserId, customerId, salesOwnerId, 
   });
   assert.ok(byStatus.events.length > 0);
   assert.equal(byStatus.events.every(e => e.shipment_status === 'BOOKED'), true);
+});
+
+test('operations calendar expands a three-day plan and counts its tonnage once', async () => {
+  const { db, repo } = await setupCalendarFixture();
+  db.exec("UPDATE phase6_shipments SET planned_loading_date='2026-09-22', planned_loading_end_date='2026-09-24', actual_loading_date=NULL");
+  const {events,dailyLoadingSummary} = await repo.listCalendarData({from:'2026-09-22',to:'2026-09-24',eventType:'LOADING_PLANNED'});
+  const shipment = events[0];
+  assert.ok(shipment);
+  assert.deepEqual(events.filter(event=>event.shipment_id===shipment.shipment_id).map(event=>event.loading_day),[1,2,3]);
+  assert.equal(Math.round(dailyLoadingSummary.reduce((sum,day)=>sum+day.planned_qty_mt,0)*1000), Math.round(events.filter(event=>event.loading_day===1).reduce((sum,event)=>sum+event.planned_qty_mt,0)*1000));
 });

@@ -45,12 +45,12 @@ export function projectShippingDiForRole(record, caller) {
   if (caller.role === 'EXTERNAL_SALES') {
     return pickPresent(record, [
       'di_no', 'status', 'booking_no', 'vessel', 'etd', 'eta',
-      'planned_loading_date', 'actual_loading_date', 'schedule_result'
+      'planned_loading_date', 'planned_loading_end_date', 'actual_loading_date', 'schedule_result'
     ]);
   }
   if (caller.role === 'PRODUCTION_WAREHOUSE') {
     return {
-      ...pickPresent(record, ['planned_loading_date', 'actual_loading_date', 'container_plan']),
+      ...pickPresent(record, ['planned_loading_date', 'planned_loading_end_date', 'actual_loading_date', 'container_plan']),
       products: (record.products || []).map((product) => pick(product, [
         'product_code', 'product_name', 'planned_qty_mt', 'packing_snapshot'
       ])),
@@ -69,7 +69,7 @@ export function projectShippingDiWorkspaceForRole(record, caller) {
   if (caller.role === 'EXTERNAL_SALES') {
     const projected = pickPresent(record, [
       'di_no', 'di_status',
-      'booking_no', 'planned_loading_date', 'actual_loading_date', 'schedule_result', 'shipment_status'
+      'booking_no', 'planned_loading_date', 'planned_loading_end_date', 'actual_loading_date', 'schedule_result', 'shipment_status'
     ]);
     if (Number(record.customer_docs_count || 0) > 0) {
       projected.customer_docs_count = Number(record.customer_docs_count);
@@ -81,7 +81,7 @@ export function projectShippingDiWorkspaceForRole(record, caller) {
   if (caller.role === 'PRODUCTION_WAREHOUSE') {
     return pickPresent(record, [
       'product_summary', 'packing_summary', 'planned_qty_mt', 'container_plan',
-      'planned_loading_date', 'actual_loading_date'
+      'planned_loading_date', 'planned_loading_end_date', 'actual_loading_date'
     ]);
   }
   return record;
@@ -94,7 +94,7 @@ export function projectPhase6ShipmentForRole(record, caller) {
       ...pickPresent(record, [
         'shipment_id', 'di_id', 'di_no', 'customer_id', 'customer_name',
         'po_id', 'customer_po_no', 'status', 'booking_no', 'bl_no',
-        'vessel', 'etd', 'eta', 'planned_loading_date', 'actual_loading_date',
+        'vessel', 'etd', 'eta', 'planned_loading_date', 'planned_loading_end_date', 'actual_loading_date',
         'schedule_result', 'all_ship_doc_uploaded_at'
       ]),
       stuffing_report_count: Number(record.stuffing_report_count || 0),
@@ -306,7 +306,7 @@ export function createShippingDiHandler({ repo, resolveUser, db }) {
           break;
         }
       } else {
-        shipment = await activeRepo.getPhase6ShipmentByDeliveryInstructionId(reference);
+        shipment = (SHIPMENT_INVOICE_WRITE_ROLES.includes(caller.role) && await activeRepo.getDraftInvoiceWorkspace?.(reference)) || await activeRepo.getPhase6ShipmentByDeliveryInstructionId(reference);
       }
       if (!shipment) return json({ status: 'ERROR', message: 'SHIPMENT_NOT_FOUND' }, 404);
       if (!await canReadShippingDiRecord(caller, shipment)) return json({ status: 'ERROR', message: 'Permission denied.' }, 403);
@@ -498,6 +498,19 @@ export function createShippingDiHandler({ repo, resolveUser, db }) {
           { status: 'ERROR', message: error.message },
           ['SHIPMENT_NOT_FOUND', 'INVOICE_NOT_FOUND'].includes(error.code) ? 404 : 400
         );
+      }
+    }
+
+    const draftInvoiceMatch = path.match(/^\/api\/delivery-instructions\/([^/]+)\/invoices$/);
+    if (draftInvoiceMatch && method === 'POST') {
+      if (!SHIPMENT_INVOICE_WRITE_ROLES.includes(caller.role)) return json({ status: 'ERROR', message: 'Permission denied.' }, 403);
+      const body = await readJson(request);
+      if (body?.version !== 'PRELIMINARY') return json({ status: 'ERROR', message: 'INVOICE_FINAL_REQUIRES_ACTUAL_QTY' }, 400);
+      try {
+        const invoice = await activeRepo.createShipmentInvoice(decodeURIComponent(draftInvoiceMatch[1]), body, caller.user_id);
+        return json({ status: 'SUCCESS', data: { invoice } });
+      } catch (error) {
+        return json({ status: 'ERROR', message: error.message }, 400);
       }
     }
 

@@ -57,12 +57,12 @@ function isAvailabilityReservationFailure(error) {
   return String(error?.message || '').includes('CHECK constraint failed: planned_qty_mt > 0');
 }
 
-function requestedLoadingDateExpression(diIdExpression) {
-  return `(SELECT json_extract(metadata_json, '$.new.plannedLoadingDate')
+function requestedLoadingDateExpression(diIdExpression, field = 'plannedLoadingDate') {
+  return `(SELECT json_extract(metadata_json, '$.new.${field}')
     FROM shipment_audit_events
     WHERE entity_type = 'DI' AND entity_id = ${diIdExpression}
       AND event_type IN ('DI_CREATED', 'DI_UPDATED')
-      AND json_type(metadata_json, '$.new.plannedLoadingDate') IS NOT NULL
+      AND json_type(metadata_json, '$.new.${field}') IS NOT NULL
     ORDER BY rowid DESC LIMIT 1)`;
 }
 
@@ -70,6 +70,7 @@ async function findDeliveryInstruction(db, diId) {
   const deliveryInstruction = await db.prepare(`
     SELECT di_id, customer_id, po_id, po_revision_id, di_no, shipping_month, shipping_period, container_plan,
            ${requestedLoadingDateExpression('delivery_instructions.di_id')} AS planned_loading_date,
+           ${requestedLoadingDateExpression('delivery_instructions.di_id', 'plannedLoadingEndDate')} AS planned_loading_end_date,
            status, lifecycle_version, note, cancellation_note, di_drive_url, surveyor_partner_id, forwarder_partner_id,
            created_by, created_at, updated_by, updated_at
     FROM delivery_instructions
@@ -102,7 +103,7 @@ async function findPhase6Shipment(db, identifier) {
   const hasBlNo = await hasPhase6ShipmentBlNoColumn(db);
   return db.prepare(`
     SELECT shipment_id, di_id, status, booking_no, ${hasBlNo ? 'bl_no' : 'NULL AS bl_no'}, forwarder_partner_id, shipping_line_partner_id,
-           trucking_partner_id, vessel, etd, eta, planned_loading_date, actual_loading_date,
+           trucking_partner_id, vessel, etd, eta, planned_loading_date, planned_loading_end_date, actual_loading_date,
            schedule_result, schedule_note, all_ship_docs_drive_url, digital_docs_sent_date,
            original_docs_required, dhl_sent_date, dhl_tracking_no, docs_note, cash_received_amount,
            payment_status, payment_note, cancellation_note, container_version,
@@ -252,13 +253,37 @@ async function assertContainerPoLineCapacity(db, shipment, diLines, quantitiesBy
   }
 }
 
+async function shipmentEntryProducts(db, diId) {
+  const { results: products } = await db.prepare(`
+    SELECT po_line.*, product.product_code, product.product_name, instruction_line.planned_qty_mt,
+           instruction_line.packing_snapshot, revision.currency AS po_currency,
+           COALESCE(standard.application, custom.application) AS spec_application
+    FROM delivery_instruction_lines instruction_line
+    JOIN products product ON product.product_id = instruction_line.product_id
+    JOIN po_revision_lines po_line ON po_line.line_id = instruction_line.po_revision_line_id
+    JOIN po_revisions revision ON revision.revision_id = po_line.po_revision_id
+    LEFT JOIN standard_specs standard ON po_line.spec_source = 'STANDARD' AND standard.standard_spec_id = po_line.spec_revision_id
+    LEFT JOIN customer_specs custom ON po_line.spec_source = 'CUSTOMER' AND custom.customer_spec_id = po_line.spec_revision_id
+    WHERE instruction_line.di_id = ?
+    ORDER BY instruction_line.di_line_id ASC
+  `).bind(diId).all();
+
+  return (products || []).map(product => ({
+      po_revision_line_id: product.line_id,
+      product_code: product.product_code, product_name: product.product_name,
+      planned_qty_mt: Number(product.planned_qty_mt), packing_snapshot: product.packing_snapshot,
+      spec_revision_id: product.spec_revision_id, spec_application: product.spec_application,
+      unit_weight_kg: Number(product.unit_weight_kg || 0), unit_price: Number(product.unit_price), currency: product.po_currency
+    }));
+}
+
 async function findPhase6ShipmentReadModel(db, identifier, lookupField) {
   const hasBlNo = await hasPhase6ShipmentBlNoColumn(db);
   const shipment = await db.prepare(`
     SELECT shipment.shipment_id, shipment.di_id, instruction.customer_id, instruction.di_no, instruction.container_plan,
            shipment.status, shipment.booking_no, ${hasBlNo ? 'shipment.bl_no' : 'NULL AS bl_no'}, shipment.forwarder_partner_id,
            shipment.shipping_line_partner_id, shipment.trucking_partner_id, shipment.vessel,
-           shipment.etd, shipment.eta, shipment.planned_loading_date, shipment.actual_loading_date,
+           shipment.etd, shipment.eta, shipment.planned_loading_date, shipment.planned_loading_end_date, shipment.actual_loading_date,
            shipment.schedule_result, shipment.schedule_note, shipment.all_ship_docs_drive_url,
            shipment.digital_docs_sent_date, shipment.original_docs_required, shipment.dhl_sent_date,
             shipment.dhl_tracking_no, shipment.docs_note, shipment.cash_received_amount,
@@ -273,19 +298,7 @@ async function findPhase6ShipmentReadModel(db, identifier, lookupField) {
   `).bind(identifier).first();
   if (!shipment) return null;
 
-  const { results: products } = await db.prepare(`
-    SELECT po_line.*, product.product_code, product.product_name, instruction_line.planned_qty_mt,
-           instruction_line.packing_snapshot, revision.currency AS po_currency,
-           COALESCE(standard.application, custom.application) AS spec_application
-    FROM delivery_instruction_lines instruction_line
-    JOIN products product ON product.product_id = instruction_line.product_id
-    JOIN po_revision_lines po_line ON po_line.line_id = instruction_line.po_revision_line_id
-    JOIN po_revisions revision ON revision.revision_id = po_line.po_revision_id
-    LEFT JOIN standard_specs standard ON po_line.spec_source = 'STANDARD' AND standard.standard_spec_id = po_line.spec_revision_id
-    LEFT JOIN customer_specs custom ON po_line.spec_source = 'CUSTOMER' AND custom.customer_spec_id = po_line.spec_revision_id
-    WHERE instruction_line.di_id = ?
-    ORDER BY instruction_line.di_line_id ASC
-  `).bind(shipment.di_id).all();
+  const products = await shipmentEntryProducts(db, shipment.di_id);
 
   const { results: containerRows } = await db.prepare(`
     SELECT container.container_no, container.container_type, container.seal_no,
@@ -324,13 +337,7 @@ async function findPhase6ShipmentReadModel(db, identifier, lookupField) {
     final_invoice_total: Number(shipment.final_invoice_total),
     allocated_credit_amount: Number(shipment.allocated_credit_amount),
     payment_total: Number(shipment.payment_total),
-    products: (products || []).map(product => ({
-      po_revision_line_id: product.line_id,
-      product_code: product.product_code, product_name: product.product_name,
-      planned_qty_mt: Number(product.planned_qty_mt), packing_snapshot: product.packing_snapshot,
-      spec_revision_id: product.spec_revision_id, spec_application: product.spec_application,
-      unit_weight_kg: Number(product.unit_weight_kg || 0), unit_price: Number(product.unit_price), currency: product.po_currency
-    })),
+    products,
     containers
   };
 }
@@ -405,8 +412,7 @@ async function resolveShipmentInvoiceLines(db, shipment, lines, { final, prelimi
     const maxQtyMt = Number(reference.max_qty_mt);
     const actualQtyMt = Number(reference.actual_qty_mt);
     if (preliminary) {
-      if (Number(reference.tolerance_pct) <= 0) throw codedError('INVOICE_PRELIMINARY_FIXED_WEIGHT');
-      if (Math.abs(line.qtyMt - maxQtyMt) > 0.000001) throw codedError('INVOICE_PRELIMINARY_QTY_INVALID');
+      if (line.qtyMt > maxQtyMt + 0.000001) throw codedError('INVOICE_PRELIMINARY_QTY_EXCEEDS_DI');
     }
     if (final) {
       if (line.qtyMt > maxQtyMt + 0.000001) throw codedError('INVOICE_FINAL_QTY_EXCEEDS_PO_MAX');
@@ -529,10 +535,11 @@ function invoiceAuditForStateStatement(db, invoiceId, invoiceState, eventType, a
 function shipmentCreationStatement(db, diId, actorId, requirePreviousMutation = false) {
   const shipmentId = `SHP-${crypto.randomUUID()}`;
   return db.prepare(`
-    INSERT INTO phase6_shipments (shipment_id, di_id, status, created_by, updated_by, planned_loading_date)
-    SELECT ?, di_id, 'PLANNING', ?, ?, ${requestedLoadingDateExpression('delivery_instructions.di_id')}
+    INSERT INTO phase6_shipments (shipment_id, di_id, status, created_by, updated_by, planned_loading_date, planned_loading_end_date)
+    SELECT ?, di_id, 'PLANNING', ?, ?, ${requestedLoadingDateExpression('delivery_instructions.di_id')}, ${requestedLoadingDateExpression('delivery_instructions.di_id', 'plannedLoadingEndDate')}
     FROM delivery_instructions
     WHERE di_id = ? AND status = 'CONFIRMED'
+      AND NOT EXISTS (SELECT 1 FROM phase6_shipments WHERE phase6_shipments.di_id = delivery_instructions.di_id)
       ${requirePreviousMutation ? 'AND changes() = 1' : ''}
   `).bind(shipmentId, actorId, actorId, diId);
 }
@@ -563,6 +570,7 @@ function deliveryInstructionSnapshot(deliveryInstruction) {
     shippingMonth: value('shippingMonth', 'shipping_month'),
     shippingPeriod: value('shippingPeriod', 'shipping_period'),
     containerPlan: value('containerPlan', 'container_plan'),
+    plannedLoadingEndDate: deliveryInstruction.plannedLoadingEndDate ?? deliveryInstruction.planned_loading_end_date ?? undefined,
     plannedLoadingDate: Object.hasOwn(deliveryInstruction, 'plannedLoadingDate') ? deliveryInstruction.plannedLoadingDate : (deliveryInstruction.planned_loading_date || undefined),
     note: deliveryInstruction.note,
     googleDriveUrl: value('googleDriveUrl', 'di_drive_url'),
@@ -869,6 +877,7 @@ function deliveryInstructionUpdateDto(existing, dto) {
     shippingMonth: existing.shipping_month,
     shippingPeriod: existing.shipping_period,
     containerPlan: existing.container_plan,
+    plannedLoadingEndDate: existing.planned_loading_end_date ?? undefined,
     plannedLoadingDate: existing.planned_loading_date ?? undefined,
     note: existing.note,
     googleDriveUrl: existing.di_drive_url,
@@ -1270,11 +1279,11 @@ export function createShippingDiRepository(db) {
           SET status = 'CONFIRMED', lifecycle_version = lifecycle_version + 1, updated_by = ?, updated_at = CURRENT_TIMESTAMP
           WHERE di_id = ? AND status = 'DRAFT' AND lifecycle_version = ?
         `).bind(actorId, diId, deliveryInstruction.lifecycle_version),
-        shipmentCreationStatement(db, diId, actorId, true),
         auditAfterMutationStatement(db, 'DI', diId, 'DI_CONFIRMED', actorId, {
           oldStatus: deliveryInstruction.status,
           newStatus: 'CONFIRMED'
-        })
+        }),
+        shipmentCreationStatement(db, diId, actorId, true)
       ]);
       if (!mutationApplied(results[0])) throw codedError('DI_NOT_DRAFT');
       return findDeliveryInstruction(db, diId);
@@ -1331,7 +1340,7 @@ export function createShippingDiRepository(db) {
     async deleteDraftDeliveryInstruction(diId) {
       const deliveryInstruction = await findDeliveryInstruction(db, diId);
       if (!deliveryInstruction) throw codedError('DI_NOT_FOUND');
-      if (deliveryInstruction.status !== 'DRAFT') throw codedError('DI_HARD_DELETE_FORBIDDEN');
+      if (deliveryInstruction.status !== 'DRAFT' || await findPhase6Shipment(db, diId)) throw codedError('DI_HARD_DELETE_FORBIDDEN');
       const result = await db.prepare(`
         DELETE FROM delivery_instructions
         WHERE di_id = ? AND status = 'DRAFT' AND lifecycle_version = ?
@@ -1380,6 +1389,7 @@ export function createShippingDiRepository(db) {
       const shipment = await findPhase6Shipment(db, shipmentId);
       if (!shipment || shipment.shipment_id !== shipmentId) throw codedError('SHIPMENT_NOT_FOUND');
 
+      if ((await findDeliveryInstruction(db, shipment.di_id))?.status === 'DRAFT') throw codedError('DI_NOT_CONFIRMED');
       const isInitialBooking = shipment.status === 'PLANNING';
       const isEditableBooking = ['BOOKED', 'LOADED', 'DOCS_SENT'].includes(shipment.status);
       if (!isInitialBooking && !isEditableBooking) throw codedError('SHIPMENT_NOT_PLANNING');
@@ -1541,14 +1551,17 @@ export function createShippingDiRepository(db) {
         const results = await db.batch([
           db.prepare(`
             UPDATE phase6_shipments
-            SET planned_loading_date = ?, updated_by = ?, updated_at = CURRENT_TIMESTAMP
+            SET planned_loading_date = ?, planned_loading_end_date = ?, updated_by = ?, updated_at = CURRENT_TIMESTAMP
             WHERE shipment_id = ? AND status = 'BOOKED'
               AND planned_loading_date IS ?
-              AND planned_loading_date IS NOT ?
-          `).bind(schedule.plannedLoadingDate, actorId, shipmentId, shipment.planned_loading_date, schedule.plannedLoadingDate),
+              AND planned_loading_end_date IS ?
+              AND (planned_loading_date IS NOT ? OR planned_loading_end_date IS NOT ?)
+          `).bind(schedule.plannedLoadingDate, schedule.plannedLoadingEndDate ?? null, actorId, shipmentId, shipment.planned_loading_date, shipment.planned_loading_end_date, schedule.plannedLoadingDate, schedule.plannedLoadingEndDate ?? null),
           auditAfterMutationStatement(db, 'SHIPMENT', shipmentId, 'PLANNED_LOADING_DATE_UPDATED', actorId, {
             old: shipment.planned_loading_date,
-            new: schedule.plannedLoadingDate
+            new: schedule.plannedLoadingDate,
+            oldEnd: shipment.planned_loading_end_date ?? undefined,
+            newEnd: schedule.plannedLoadingEndDate
           })
         ]);
         if (!mutationApplied(results[0])) throw codedError('SHIPMENT_SCHEDULE_STALE');
@@ -1556,7 +1569,7 @@ export function createShippingDiRepository(db) {
         const scheduleResult = calculateScheduleResult(
           deliveryInstruction.shipping_month,
           deliveryInstruction.shipping_period,
-          schedule.actualLoadingDate
+          schedule.actualLoadingDate, shipment.planned_loading_date, shipment.planned_loading_end_date
         );
         const scheduleNote = schedule.scheduleNote === undefined ? shipment.schedule_note : schedule.scheduleNote;
         const results = await db.batch([
@@ -1741,7 +1754,7 @@ export function createShippingDiRepository(db) {
       const results = await db.batch([
         db.prepare(`
           UPDATE phase6_shipments
-          SET status = 'DOCS_SENT', all_ship_docs_drive_url = ?, digital_docs_sent_date = ?,
+          SET status = 'DOCS_SENT', all_ship_docs_drive_url = COALESCE(?, all_ship_docs_drive_url), digital_docs_sent_date = ?,
               original_docs_required = ?, dhl_sent_date = ?, dhl_tracking_no = ?, docs_note = ?,
               updated_by = ?, updated_at = CURRENT_TIMESTAMP
           WHERE shipment_id = ? AND status = 'LOADED'
@@ -1952,12 +1965,22 @@ export function createShippingDiRepository(db) {
 
     async createShipmentInvoice(shipmentId, dto, actorId) {
       const invoice = validateShipmentInvoice(dto);
-      const shipment = await findPhase6Shipment(db, shipmentId);
-      if (!shipment || shipment.shipment_id !== shipmentId) throw codedError('SHIPMENT_NOT_FOUND');
-      if (!['BOOKED', 'LOADED', 'DOCS_SENT'].includes(shipment.status)) {
-        throw codedError('SHIPMENT_NOT_BOOKED');
+      let shipment = await findPhase6Shipment(db, shipmentId);
+      let draftAnchor;
+      if (invoice.version === 'PRELIMINARY' && shipment?.shipment_id !== shipmentId) {
+        const di = await findDeliveryInstruction(db, shipmentId);
+        if (di?.status === 'CANCELLED') throw codedError('INVOICE_DI_CANCELLED');
+        if (di?.status === 'DRAFT') {
+          if (!shipment) {
+            draftAnchor = di;
+            shipment = { shipment_id: 'SHP-' + crypto.randomUUID(), di_id: di.di_id, status: 'PLANNING' };
+          }
+          shipmentId = shipment.shipment_id;
+        }
       }
-      if (invoice.version === 'FINAL' && !['LOADED', 'DOCS_SENT'].includes(shipment.status)) throw codedError('INVOICE_FINAL_REQUIRES_ACTUAL_QTY');
+      if (!shipment || shipment.shipment_id !== shipmentId) throw codedError('SHIPMENT_NOT_FOUND');
+      if (shipment.status === 'CANCELLED' || (await findDeliveryInstruction(db, shipment.di_id))?.status === 'CANCELLED') throw codedError('INVOICE_DI_CANCELLED');
+      if (invoice.version === 'FINAL' && (!['LOADED', 'DOCS_SENT'].includes(shipment.status) || !shipment.booking_no || !shipment.actual_loading_date)) throw codedError('INVOICE_FINAL_REQUIRES_ACTUAL_QTY');
 
       const resolved = await resolveShipmentInvoiceLines(db, shipment, invoice.lines, {
         preliminary: invoice.version === 'PRELIMINARY',
@@ -1986,6 +2009,10 @@ export function createShippingDiRepository(db) {
         finalContainerVersion
       };
       const statements = [
+        ...(draftAnchor ? [db.prepare(
+          "INSERT INTO phase6_shipments (shipment_id, di_id, status, created_by, updated_by, planned_loading_date, planned_loading_end_date) " +
+          "SELECT ?, di_id, 'PLANNING', ?, ?, ?, ? FROM delivery_instructions WHERE di_id = ? AND status = 'DRAFT' AND lifecycle_version = ?"
+        ).bind(shipmentId, actorId, actorId, draftAnchor.planned_loading_date, draftAnchor.planned_loading_end_date, draftAnchor.di_id, draftAnchor.lifecycle_version)] : []),
         ...(finalReservation ? [finalInvoiceReservationStatement(db, shipment, resolved.lines, finalReservation)] : []),
         db.prepare(`
           INSERT INTO shipment_invoices (
@@ -2023,7 +2050,7 @@ export function createShippingDiRepository(db) {
       }
       try {
         const results = await db.batch(statements);
-        const headerResultIndex = invoice.version === 'FINAL' ? 1 : 0;
+        const headerResultIndex = invoice.version === 'FINAL' || draftAnchor ? 1 : 0;
         if ((invoice.version === 'FINAL' && !mutationApplied(results[0])) || !mutationApplied(results[headerResultIndex])) {
           if (invoice.version === 'FINAL') await assertFinalInvoicePaymentObligation(db, shipmentId, resolved.lines);
           throw codedError(invoice.version === 'FINAL' ? 'INVOICE_FINAL_STALE' : 'INVOICE_NOT_CREATED');
@@ -2077,7 +2104,7 @@ export function createShippingDiRepository(db) {
       if (existing.version !== 'PRELIMINARY') throw codedError('INVOICE_NOT_PRELIMINARY');
       const shipment = await findPhase6Shipment(db, existing.shipment_id);
       if (!shipment || shipment.shipment_id !== existing.shipment_id) throw codedError('SHIPMENT_NOT_FOUND');
-      if (!['LOADED', 'DOCS_SENT'].includes(shipment.status)) throw codedError('INVOICE_FINAL_REQUIRES_ACTUAL_QTY');
+      if ((!['LOADED', 'DOCS_SENT'].includes(shipment.status) || !shipment.booking_no || !shipment.actual_loading_date)) throw codedError('INVOICE_FINAL_REQUIRES_ACTUAL_QTY');
       const resolved = await resolveShipmentInvoiceLines(db, shipment, finalLines, { final: true });
       await assertFinalInvoicePaymentObligation(db, shipment.shipment_id, resolved.lines);
       const finalContainerVersion = Number(shipment.container_version);
@@ -2147,6 +2174,15 @@ export function createShippingDiRepository(db) {
       return findPhase6ShipmentReadModel(db, diId, 'di_id');
     },
 
+    async getDraftInvoiceWorkspace(diId) {
+      const di = await findDeliveryInstruction(db, diId);
+      if (di?.status !== 'DRAFT') return null;
+      const shipment = await findPhase6ShipmentReadModel(db, diId, 'di_id');
+      return { ...shipment, draft_di: true, shipment_id: shipment?.shipment_id || diId, di_id: diId, customer_id: di.customer_id,
+        products: shipment?.products || await shipmentEntryProducts(db, diId), containers: [] };
+
+    },
+
     async getPhase6ShipmentHistoryByShipmentId(shipmentId) {
       const shipment = await findPhase6Shipment(db, shipmentId);
       if (!shipment || shipment.shipment_id !== shipmentId) throw codedError('SHIPMENT_NOT_FOUND');
@@ -2195,7 +2231,7 @@ export function createShippingDiRepository(db) {
           COALESCE((SELECT SUM(line.planned_qty_mt) FROM delivery_instruction_lines line WHERE line.di_id = di.di_id), 0) AS planned_qty_mt,
           COALESCE((SELECT GROUP_CONCAT(product.product_name, ', ') FROM delivery_instruction_lines line JOIN products product ON product.product_id = line.product_id WHERE line.di_id = di.di_id), '') AS product_summary,
           COALESCE((SELECT GROUP_CONCAT(line.packing_snapshot, ', ') FROM delivery_instruction_lines line WHERE line.di_id = di.di_id), '') AS packing_summary,
-          shipment.shipment_id, shipment.booking_no, ${hasBlNo ? 'shipment.bl_no' : 'NULL AS bl_no'}, CASE WHEN shipment.shipment_id IS NOT NULL THEN shipment.planned_loading_date ELSE ${requestedLoadingDateExpression('di.di_id')} END AS planned_loading_date, shipment.actual_loading_date,
+          shipment.shipment_id, shipment.booking_no, ${hasBlNo ? 'shipment.bl_no' : 'NULL AS bl_no'}, CASE WHEN shipment.shipment_id IS NOT NULL THEN shipment.planned_loading_date ELSE ${requestedLoadingDateExpression('di.di_id')} END AS planned_loading_date, CASE WHEN shipment.shipment_id IS NOT NULL THEN shipment.planned_loading_end_date ELSE ${requestedLoadingDateExpression('di.di_id', 'plannedLoadingEndDate')} END AS planned_loading_end_date, shipment.actual_loading_date,
           shipment.schedule_result, shipment.status AS shipment_status, shipment.payment_status
         FROM delivery_instructions di
         JOIN customers customer ON customer.customer_id = di.customer_id

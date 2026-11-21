@@ -762,3 +762,9 @@ test('Shipping PO references use customer number first and system number beneath
     assert.match(renderList(),/font-bold text-slate-900[^>]*>PO-2025-009<\/div>/);
   } finally {for(const key of [...Object.keys(bindings),'t'])delete globalThis[key];}
 });
+
+test('DI creation and document entry omit legacy Drive URL inputs', () => {
+  assert.doesNotMatch(html, /id="phase6(?:NewDriveUrl|DocsUrl)"/);
+  const submit = extractFunction('submitPhase6Documents(shipmentId)');
+  assert.match(submit, /digitalDocsSentDate[\s\S]*originalDocsRequired[\s\S]*dhlSentDate[\s\S]*dhlTrackingNo[\s\S]*docsNote/);
+});

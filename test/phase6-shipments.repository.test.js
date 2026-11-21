@@ -14,7 +14,7 @@ async function setupTestDb({ pauseFirstBatch, pauseQueuedFirstBatch } = {}) {
     '0004_commercial_shipment_control.sql',
     '0005_po_management.sql',
     '0006_customer_ownership_type.sql',
-    '0007_shipping_di_integration.sql',
+    '0007_shipping_di_integration.sql', '0015_di_loading_date_range.sql',
     '0010_booking_bl_no.sql'
   ]) {
     db.exec(await readFile(new URL(`../migrations/${migration}`, import.meta.url), 'utf8'));
@@ -1538,4 +1538,26 @@ test('shipment entry read model resolves PO line IDs, pricing and saved containe
   assert.equal(detail.products[0].currency,'USD');
   assert.equal(detail.containers[0].lines[0].po_revision_line_id,'LINE-1');
   assert.equal(detail.products[0].commission_rate_usd_mt,undefined);
+});
+
+test('draft DI accepts preliminary invoice, preserves it on confirmation, and blocks early finalization', async () => {
+  const {db, wrappedDb} = await setupTestDb();
+  const repo = createShippingDiRepository(wrappedDb);
+  seedShipmentContainerLines(db, 'DI-DRAFT');
+  const payload = {invoiceNo:'WCAT014', invoiceDate:'2026-09-12', version:'PRELIMINARY', lines:[{poRevisionLineId:'LINE-1', qtyMt:9.5}]};
+  const preliminary = await repo.createShipmentInvoice('DI-DRAFT', payload, 'U_EXPORT');
+  assert.equal(preliminary.version, 'PRELIMINARY');
+  await assert.rejects(repo.finalizeShipmentInvoice(preliminary.invoice_id, payload.lines, 'U_EXPORT'), /INVOICE_FINAL_REQUIRES_ACTUAL_QTY/);
+  await repo.confirmDeliveryInstruction('DI-DRAFT','U_EXPORT');
+  assert.equal((await repo.getShipmentInvoices(preliminary.shipment_id))[0].invoice_no,'WCAT014');
+});
+
+test('recording actual loading on the last day of a multi-day plan is on plan', async () => {
+  const {wrappedDb} = await setupTestDb();
+  const repo = createShippingDiRepository(wrappedDb);
+  const shipment = await repo.createShipmentForDeliveryInstruction('DI-CONFIRMED','U_EXPORT');
+  await repo.recordShipmentBooking(shipment.shipment_id,{bookingNo:'BK-RANGE'},'U_EXPORT');
+  await repo.updateShipmentSchedule(shipment.shipment_id,{plannedLoadingDate:'2026-09-22',plannedLoadingEndDate:'2026-09-24'},'U_EXPORT');
+  const result = await repo.updateShipmentSchedule(shipment.shipment_id,{actualLoadingDate:'2026-09-24'},'U_EXPORT');
+  assert.equal(result.schedule_result,'ON_PLAN');
 });

@@ -48,6 +48,7 @@ export async function projectCalendarEventForRole(event, caller) {
       event_id: await scopedCalendarEventId(caller, event),
       event_type: event.event_type,
       event_date: event.event_date,
+      ...(event.loading_day_count > 1 ? { loading_day: event.loading_day, loading_day_count: event.loading_day_count } : {}),
       ...pickPresent(event, ['planned_loading_date', 'actual_loading_date', 'container_plan']),
       planned_qty_mt: event.planned_qty_mt,
       actual_container_count: event.actual_container_count,
@@ -70,6 +71,7 @@ export async function projectCalendarEventForRole(event, caller) {
         event_id: opaqueId,
         event_type: event.event_type,
         event_date: event.event_date,
+      ...(event.loading_day_count > 1 ? { loading_day: event.loading_day, loading_day_count: event.loading_day_count } : {}),
         ...pickPresent(event, [
           'di_no', 'di_status', 'shipment_status',
           'booking_no', 'vessel', 'etd', 'eta',
@@ -81,6 +83,7 @@ export async function projectCalendarEventForRole(event, caller) {
       event_id: opaqueId,
       event_type: event.event_type,
       event_date: event.event_date,
+      ...(event.loading_day_count > 1 ? { loading_day: event.loading_day, loading_day_count: event.loading_day_count } : {}),
       ...pickPresent(event, [
         'customer_po_no', 'po_status', 'incoterm', 'destination',
         'delivery_start', 'delivery_end', 'total_contract_qty_mt'
