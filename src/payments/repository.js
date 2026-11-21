@@ -177,7 +177,7 @@ export function createPaymentsRepository(db) {
       const params = [];
 
       if (options.ownedByUserId) {
-        query += ' AND c.owner_user_id = ?';
+        query += " AND c.owner_user_id = ? AND c.ownership_type = 'ASSIGNED_SALES'";
         params.push(options.ownedByUserId);
       }
       if (options.customerId) {

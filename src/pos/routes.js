@@ -24,11 +24,12 @@ function filterPOForRole(po, caller) {
   }
 
   if (role === 'EXTERNAL_SALES') {
-    const activeRev = (po.revisions || []).find(r => r.status === 'ACTIVE');
+    const activeRev = (po.revisions || []).find(r => r.status === 'ACTIVE')
+      || [...(po.revisions || [])].reverse().find(r => r.status === 'DRAFT');
     if (!activeRev) {
       return null;
     }
-    if (activeRev.ownership_type_snapshot !== 'ASSIGNED_SALES' || activeRev.sales_owner_user_id_snapshot !== callerUserId) {
+    if (po.header.ownership_type !== 'ASSIGNED_SALES' || !callerUserId || po.header.owner_user_id !== callerUserId) {
       return null;
     }
 
@@ -95,6 +96,11 @@ function filterPOForRole(po, caller) {
         customer_id: po.header.customer_id,
         header_status: po.header.header_status
       },
+      mainProductName: po.mainProductName,
+      mainProductShortName: po.mainProductShortName,
+      mainProductCode: po.mainProductCode,
+      additionalProductCount: po.additionalProductCount,
+      totalMt: po.totalMt,
       revisions: [cleanActiveRev]
     };
   }

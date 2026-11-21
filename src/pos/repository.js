@@ -1376,14 +1376,16 @@ export function createPORepository(dbBinding) {
     },
 
     async getPO(poId) {
-      const header = await db.prepare("SELECT * FROM po_headers WHERE po_id = ?").bind(poId).first();
+      const header = await db.prepare(`SELECT h.*, c.owner_user_id, c.ownership_type
+        FROM po_headers h JOIN customers c ON c.customer_id = h.customer_id
+        WHERE h.po_id = ?`).bind(poId).first();
       if (!header) return null;
 
       const { results: revisions } = await db.prepare("SELECT * FROM po_revisions WHERE po_id = ? ORDER BY revision_no ASC").bind(poId).all();
       
       const revsWithDetails = [];
       for (const rev of revisions || []) {
-        const { results: lines } = await db.prepare("SELECT * FROM po_revision_lines WHERE po_revision_id = ? ORDER BY line_no ASC").bind(rev.revision_id).all();
+        const { results: lines } = await db.prepare("SELECT l.*, p.product_name, p.short_name, p.product_code FROM po_revision_lines l LEFT JOIN products p ON p.product_id = l.product_id WHERE l.po_revision_id = ? ORDER BY l.line_no ASC").bind(rev.revision_id).all();
         const { results: docs } = await db.prepare("SELECT * FROM po_revision_documents WHERE po_revision_id = ?").bind(rev.revision_id).all();
         revsWithDetails.push({
           ...rev,
@@ -1400,7 +1402,20 @@ export function createPORepository(dbBinding) {
         WHERE r.po_id = ?
       `).bind(poId).all();
 
+      const effectiveRevision = revsWithDetails.find(r => r.status === 'ACTIVE')
+        || [...revsWithDetails].reverse().find(r => r.status === 'DRAFT');
+      const effectiveLines = effectiveRevision?.lines || [];
+      const firstLine = effectiveLines[0] || await db.prepare(`
+        SELECT p.product_name, p.short_name, p.product_code
+        FROM pos legacy JOIN products p ON p.product_id = legacy.product_id
+        WHERE legacy.po_id = ? AND legacy.customer_id = ?
+      `).bind(poId, header.customer_id).first();
       return {
+        mainProductName: firstLine?.product_name || '',
+        mainProductShortName: firstLine?.short_name || '',
+        mainProductCode: firstLine?.product_code || '',
+        additionalProductCount: Math.max(0, effectiveLines.length - 1),
+        totalMt: Math.round(effectiveLines.reduce((sum, line) => sum + Number(line.contract_qty_mt ?? line.qty_mt ?? 0), 0) * 1000) / 1000,
         header,
         revisions: revsWithDetails,
         auditEvents: auditEvents || [],

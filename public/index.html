@@ -1475,6 +1475,7 @@
                 'calendar.dow.4': 'ศ.',
                 'calendar.dow.5': 'ส.',
                 'calendar.dow.6': 'อา.',
+                'po.moreProducts': '+{count} รายการเพิ่มเติม',
                 'calendar.moreEvents': '+{count} รายการ',
                 'calendar.noEventsDay': 'ไม่มีรายการ',
                 'calendar.noEventsPeriod': 'ไม่มีกิจกรรมในปฏิทินช่วงเวลานี้',
@@ -2665,6 +2666,7 @@
                 'calendar.dow.4': 'FRI',
                 'calendar.dow.5': 'SAT',
                 'calendar.dow.6': 'SUN',
+                'po.moreProducts': '+{count} more',
                 'calendar.moreEvents': '+{count} more',
                 'calendar.noEventsDay': 'No events',
                 'calendar.noEventsPeriod': 'No calendar events in this period.',
@@ -4101,6 +4103,23 @@
                 .replace(/'/g, '&#39;');
         }
 
+        function pricingProductSubtitle(product) {
+            const shortName = product?.shortName || '';
+            const code = product?.productCode || product?.code || '';
+            return shortName ? (code ? `${shortName} (${code})` : shortName) : code;
+        }
+
+        function pricingProductOptionLabel(product) {
+            const name = product?.productName || product?.name || product?.productId || product?.id || '-';
+            const subtitle = pricingProductSubtitle(product);
+            return subtitle ? `${name} — ${subtitle}` : name;
+        }
+
+        function renderPricingProduct(product) {
+            const name = product?.productName || product?.name || product?.productId || product?.id || '-';
+            return `<div class="font-bold text-slate-900">${escapePricingHtml(name)}</div><div class="text-[10px] text-slate-500">${escapePricingHtml(pricingProductSubtitle(product))}</div>`;
+        }
+
         function openEditStandardPrice(productIdOrPriceId) {
             const tr = (k, fb, p) => (typeof t === 'function' ? t(k, p) : (p ? String(fb).replace(/\{(\w+)\}/g, (_, m) => p[m] ?? '') : fb));
             if (!canManagePricing()) return alert(tr('pricing.onlyManagerEdit', 'Only Manager or Admin can edit Standard Price.'));
@@ -4109,8 +4128,7 @@
             const product = (state.products || []).find(p => p.id === productId);
             const hasPrice = Boolean(rec && rec.hasActivePrice !== false && rec.id);
             const title = hasPrice ? tr('pricing.editStandardPrice', 'Edit Standard Price') : tr('pricing.setStandardPrice', 'Set Standard Price');
-            const displayLabel = rec?.shortName || product?.shortName || rec?.productCode || product?.code || productId;
-            const displayName = rec?.productName || product?.name || '';
+            const displayProduct = { ...product, ...rec, productId };
             const currentVal = hasPrice ? (rec.pricePerMt ?? rec.fobUsdPerMt ?? '') : '';
             const currentCurrency = rec?.currency || 'USD';
             const effectiveVal = hasPrice ? (rec.effectiveFrom || rec.effectiveDate || getTodayIso()) : getTodayIso();
@@ -4122,7 +4140,7 @@
                         <div>
                             <div class="text-[10px] font-black uppercase tracking-wider text-blue-600">${tr('pricing.modalStdEyebrow', 'Standard Price')}</div>
                             <h3 class="text-lg font-bold text-slate-900">${title}</h3>
-                            <p class="text-xs text-slate-500">${escapePricingHtml(displayLabel)}${displayName ? ` · ${escapePricingHtml(displayName)}` : ''}</p>
+                            ${renderPricingProduct(displayProduct)}
                         </div>
                         <button type="button" onclick="closeModal()" class="text-slate-400 text-xl">&times;</button>
                     </div>
@@ -4288,7 +4306,7 @@
                         <div class="flex justify-between items-start border-b pb-3">
                             <div>
                                 <div class="text-[10px] font-black uppercase tracking-wider text-blue-600">${tr('pricing.historyEyebrow', 'Standard Price History')}</div>
-                                <h3 class="text-lg font-bold text-slate-900">${escapePricingHtml(product?.shortName || product?.code || productId)} — ${escapePricingHtml(product?.name || '')}</h3>
+                                ${renderPricingProduct(product || { productId })}
                                 <p class="text-xs text-slate-500 mt-0.5">${tr('pricing.revisionsCount', '{count} recorded revision(s)', { count: standardPriceHistory.length })}</p>
                             </div>
                             <button type="button" onclick="closeModal()" class="text-slate-400 text-xl">&times;</button>
@@ -4333,7 +4351,7 @@
         function openRequestSpecialPrice() {
             const tr = (k, fb, p) => (typeof t === 'function' ? t(k, p) : (p ? String(fb).replace(/\{(\w+)\}/g, (_, m) => p[m] ?? '') : fb));
             const activeProducts = (state.products || []).filter(p => p.status === 'ACTIVE' || !p.status);
-            const productOptions = activeProducts.map(p => `<option value="${escapePricingHtml(p.id)}">${escapePricingHtml(p.shortName || p.code)} — ${escapePricingHtml(p.name)}</option>`).join('');
+            const productOptions = activeProducts.map(p => `<option value="${escapePricingHtml(p.id)}">${escapePricingHtml(pricingProductOptionLabel(p))}</option>`).join('');
             const customerOptions = getScopedCustomers().map(c => `<option value="${escapePricingHtml(c.id)}">${escapePricingHtml(c.name)}</option>`).join('');
             openModal(`
                 <div class="space-y-4">
@@ -4400,7 +4418,7 @@
             const firstSalesUserId = firstSalesUser ? (firstSalesUser.user_id || firstSalesUser.id) : '';
             const filteredCustomers = getScopedCustomers().filter(c => c.ownerId === firstSalesUserId);
             const customerOptions = filteredCustomers.map(c => `<option value="${c.id}">${c.name}</option>`).join('') || `<option value="">${tr('pricing.noOwnedCustomers', '-- No Customers Owned --')}</option>`;
-            const productOptions = (state.products || []).map(p => `<option value="${p.id}">${p.shortName}</option>`).join('');
+            const productOptions = (state.products || []).map(p => `<option value="${escapePricingHtml(p.id)}">${escapePricingHtml(pricingProductOptionLabel(p))}</option>`).join('');
 
             openModal(`
                 <div class="space-y-4">
@@ -4977,9 +4995,6 @@
             const standardRows = liveStandardList.map(x => {
                 const p = productMap[x.productId];
                 const hasPrice = Boolean(x.hasActivePrice !== false && x.id && Number(x.pricePerMt ?? x.fobUsdPerMt ?? 0) > 0);
-                const codeLabel = x.productCode || p?.code || x.productId;
-                const shortLabel = x.shortName || p?.shortName || codeLabel;
-                const fullName = x.productName || p?.name || '';
                 const currency = x.currency || 'USD';
                 const priceNum = Number(x.pricePerMt ?? x.fobUsdPerMt ?? 0);
                 const priceCell = hasPrice
@@ -4994,14 +5009,14 @@
                             <button type="button" onclick="openProductPriceHistoryModal('${escPrice(x.productId)}')" class="px-2.5 py-1.5 rounded-lg border border-slate-200 bg-white text-slate-700 hover:bg-slate-50 font-bold text-[10px] whitespace-nowrap">${tr('pricing.history', 'History')}</button>
                        </div>`
                     : `<span class="text-[10px] text-slate-400">${tr('common.viewOnly', 'View only')}</span>`;
-                return `<tr class="hover:bg-slate-50"><td class="p-3">${idCell}</td><td class="p-3"><div class="font-bold text-slate-900">${escPrice(shortLabel)} <span class="font-mono text-[10px] text-slate-400">(${escPrice(codeLabel)})</span></div><div class="text-[10px] text-slate-500">${escPrice(fullName)}</div></td><td class="p-3 text-right">${priceCell}</td><td class="p-3 text-center">${escPrice(x.effectiveFrom || x.effectiveDate || '-')}</td><td class="p-3 text-center">${escPrice(x.validUntil || '-')}</td><td class="p-3 text-center">${pricingStatusBadge(hasPrice ? x.status : 'NOT_SET')}</td><td class="p-3 text-right">${actionCell}</td></tr>`;
+                return `<tr class="hover:bg-slate-50"><td class="p-3">${idCell}</td><td class="p-3">${renderPricingProduct({ ...p, ...x })}</td><td class="p-3 text-right">${priceCell}</td><td class="p-3 text-center">${escPrice(x.effectiveFrom || x.effectiveDate || '-')}</td><td class="p-3 text-center">${escPrice(x.validUntil || '-')}</td><td class="p-3 text-center">${pricingStatusBadge(hasPrice ? x.status : 'NOT_SET')}</td><td class="p-3 text-right">${actionCell}</td></tr>`;
             }).join('');
 
             const allowedCustomerIds = new Set(getScopedCustomers().map(c => c.id));
             const specialRows = (state.specialPrices || []).filter(x => state.currentUser.role !== 'EXTERNAL_SALES' || allowedCustomerIds.has(x.customerId)).map(x => {
                 const p = productMap[x.productId], c = customerMap[x.customerId];
                 const actions = manager && String(x.approvalStatus).toUpperCase() === 'PENDING' ? `<div class="flex justify-end gap-1"><button onclick="reviewSpecialPrice('${x.id}','APPROVE')" class="px-2.5 py-1.5 rounded-lg bg-emerald-600 text-white font-bold text-[10px]">${tr('pricing.approve', 'Approve')}</button><button onclick="reviewSpecialPrice('${x.id}','REJECT')" class="px-2.5 py-1.5 rounded-lg bg-red-100 text-red-700 font-bold text-[10px]">${tr('pricing.reject', 'Reject')}</button></div>` : '<span class="text-[10px] text-slate-400">-</span>';
-                return `<tr class="hover:bg-slate-50"><td class="p-3 font-mono text-blue-600 font-bold">${escPrice(x.id)}</td><td class="p-3 font-bold text-slate-900">${escPrice(x.customerName || c?.name || x.customerId)}</td><td class="p-3"><div class="font-bold text-slate-900">${escPrice(x.shortName || p?.shortName || x.productId)}</div><div class="text-[10px] text-slate-500">${tr('pricing.stdAtRequest', 'Std at request: USD {price}', { price: Number(x.stdFobAtRequest || 0).toFixed(2) })}</div></td><td class="p-3 text-right font-black text-emerald-700">USD ${Number(x.approvedPriceUsd || 0).toFixed(2)}</td><td class="p-3 text-right">${Number(x.expectedQtyMt || 0).toFixed(3)} MT</td><td class="p-3 text-center">${escPrice(x.validUntil || '-')}</td><td class="p-3 text-center">${pricingStatusBadge(x.approvalStatus)}</td><td class="p-3 text-right">${actions}</td></tr>`;
+                return `<tr class="hover:bg-slate-50"><td class="p-3 font-mono text-blue-600 font-bold">${escPrice(x.id)}</td><td class="p-3 font-bold text-slate-900">${escPrice(x.customerName || c?.name || x.customerId)}</td><td class="p-3">${renderPricingProduct({ ...p, ...x })}<div class="text-[10px] text-slate-500">${tr('pricing.stdAtRequest', 'Std at request: USD {price}', { price: Number(x.stdFobAtRequest || 0).toFixed(2) })}</div></td><td class="p-3 text-right font-black text-emerald-700">USD ${Number(x.approvedPriceUsd || 0).toFixed(2)}</td><td class="p-3 text-right">${Number(x.expectedQtyMt || 0).toFixed(3)} MT</td><td class="p-3 text-center">${escPrice(x.validUntil || '-')}</td><td class="p-3 text-center">${pricingStatusBadge(x.approvalStatus)}</td><td class="p-3 text-right">${actions}</td></tr>`;
             }).join('');
 
             const priceNoteRows = (state.priceNotes || []).map(x => {
@@ -5018,7 +5033,7 @@
                         <div class="text-[10px] text-slate-500">${salesUser.email || ''}</div>
                     </td>
                     <td class="p-3 font-bold text-slate-900">${c?.name || x.customer_id}</td>
-                    <td class="p-3 font-bold text-slate-900">${p?.shortName || x.product_id}</td>
+                    <td class="p-3">${renderPricingProduct(p || { productId: x.product_id })}</td>
                     <td class="p-3 text-center font-bold text-slate-700">${portText}</td>
                     <td class="p-3 text-right font-black text-emerald-700">USD ${Number(x.offer_price_usd_per_mt || 0).toFixed(2)}</td>
                     <td class="p-3 text-slate-600">${x.note || '-'}</td>
@@ -7167,6 +7182,21 @@
             return `<div class="space-y-4"><section class="bg-white rounded-xl border border-blue-200 p-5"><div class="flex justify-between gap-4"><div><div class="text-xs text-slate-400 font-mono">${poId}</div><h3 class="text-xl font-black">${revision?.customer_po_no || poId}</h3><p class="text-sm text-slate-600">${customer?.name || customerId || '-'}</p></div><span class="px-2 py-1 h-fit rounded text-xs font-bold bg-blue-100 text-blue-800">${typeof translateStatus === 'function' ? translateStatus(header.header_status || 'OPEN') : (header.header_status || 'OPEN')}</span></div><div class="mt-4 flex flex-wrap gap-2">${revisionTabs}</div></section><section class="bg-white rounded-xl border border-slate-200 p-5"><h4 class="font-black">${tr('po.overview', 'Overview')}</h4><div class="grid md:grid-cols-3 gap-3 mt-3 text-xs"><div>${tr('po.revisionLabel', 'Revision:')} <strong>${revision ? `Rev. ${revision.revision_no} · ${typeof translateStatus === 'function' ? translateStatus(revision.status) : revision.status}` : '-'}</strong></div><div>Incoterm: <strong>${revision?.incoterm || '-'}</strong></div><div>${tr('po.deliveryLabel', 'Delivery:')} <strong>${revision?.delivery_start || '-'} – ${revision?.delivery_end || '-'}</strong></div></div></section><section class="bg-white rounded-xl border border-slate-200 overflow-hidden"><div class="p-4 border-b font-black">${tr('po.lines', 'Lines')}</div><table class="ui-table w-full text-xs"><thead><tr><th class="p-3">#</th><th class="p-3">${tr('common.product', 'Product')}</th><th class="p-3 text-right">${tr('po.colContractQty', 'Contract Qty')}</th><th class="p-3 text-right">${tr('po.colAllowedQty', 'Allowed Qty')}</th><th class="p-3">${tr('po.colPackaging', 'Packaging')}</th></tr></thead><tbody>${lineRows}</tbody></table></section><section class="bg-white rounded-xl border border-slate-200 p-5 space-y-4"><h4 class="font-black">${tr('po.documents', 'Documents')}</h4>${poAttachmentsHtml}<ul class="mt-2 text-xs">${documentRows}</ul></section><section class="bg-white rounded-xl border border-slate-200 p-5"><h4 class="font-black">${tr('po.history', 'History')}</h4><ul class="mt-2 text-xs">${historyRows}</ul></section></div>`;
         }
 
+        function getPoProductSummary(po) {
+            const revisions = po.revisions || [];
+            const revision = revisions.find(r => r.status === 'ACTIVE') || [...revisions].reverse().find(r => r.status === 'DRAFT');
+            const lines = revision?.lines || po.items || po.header?.items || [];
+            const first = lines[0] || po.header || po;
+            const product = (state.products || []).find(p => p.id === (first.product_id || first.productId));
+            return {
+                productName: po.mainProductName || first.product_name || product?.name || '-',
+                shortName: po.mainProductShortName || first.short_name || product?.shortName || '',
+                productCode: po.mainProductCode || first.product_code || product?.code || '',
+                additionalProductCount: po.additionalProductCount ?? Math.max(0, lines.length - 1),
+                totalMt: po.totalMt ?? (lines.length ? lines.reduce((sum, line) => sum + Number(line.contract_qty_mt ?? line.qty_mt ?? 0), 0) : Number(first.contract_qty_mt ?? first.qty_mt ?? 0))
+            };
+        }
+
         function renderRealPOListTable() {
             const tr = (k, fb, p) => (typeof t === 'function' ? t(k, p) : fb);
             const filters = state.poFilters || { search: '', customerId: 'ALL', status: 'ALL' };
@@ -7182,19 +7212,13 @@
                 const revisions = Array.isArray(po.revisions) ? po.revisions : [];
 
                 let customerPoNo = '';
-                let productCode = '';
-                let productName = '';
+                const summary = getPoProductSummary(po);
                 const activeRev = revisions.find(r => r.status === 'ACTIVE');
                 const draftRev = revisions.find(r => r.status === 'DRAFT');
                 const displayRev = activeRev || draftRev || revisions[revisions.length - 1];
                 if (displayRev) {
                     customerPoNo = displayRev.customer_po_no || '';
-                    const firstLine = displayRev.lines?.[0];
-                    if (firstLine) {
-                        const p = (state.products || []).find(x => x.id === firstLine.product_id);
-                        productCode = p ? p.code : '';
-                        productName = p ? (p.shortName || p.name) : '';
-                    }
+
                 }
 
                 const haystack = [
@@ -7202,8 +7226,13 @@
                     customerPoNo,
                     customer ? customer.name : '',
                     customer ? customer.code : '',
-                    productName,
-                    productCode
+                    summary.productName,
+                    summary.shortName,
+                    summary.productCode,
+                    ...(displayRev?.lines || []).flatMap(line => {
+                        const product = (state.products || []).find(p => p.id === line.product_id);
+                        return [line.product_name, line.short_name, line.product_code, product?.name, product?.shortName, product?.code];
+                    })
                 ].join(' ').toLowerCase();
 
                 if (searchText && !haystack.includes(searchText)) return false;
@@ -7227,7 +7256,7 @@
 
                             <div class="min-w-[180px]">
                                 <label class="block text-[10px] uppercase font-bold text-slate-400 mb-1">${tr('common.customer', 'Customer')}</label>
-                                <select onchange="state.poFilters.customerId = this.value; renderView();" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-xs bg-white outline-none focus:border-blue-500">
+                                <select id="poCustomerFilter" onchange="state.poFilters.customerId = this.value; renderView();" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-xs bg-white outline-none focus:border-blue-500">
                                     <option value="ALL">${tr('common.allCustomers', 'All Customers')}</option>
                                     ${getScopedCustomers().map(c => `<option value="${c.id}" ${filters.customerId === c.id ? 'selected' : ''}>${c.name}</option>`).join('')}
                                 </select>
@@ -7294,8 +7323,7 @@
                                         let draftRevNo = '-';
                                         let poDateStr = '-';
                                         let customerPoNo = '';
-                                        let mainProduct = '-';
-                                        let totalQty = 0;
+                                        const summary = getPoProductSummary(po);
 
                                         const activeRev = revisions.find(r => r.status === 'ACTIVE');
                                         const draftRev = revisions.find(r => r.status === 'DRAFT');
@@ -7309,9 +7337,6 @@
                                         if (displayRev) {
                                             poDateStr = displayRev.po_date || '-';
                                             customerPoNo = displayRev.customer_po_no || '';
-                                            totalQty = (displayRev.lines || []).reduce((sum, l) => sum + (Number(l.contract_qty_mt) || 0), 0);
-                                            const p = (state.products || []).find(x => x.id === displayRev.lines?.[0]?.product_id);
-                                            mainProduct = p ? (p.shortName || p.name) : (displayRev.lines?.[0]?.product_id || '-');
                                         }
 
                                         return `
@@ -7324,8 +7349,8 @@
                                                     ${customer ? customer.name : customerId}
                                                     ${(customer?.ownershipType || customer?.ownership_type) === 'HOUSE_ACCOUNT' ? `<span class="ml-2 px-1.5 py-0.5 text-[9px] bg-slate-100 text-slate-600 font-bold border rounded">${tr('common.houseAccount', 'HOUSE ACCOUNT')}</span>` : ''}
                                                 </td>
-                                                <td class="p-3 font-medium text-slate-700">${mainProduct}</td>
-                                                <td class="p-3 text-right font-bold text-slate-900">${totalQty.toLocaleString()} MT</td>
+                                                <td class="p-3 font-medium text-slate-700">${renderPricingProduct(summary)}${summary.additionalProductCount ? `<div class="text-[10px] text-slate-500">${typeof t === 'function' ? t('po.moreProducts', { count: summary.additionalProductCount }) : `+${summary.additionalProductCount} more`}</div>` : ''}</td>
+                                                <td class="p-3 text-right font-bold text-slate-900">${Number(summary.totalMt || 0).toLocaleString(undefined, {maximumFractionDigits: 3})} MT</td>
                                                 <td class="p-3 text-center">
                                                     ${activeRevNo !== '-' ? `<span class="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-100 text-emerald-800">${activeRevNo}</span>` : '<span class="text-slate-400">-</span>'}
                                                 </td>

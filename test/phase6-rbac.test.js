@@ -263,3 +263,13 @@ test('PRODUCTION_WAREHOUSE never receives bl_no or booking_no in shipment detail
   const opDetail = (await (await exportHandler(request('/api/shipments-v2/S1'))).json()).data.shipment;
   assert.equal(opDetail.bl_no, 'BL-SECRET-001');
 });
+
+test('external shipment list and detail exclude House Accounts with stale owner links', async () => {
+  const { db, repo, wrappedDb } = await setupRbacFixture();
+  const handler = createShippingDiHandler({ repo, db: wrappedDb, resolveUser: async () => ({ user_id: 'U_SALES', role: 'EXTERNAL_SALES' }) });
+  db.exec("UPDATE customers SET ownership_type = 'HOUSE_ACCOUNT' WHERE customer_id = 'C1'");
+  assert.equal((await handler(request('/api/shipments-v2/S1'))).status, 403);
+  const response = await handler(request('/api/delivery-instructions/workspace'));
+  assert.deepEqual((await response.json()).data.deliveryInstructions, []);
+  db.close();
+});

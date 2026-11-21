@@ -151,7 +151,7 @@ export function createCustomerHandler({ repo, resolveUser }) {
           return json({ status: 'ERROR', message: 'Customer not found.' }, 404);
         }
         
-        if (ownerFilter && customer.ownerId !== ownerFilter) {
+        if (ownerFilter && (customer.ownerId !== ownerFilter || customer.ownershipType !== 'ASSIGNED_SALES')) {
           return json({ status: 'ERROR', message: 'Customer not found.' }, 404);
         }
         

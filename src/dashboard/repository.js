@@ -252,7 +252,7 @@ async function listUpcomingMilestones(db, todayIso, windowDays, options = {}) {
   `;
   const params = [todayIso, endIso, todayIso, endIso];
   if (options.ownedByUserId) {
-    query += ' AND c.owner_user_id = ?';
+    query += " AND c.owner_user_id = ? AND c.ownership_type = 'ASSIGNED_SALES'";
     params.push(options.ownedByUserId);
   }
   query += ' ORDER BY COALESCE(s.planned_loading_date, s.etd) ASC, di.di_no ASC LIMIT 12';
@@ -485,15 +485,14 @@ export function createDashboardRepository(db) {
             SELECT COUNT(*) AS my_customers_count,
                    SUM(CASE WHEN status = 'ACTIVE_CUSTOMER' THEN 1 ELSE 0 END) AS my_active_customers_count
             FROM customers
-            WHERE owner_user_id = ?
+            WHERE owner_user_id = ? AND ownership_type = 'ASSIGNED_SALES'
           `).bind(caller.user_id).first(),
           db.prepare(`
             SELECT COUNT(*) AS my_open_pos_count
             FROM po_headers ph
             JOIN customers c ON c.customer_id = ph.customer_id
-            WHERE c.owner_user_id = ?
+            WHERE c.owner_user_id = ? AND c.ownership_type = 'ASSIGNED_SALES'
               AND ph.header_status IN ('OPEN', 'PARTIALLY_SHIPPED')
-              AND ph.current_active_revision_id IS NOT NULL
           `).bind(caller.user_id).first(),
           paymentsRepo.listPaymentsDashboard({
             ownedByUserId: caller.user_id,

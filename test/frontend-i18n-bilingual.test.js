@@ -693,6 +693,10 @@ test('Product & Spec Master (Cards / List / Spec Sheet + Copy Spec output) switc
 test('Pricing, PO Management, Shipping / DI, Calendar, Logistics Partners, Payments, and Commission switch cleanly TH ↔ EN', () => {
   const h = createI18nHarness(
     [
+      extractFunction('escapePricingHtml'),
+      extractFunction('pricingProductSubtitle'),
+      extractFunction('renderPricingProduct'),
+      extractFunction('getPoProductSummary'),
       extractFunction('renderPricing'),
       extractFunction('renderRealPOListTable'),
       extractFunction('renderPOEngine'),

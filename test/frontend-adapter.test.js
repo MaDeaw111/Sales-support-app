@@ -2949,7 +2949,7 @@ test('PO Management removes hardcoded mock POs and loads live D1 POs from GET /a
   const loadPOsCode = extractFunction('loadPOsFromApi()');
   const renderListCode = extractFunction('renderRealPOListTable()');
   const loadPOsFn = new Function(`return (${loadPOsCode.trim()});`)();
-  const renderListFn = new Function(`return (${renderListCode.trim()});`)();
+  const renderListFn = new Function(`${extractFunction('escapePricingHtml(value)')} ${extractFunction('pricingProductSubtitle(product)')} ${extractFunction('renderPricingProduct(product)')} ${extractFunction('getPoProductSummary(po)')} return (${renderListCode.trim()});`)();
 
   let renderCount = 0;
   globalThis.state = {

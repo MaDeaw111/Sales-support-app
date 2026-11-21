@@ -251,3 +251,12 @@ test('getShipmentPaymentDetail returns invoices, credit usages, available credit
   assert.equal(await repo.getShipmentPaymentDetail('SHP-5'), null);
   assert.equal(await repo.getShipmentPaymentDetail('SHP-999'), null);
 });
+
+test('external payments exclude House Accounts even with a stale owner link', async () => {
+  const { db, wrappedDb } = await setupTestDb();
+  seedPaymentsFixture(db);
+  db.exec("UPDATE customers SET ownership_type = 'HOUSE_ACCOUNT' WHERE customer_id = 'C1'");
+  const result = await createPaymentsRepository(wrappedDb).listPaymentsDashboard({ ownedByUserId: 'U_SALES1', includeCustomerCredits: false });
+  assert.equal(result.items.length, 0);
+  db.close();
+});

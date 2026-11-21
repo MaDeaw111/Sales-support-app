@@ -2258,7 +2258,7 @@ export function createShippingDiRepository(db) {
       `;
       const params = [];
       if (filters.ownedByUserId) {
-        query += ' AND customer.owner_user_id = ?';
+        query += " AND customer.owner_user_id = ? AND customer.ownership_type = 'ASSIGNED_SALES'";
         params.push(filters.ownedByUserId);
       }
       if (filters.status) {

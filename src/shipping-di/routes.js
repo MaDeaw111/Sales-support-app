@@ -127,11 +127,11 @@ export function createShippingDiHandler({ repo, resolveUser, db }) {
     if (caller.role !== 'EXTERNAL_SALES') return true;
     if (!customerId || !db?.prepare) return false;
     const customer = await db.prepare(`
-      SELECT owner_user_id
+      SELECT owner_user_id, ownership_type
       FROM customers
       WHERE customer_id = ?
     `).bind(customerId).first();
-    return customer?.owner_user_id === caller.user_id;
+    return customer?.ownership_type === 'ASSIGNED_SALES' && customer.owner_user_id === caller.user_id;
   }
 
   async function customerIdForShippingRecord(record) {

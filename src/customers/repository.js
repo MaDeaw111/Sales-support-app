@@ -145,7 +145,7 @@ export function createCustomerRepository(dbBinding) {
                c.status, c.notes, c.ownership_type, c.created_at, c.updated_at
         FROM customers c
         LEFT JOIN users u ON u.user_id = c.owner_user_id
-        WHERE (? IS NULL OR c.owner_user_id = ?)
+        WHERE (? IS NULL OR (c.owner_user_id = ? AND c.ownership_type = 'ASSIGNED_SALES'))
         ORDER BY c.customer_name COLLATE NOCASE;
       `;
       const ownerId = filters.ownerUserId || null;

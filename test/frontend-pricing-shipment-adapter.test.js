@@ -393,7 +393,7 @@ test('loadPricingFromApi hydrates state.standardPrices and state.specialPrices f
 });
 
 test('renderPricing lists active D1 products with Set/Edit actions and restricts History button to MANAGER and ADMIN', () => {
-  const renderPricing = new Function(`return (${extractFunction('renderPricing(container)').trim()});`)();
+  const renderPricing = new Function(`${extractFunction('escapePricingHtml(value)')} ${extractFunction('pricingProductSubtitle(product)')} ${extractFunction('renderPricingProduct(product)')} return (${extractFunction('renderPricing(container)').trim()});`)();
   const pricingStatusBadge = new Function(`return (${extractFunction('pricingStatusBadge(status)').trim()});`)();
   const canManagePricing = new Function(`return (${extractFunction('canManagePricing()').trim()});`)();
 
@@ -452,7 +452,7 @@ test('renderPricing lists active D1 products with Set/Edit actions and restricts
 
 test('saveStandardPrice and openProductPriceHistoryModal call D1 pricing endpoints and render history', async () => {
   const saveStandardPrice = new Function(`return (${extractFunction('saveStandardPrice(productId)').trim()});`)();
-  const openProductPriceHistoryModal = new Function(`return (${extractFunction('openProductPriceHistoryModal(productId)').trim()});`)();
+  const openProductPriceHistoryModal = new Function(`${extractFunction('escapePricingHtml(value)')} ${extractFunction('pricingProductSubtitle(product)')} ${extractFunction('renderPricingProduct(product)')} return (${extractFunction('openProductPriceHistoryModal(productId)').trim()});`)();
   const canManagePricing = new Function(`return (${extractFunction('canManagePricing()').trim()});`)();
   const escapePricingHtml = new Function(`return (${extractFunction('escapePricingHtml(value)').trim()});`)();
 
