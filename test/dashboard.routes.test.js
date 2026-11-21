@@ -446,3 +446,44 @@ test('dashboard endpoint returns live analytics for every period on the complete
   assert.equal(overview.totalContract,0);
   assert.deepEqual(overview.products,[]);
 });
+
+test('external sales analytics separate paid, unpaid and pipeline commission and scope by assigned customer', async () => {
+  const {db,wrappedDb}=await setupTestDb();
+  await seedFullDashboardFixture(db);
+  db.exec(`
+    INSERT INTO product_applications(product_id,application) VALUES ('P1','FEED_GRADE'),('P2','PET_GRADE');
+    INSERT INTO standard_specs(standard_spec_id,product_id,application,revision_no,effective_date)
+      VALUES ('SF','P1','FEED_GRADE',1,'2026-01-01'),('SP','P2','PET_GRADE',1,'2026-01-01');
+    UPDATE po_revision_lines SET spec_revision_id=CASE product_id WHEN 'P1' THEN 'SF' ELSE 'SP' END;
+    UPDATE po_revisions SET po_date='2026-11-01' WHERE revision_id='REV1';
+    UPDATE po_revisions SET po_date='2026-10-01',status='DRAFT' WHERE revision_id='REV2';
+    UPDATE po_headers SET current_active_revision_id=NULL WHERE po_id='PO2';
+    UPDATE phase6_shipments SET status='LOADED',cash_received_amount=100,actual_loading_date='2026-11-10' WHERE shipment_id='SHP-2';
+    INSERT INTO shipment_invoices (invoice_id,shipment_id,invoice_no,invoice_date,currency,version,invoice_write_token,final_container_version,created_by)
+      VALUES ('IX','SHP-2','WCAT014','2026-11-10','EUR','FINAL','ix',0,'U_EXP');
+    INSERT INTO shipment_invoice_lines(invoice_line_id,invoice_id,po_revision_line_id,qty_mt,unit_price_snapshot,currency,line_amount,created_by)
+      VALUES ('LX','IX','L2',15,400,'EUR',6000,'U_EXP');
+  `);
+  const response=await worker.fetch(makeRequest('/api/external-sales/analytics','GET','exp-token'),{DB:wrappedDb});
+  assert.equal(response.status,200);
+  const {data}=await response.json();
+  assert.equal(data.summary.earnedCommissionUsd,200);
+  assert.equal(data.summary.pendingCommissionUsd,180);
+  assert.equal(data.summary.forecastCommissionUsd,1220);
+  assert.equal(data.summary.paidShippedMt,20);
+  assert.equal(data.summary.unpaidShippedMt,15);
+  assert.deepEqual(data.summary.contractValueByCurrency,{USD:50000,EUR:20000});
+  assert.equal(data.grades.find(item=>item.grade==='PET_GRADE').shippedMt,15);
+  const own=await worker.fetch(makeRequest('/api/external-sales/analytics','GET','sales1-token'),{DB:wrappedDb});
+  const scoped=(await own.json()).data;
+  assert.deepEqual(scoped.reps.map(rep=>rep.id),['U_SALES1']);
+  assert.equal(scoped.summary.pendingCommissionUsd,0);
+  assert.equal(scoped.summary.companySharePct,undefined);
+  assert.equal(scoped.summary.unassignedCustomers,undefined);
+  const {buildExternalSalesAnalytics}=await import('../src/external-sales/analytics.js');
+  const filtered=await buildExternalSalesAnalytics(wrappedDb,{role:'EXPORT'},{period:'this_month',status:'active'},new Date('2026-11-21T00:00:00Z'));
+  assert.equal(filtered.summary.contractedMt,100);
+  const searched=await buildExternalSalesAnalytics(wrappedDb,{role:'EXPORT'},{search:scoped.reps[0].customers[0].name});
+  assert.deepEqual(searched.reps.map(rep=>rep.id),['U_SALES1']);
+  assert.equal((await worker.fetch(makeRequest('/api/external-sales/analytics','GET','wh-token'),{DB:wrappedDb})).status,403);
+});

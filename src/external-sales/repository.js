@@ -1,3 +1,4 @@
+import { buildExternalSalesAnalytics } from './analytics.js';
 import { hashPassword } from '../auth/crypto.js';
 
 function bytesToBase64Url(bytes) {
@@ -19,6 +20,7 @@ export function createExternalSalesRepository(db) {
   if (!db) throw new Error('D1 DB binding is required.');
   
   return {
+    analytics(caller, filters) { return buildExternalSalesAnalytics(db, caller, filters); },
     async listExternalSales() {
       const usersSql = `
         SELECT user_id, full_name, email, role, status

@@ -1,3 +1,4 @@
+import { validAnalyticsPeriod } from './analytics.js';
 import { createExternalSalesRepository } from './repository.js';
 import { resolveAuthenticatedUser } from '../auth/routes.js';
 
@@ -29,6 +30,17 @@ export function createExternalSalesHandler({ repo, resolveUser }) {
 
     const isReadAllowed = ['ADMIN', 'MANAGER', 'SALES_SUPPORT'].includes(user.role);
     const isWriteAllowed = ['ADMIN', 'MANAGER'].includes(user.role);
+
+    if (path === '/api/external-sales/analytics' && method === 'GET') {
+      if (!isReadAllowed && !['EXPORT','EXTERNAL_SALES'].includes(user.role)) return json({status:'ERROR',message:'Permission denied.'},403);
+      const period = url.searchParams.get('period') || 'all';
+      const status = url.searchParams.get('status') || 'all';
+      const search = url.searchParams.get('search') || '';
+      if (!validAnalyticsPeriod(period) || !['all','active','inactive'].includes(status) || search.length>200) {
+        return json({status:'ERROR',message:'Invalid analytics filters.'},400);
+      }
+      return json({status:'SUCCESS',data:await repo.analytics(user,{period,status,search})});
+    }
 
     // List
     if (path === '/api/external-sales' && method === 'GET') {

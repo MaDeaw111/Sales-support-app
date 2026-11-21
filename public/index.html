@@ -940,6 +940,42 @@
                 // External Sales
                 'externalSales.eyebrow': 'งานขาย',
                 'externalSales.title': 'จัดการทีมขายภายนอก (External Sales)',
+                'salesAnalytics.period': "ช่วงเวลา",
+                'salesAnalytics.periodall': "ทั้งหมด",
+                'salesAnalytics.periodthis_month': "เดือนนี้",
+                'salesAnalytics.periodthis_quarter': "ไตรมาสนี้",
+                'salesAnalytics.periodthis_year': "ปีนี้",
+                'salesAnalytics.status': "สถานะ",
+                'salesAnalytics.statusall': "ทั้งหมด",
+                'salesAnalytics.statusactive': "ใช้งาน",
+                'salesAnalytics.statusinactive': "ไม่ใช้งาน",
+                'salesAnalytics.search': "ค้นหาชื่อ อีเมล หรือลูกค้า",
+                'salesAnalytics.coverage': "ทีมขายและลูกค้า",
+                'salesAnalytics.assigned': "ลูกค้าที่ดูแล",
+                'salesAnalytics.unassigned': "ยังไม่มีผู้ดูแล",
+                'salesAnalytics.contracted': "ปริมาณและมูลค่าสัญญา",
+                'salesAnalytics.companyShare': "สัดส่วนสัญญาของบริษัท",
+                'salesAnalytics.progress': "การจัดส่งและชำระเงิน",
+                'salesAnalytics.paid': "ส่งแล้วและชำระแล้ว",
+                'salesAnalytics.unpaid': "ส่งแล้วรอชำระ",
+                'salesAnalytics.remaining': "ยังไม่จัดส่ง",
+                'salesAnalytics.earned': "คอมมิชชั่นที่ได้รับ / รอจ่าย",
+                'salesAnalytics.pending': "รอลูกค้าชำระ",
+                'salesAnalytics.forecast': "คาดการณ์คอมมิชชั่น",
+                'salesAnalytics.commission': "คอมมิชชั่น",
+                'salesAnalytics.leaderboard': "ผลงานทีมขาย",
+                'salesAnalytics.customerPerformance': "ผลงานลูกค้าที่ดูแล",
+                'salesAnalytics.gradeMix': "สัดส่วนตามเกรด",
+                'salesAnalytics.FEED_GRADE': "เกรดอาหารสัตว์",
+                'salesAnalytics.PET_GRADE': "เกรดอาหารสัตว์เลี้ยง",
+                'salesAnalytics.OTHER': "อื่น ๆ",
+                'salesAnalytics.shipped': "ส่งแล้ว",
+                'salesAnalytics.orders': "PO เปิด / MT",
+                'salesAnalytics.noFinal': "ยังไม่มีใบแจ้งหนี้จริง",
+                'salesAnalytics.noDefault': "ยังไม่ได้ตั้งค่า",
+                'salesAnalytics.empty': "ไม่มีรายการ",
+                'salesAnalytics.loading': "กำลังโหลดข้อมูล",
+                'salesAnalytics.error': "โหลดข้อมูลไม่สำเร็จ กรุณารีเฟรช",
                 'externalSales.subtitle': 'ดูและจัดการข้อมูล External Sales, อัตราคอมมิชชั่นเริ่มต้น และลูกค้าที่รับผิดชอบ',
                 'externalSales.badgeEdit': 'Manager / Admin · แก้ไขได้',
                 'externalSales.badgeView': 'Sales Support · ดูได้อย่างเดียว',
@@ -2306,6 +2342,42 @@
                 // External Sales
                 'externalSales.eyebrow': 'Sales',
                 'externalSales.title': 'External Sales',
+                'salesAnalytics.period': "Period",
+                'salesAnalytics.periodall': "All Active",
+                'salesAnalytics.periodthis_month': "This Month",
+                'salesAnalytics.periodthis_quarter': "This Quarter",
+                'salesAnalytics.periodthis_year': "This Year",
+                'salesAnalytics.status': "Status",
+                'salesAnalytics.statusall': "All",
+                'salesAnalytics.statusactive': "Active",
+                'salesAnalytics.statusinactive': "Inactive",
+                'salesAnalytics.search': "Search rep, email or customer",
+                'salesAnalytics.coverage': "Active Reps & Coverage",
+                'salesAnalytics.assigned': "Assigned customers",
+                'salesAnalytics.unassigned': "Unassigned active customers",
+                'salesAnalytics.contracted': "Contracted Volume & Value",
+                'salesAnalytics.companyShare': "Company contract share",
+                'salesAnalytics.progress': "Shipment & Payment Progress",
+                'salesAnalytics.paid': "Paid shipped",
+                'salesAnalytics.unpaid': "Unpaid shipped",
+                'salesAnalytics.remaining': "Remaining",
+                'salesAnalytics.earned': "Earned / Payable Commission",
+                'salesAnalytics.pending': "Pending customer payment",
+                'salesAnalytics.forecast': "Pipeline forecast",
+                'salesAnalytics.commission': "Commission",
+                'salesAnalytics.leaderboard': "Rep Performance Leaderboard",
+                'salesAnalytics.customerPerformance': "Assigned Customer Performance",
+                'salesAnalytics.gradeMix': "Product Grade Mix",
+                'salesAnalytics.FEED_GRADE': "Feed Grade",
+                'salesAnalytics.PET_GRADE': "Pet Grade",
+                'salesAnalytics.OTHER': "Other",
+                'salesAnalytics.shipped': "Shipped",
+                'salesAnalytics.orders': "Active POs / MT",
+                'salesAnalytics.noFinal': "Awaiting final invoice",
+                'salesAnalytics.noDefault': "Not configured",
+                'salesAnalytics.empty': "No records",
+                'salesAnalytics.loading': "Loading analytics…",
+                'salesAnalytics.error': "Could not load analytics. Refresh to retry.",
                 'externalSales.subtitle': 'View and manage External Sales reps, default commission rates, and assigned customers.',
                 'externalSales.badgeEdit': 'Manager / Admin · Edit',
                 'externalSales.badgeView': 'Sales Support · View only',
@@ -3868,6 +3940,7 @@
                 const body = await res.json();
                 if (body && body.status === 'SUCCESS' && body.data && Array.isArray(body.data.externalSales)) {
                     state.externalSales = body.data.externalSales;
+                    if (state.currentView === 'external_sales' && state.salesAnalytics && typeof loadExternalSalesAnalytics === 'function') loadExternalSalesAnalytics(true);
                     renderView();
                 }
             } catch (err) {
@@ -4153,7 +4226,7 @@
         const navConfig = [
             { id: 'dashboard', label: 'Dashboard', section: 'Overview', icon: 'layout-dashboard', roles: ['ADMIN','MANAGER','SALES_SUPPORT','EXTERNAL_SALES','EXPORT','PRODUCTION_WAREHOUSE'] },
             { id: 'customers', label: 'Customer / CRM', section: 'Sales', icon: 'users', roles: ['ADMIN','MANAGER','SALES_SUPPORT','EXTERNAL_SALES','EXPORT'] },
-            { id: 'external_sales', label: 'External Sales', section: 'Sales', icon: 'user-cog', roles: ['ADMIN','MANAGER','SALES_SUPPORT'] },
+            { id: 'external_sales', label: 'External Sales', section: 'Sales', icon: 'user-cog', roles: ['ADMIN','MANAGER','SALES_SUPPORT','EXPORT','EXTERNAL_SALES'] },
             { id: 'products', label: 'Product / Spec', section: 'Sales', icon: 'package', roles: ['ADMIN','MANAGER','SALES_SUPPORT','EXTERNAL_SALES','EXPORT'] },
             { id: 'pricing', label: 'Pricing', section: 'Sales', icon: 'badge-percent', roles: ['ADMIN','MANAGER','SALES_SUPPORT','EXTERNAL_SALES'] },
             { id: 'po_engine', label: 'PO Management', section: 'Sales', icon: 'file-text', roles: ['ADMIN','MANAGER','SALES_SUPPORT','EXTERNAL_SALES','EXPORT'] },
@@ -4252,7 +4325,7 @@
         function canSettleCommission() { return ['ADMIN','MANAGER'].includes(state.currentUser?.role); }
         function canManageUsers() { return ['ADMIN'].includes(state.currentUser.role); }
         function canViewUsers() { return ['ADMIN','MANAGER'].includes(state.currentUser.role); }
-        function canViewExternalSalesManagement() { return ['ADMIN','MANAGER','SALES_SUPPORT'].includes(state.currentUser.role); }
+        function canViewExternalSalesManagement() { return ['ADMIN','MANAGER','SALES_SUPPORT','EXPORT','EXTERNAL_SALES'].includes(state.currentUser.role); }
         function canManageExternalSales() { return ['ADMIN','MANAGER'].includes(state.currentUser.role); }
 
         function getRoleNavLabel(item, role) {
@@ -6748,6 +6821,72 @@
                 }));
         }
 
+        async function loadExternalSalesAnalytics(force = false) {
+            const owner = state.currentUser.id + ':' + state.currentUser.role;
+            const previous = state.salesAnalytics;
+            if (!force && previous?.owner === owner) return;
+            const filters = previous?.owner === owner ? previous.filters : {period:'all',status:'all',search:''};
+            const request = {owner, filters:{...filters}, loading:true};
+            state.salesAnalytics = request;
+            try {
+                const response = await fetch('/api/external-sales/analytics?' + new URLSearchParams(request.filters));
+                const body = await response.json();
+                if (!response.ok || body.status !== 'SUCCESS') throw new Error('Sales analytics unavailable');
+                request.data = body.data;
+            } catch {
+                request.error = true;
+            } finally {
+                request.loading = false;
+                if (state.salesAnalytics === request && state.currentView === 'external_sales') renderView();
+            }
+        }
+
+        function updateExternalSalesAnalytics(key, value) {
+            if (!state.salesAnalytics || !['period','status','search'].includes(key)) return;
+            state.salesAnalytics.filters[key] = value;
+            loadExternalSalesAnalytics(true);
+        }
+
+        function renderExternalSalesAnalytics(model, own) {
+            const esc = escapeDashboardHtml;
+            const label = key => t('salesAnalytics.' + key);
+            const filters = model?.filters || {};
+            const select = (key, values) => `<label class="text-xs font-semibold">${label(key)}<select class="ml-2 rounded-lg border p-2" onchange="updateExternalSalesAnalytics('${key}',this.value)">${values.map(value=>`<option value="${value}" ${(filters[key] || 'all')===value?'selected':''}>${label(key+value)}</option>`).join('')}</select></label>`;
+            const toolbar = `<div class="flex flex-wrap items-center gap-3">${select('period',['all','this_month','this_quarter','this_year'])}${select('status',['all','active','inactive'])}<input type="search" maxlength="200" class="rounded-lg border p-2 text-xs" aria-label="${label('search')}" placeholder="${label('search')}" value="${esc(filters.search || '')}" onchange="updateExternalSalesAnalytics('search',this.value)"><button type="button" class="rounded-lg border px-3 py-2 text-xs" onclick="loadExternalSalesAnalytics(true)">${t('common.refresh')}</button></div>`;
+            const data = model?.data;
+            if (!data) return toolbar + `<p role="status" class="rounded-xl border bg-white p-4 text-xs">${label(model?.error?'error':'loading')}</p>`;
+            const {summary,reps,grades} = data;
+            const number = value => Number(value || 0).toLocaleString('en-US',{maximumFractionDigits:2});
+            const mt = value => number(value) + ' MT';
+            const money = value => 'USD ' + number(value);
+            const segment = item => {
+                const values = [item.paidShippedMt,item.unpaidShippedMt,item.remainingMt];
+                const total = values.reduce((sum,value)=>sum+value,0);
+                return `<div class="my-2 flex h-2 overflow-hidden rounded-full bg-slate-100">${values.map((value,i)=>`<span class="${['bg-emerald-500','bg-amber-400','bg-sky-400'][i]}" style="width:${total ? value/total*100 : 0}%"></span>`).join('')}</div>`;
+            };
+            const card = (title,value,body) => `<section class="rounded-xl border bg-white p-4"><h3 class="text-xs font-semibold text-slate-500">${label(title)}</h3><div class="mt-2 text-xl font-bold">${value}</div><div class="mt-2 space-y-1 text-xs text-slate-600">${body}</div></section>`;
+            const quantities = item => `<div>${label('paid')} ${mt(item.paidShippedMt)} · ${label('unpaid')} ${mt(item.unpaidShippedMt)} · ${label('remaining')} ${mt(item.remainingMt)}</div>`;
+            return toolbar + `<div data-sales-analytics class="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+                ${card('coverage',number(summary.activeReps),label('assigned')+' · '+number(summary.assignedCustomers)+(summary.unassignedCustomers?`<div class="mt-1 inline-block rounded-full bg-amber-50 px-2 py-1">${label('unassigned')} · ${number(summary.unassignedCustomers)}</div>`:''))}
+                ${card('contracted',mt(summary.contractedMt),Object.entries(summary.contractValueByCurrency).map(([currency,value])=>esc(currency)+' '+number(value)).join(' · ') + (summary.companySharePct!==undefined ? `<div>${number(summary.companySharePct)}% · ${label('companyShare')}</div>` : ''))}
+                ${card('progress',mt(summary.paidShippedMt),segment(summary)+quantities(summary))}
+                ${card('earned',money(summary.earnedCommissionUsd),`<div>${label('pending')} · ${money(summary.pendingCommissionUsd)}</div><div>${label('forecast')} · ${money(summary.forecastCommissionUsd)}</div><button type="button" class="font-semibold text-blue-700" onclick="changeView('commissions')">${label('commission')} ↗</button>`)}
+            </div><div class="grid gap-4 lg:grid-cols-2">
+                <section class="rounded-xl border bg-white p-4"><h3 class="text-sm font-bold">${label(own?'customerPerformance':'leaderboard')}</h3><div class="mt-3 space-y-3 text-xs">${reps.map((rep,index)=>`<div><button class="font-bold text-blue-700 hover:underline" onclick="openExternalSalesAnalyticsDetail(${index})">${esc(own?label('customerPerformance'):rep.name)}</button> · ${money(rep.earnedCommissionUsd)}${segment(rep)}${quantities(rep)}</div>`).join('') || label('empty')}</div></section>
+                <section class="rounded-xl border bg-white p-4"><h3 class="text-sm font-bold">${label('gradeMix')}</h3><div class="mt-3 grid gap-3 sm:grid-cols-2">${grades.map(item=>`<div class="rounded-lg bg-slate-50 p-3 text-xs"><strong>${label(item.grade)}</strong><div class="my-2 h-2 rounded-full bg-slate-200"><div class="h-full rounded-full bg-teal-500" style="width:${item.sharePct}%"></div></div><div>${mt(item.contractedMt)} · ${number(item.sharePct)}%</div><div>${label('shipped')} · ${mt(item.shippedMt)}</div></div>`).join('')}</div></section>
+            </div>`;
+        }
+
+        function openExternalSalesAnalyticsDetail(index) {
+            const model = state.salesAnalytics;
+            if (model?.owner !== state.currentUser.id + ':' + state.currentUser.role) return;
+            const rep = model.data?.reps[index];
+            if (!rep) return;
+            const esc = escapeDashboardHtml;
+            const label = key => t('salesAnalytics.'+key);
+            openModal(`<div class="space-y-4 p-5"><h3 class="text-lg font-bold">${esc(rep.name)}</h3>${rep.customers.map(customer=>`<section class="rounded-lg border p-3 text-xs"><h4 class="text-sm font-bold">${esc(customer.name)}</h4><h5 class="mt-2 font-semibold">${label('orders')}</h5>${customer.orders.map(order=>`<div>${esc(order.reference)} · ${order.qty} MT · ${label('remaining')} ${order.remaining} MT</div>`).join('') || '—'}<h5 class="mt-2 font-semibold">${label('shipped')}</h5>${customer.shipments.map(item=>`<div>${esc(item.diNo)} · ${label(item.paid?'paid':item.final?'unpaid':'noFinal')} · ${item.qty} MT × USD ${item.rate}/MT = USD ${item.earned.toFixed(2)} ${label('earned')}</div>`).join('') || '—'}</section>`).join('') || label('empty')}<button type="button" onclick="closeModal()" class="rounded-lg border px-3 py-2 text-xs">${t('common.close')}</button></div>`);
+        }
+
         function renderExternalSalesManagement(container) {
             const tr = (k, fb, p) => (typeof t === 'function' ? t(k, p) : (p ? String(fb).replace(/\{(\w+)\}/g, (_, m) => p[m] ?? '') : fb));
             if (!canViewExternalSalesManagement()) {
@@ -6755,7 +6894,11 @@
                 return;
             }
             const editable = canManageExternalSales();
-            const rows = getExternalSalesManagementRows();
+            const own = state.currentUser.role === 'EXTERNAL_SALES';
+            if (typeof loadExternalSalesAnalytics === 'function') loadExternalSalesAnalytics();
+            const model = state.salesAnalytics?.owner === state.currentUser.id + ':' + state.currentUser.role ? state.salesAnalytics : null;
+            const rows = model?.data ? model.data.reps.map(rep=>({...rep,assignedCustomers:rep.customers})) : own || state.currentUser.role === 'EXPORT' ? [] : getExternalSalesManagementRows();
+            const esc = escapeDashboardHtml;
             container.innerHTML = `
                 <div class="space-y-5">
                     <div class="flex flex-col sm:flex-row sm:items-end justify-between gap-3">
@@ -6769,23 +6912,25 @@
                             ${editable ? `<button onclick="openAddExternalSalesModal()" class="ui-btn ui-btn-primary"><i data-lucide="user-plus" class="w-4 h-4"></i><span>${tr('externalSales.addBtn', 'Add External Sales')}</span></button>` : ''}
                         </div>
                     </div>
-                    <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-x-auto">
+                    ${typeof renderExternalSalesAnalytics === 'function' ? renderExternalSalesAnalytics(model, own) : ''}
+                    ${!own ? `<div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-x-auto">
                         <table class="ui-table w-full text-left text-xs min-w-[900px]">
                             <thead class="bg-slate-100 text-slate-600 uppercase text-[10px] font-bold border-b border-slate-200">
-                                <tr><th class="p-3">${tr('externalSales.colNameEmail', 'Name / Email')}</th><th class="p-3">${tr('common.status', 'Status')}</th><th class="p-3 text-right">${tr('externalSales.colDefaultComm', 'Default Commission')}</th><th class="p-3">${tr('externalSales.colAssigned', 'Customers Assigned')}</th><th class="p-3 text-right">${tr('common.action', 'Action')}</th></tr>
+                                <tr><th class="p-3">${tr('externalSales.colNameEmail', 'Name / Email')}</th><th class="p-3">${tr('common.status', 'Status')}</th><th class="p-3 text-right">${tr('externalSales.colDefaultComm', 'Default Commission')}</th><th class="p-3">${tr('externalSales.colAssigned', 'Customers Assigned')}</th><th class="p-3 text-right">${tr('common.action', 'Action')}</th>${['orders','progress','earned'].map(key=>'<th class="p-3">'+tr('salesAnalytics.'+key,key)+'</th>').join('')}</tr>
                             </thead>
                             <tbody class="divide-y divide-slate-200">
-                                ${rows.length ? rows.map(u => `
+                                ${rows.length ? rows.map((u,index) => `
                                     <tr class="hover:bg-slate-50">
-                                        <td class="p-3"><div class="font-black text-slate-900">${u.name}</div><div class="text-[10px] text-slate-500">${u.email}</div><div class="text-[9px] font-mono text-blue-600 mt-0.5">${u.id}</div></td>
+                                        <td class="p-3"><div class="font-black text-slate-900">${model?.data ? `<button class="text-blue-700 hover:underline" onclick="openExternalSalesAnalyticsDetail(${index})">${esc(u.name)}</button>` : esc(u.name)}</div><div class="text-[10px] text-slate-500">${esc(u.email)}</div><div class="text-[9px] font-mono text-blue-600 mt-0.5">${esc(u.id)}</div></td>
                                         <td class="p-3"><span class="px-2 py-1 rounded text-[10px] font-black ${u.status === 'INACTIVE' ? 'bg-slate-200 text-slate-600' : 'bg-emerald-100 text-emerald-700'}">${typeof translateStatus === 'function' ? translateStatus(u.status || 'ACTIVE') : (u.status || 'ACTIVE')}</span></td>
-                                        <td class="p-3 text-right font-black text-fuchsia-700">USD ${Number(u.defaultCommissionRateUsdMt || 0).toFixed(2)} / MT</td>
-                                        <td class="p-3"><div class="font-bold text-slate-800">${tr('externalSales.customersCount', '{count} customer(s)', { count: u.assignedCustomers.length })}</div><div class="text-[10px] text-slate-500 mt-1 max-w-[360px]">${u.assignedCustomers.length ? u.assignedCustomers.map(c => c.name).join(', ') : tr('common.unassigned', 'Unassigned')}</div></td>
-                                        <td class="p-3 text-right">${editable ? `<button onclick="openExternalSalesModal('${u.id}')" class="px-3 py-1.5 rounded-lg bg-slate-900 text-white text-[10px] font-black">${tr('common.edit', 'Edit')}</button>` : `<span class="text-[10px] text-slate-400">${tr('common.viewOnly', 'View only')}</span>`}</td>
-                                    </tr>`).join('') : `<tr><td colspan="5" class="p-8 text-center text-slate-400">${tr('externalSales.empty', 'No External Sales users')}</td></tr>`}
+                                        <td class="p-3 text-right font-black text-fuchsia-700">${u.defaultCommissionRateUsdMt == null ? tr('salesAnalytics.noDefault', 'Not configured') : 'USD '+Number(u.defaultCommissionRateUsdMt).toFixed(2)+' / MT'}</td>
+                                        <td class="p-3"><div class="font-bold text-slate-800">${tr('externalSales.customersCount', '{count} customer(s)', { count: u.assignedCustomers.length })}</div><div class="text-[10px] text-slate-500 mt-1 max-w-[360px]">${u.assignedCustomers.length ? u.assignedCustomers.map(c => esc(c.name)).join(', ') : tr('common.unassigned', 'Unassigned')}</div></td>
+                                        <td class="p-3 text-right">${editable ? `<button onclick="openExternalSalesModal(this.dataset.repId)" data-rep-id="${esc(u.id)}" class="px-3 py-1.5 rounded-lg bg-slate-900 text-white text-[10px] font-black">${tr('common.edit', 'Edit')}</button>` : `<span class="text-[10px] text-slate-400">${tr('common.viewOnly', 'View only')}</span>`}</td>
+                                        <td class="p-3">${u.activePosCount ?? '—'} / ${u.contractedMt ?? '—'} MT</td><td class="p-3">${u.paidShippedMt ?? '—'} MT</td><td class="p-3">USD ${u.earnedCommissionUsd?.toFixed(2) ?? '—'}</td>
+                                    </tr>`).join('') : `<tr><td colspan="8" class="p-8 text-center text-slate-400">${tr('externalSales.empty', 'No External Sales users')}</td></tr>`}
                             </tbody>
                         </table>
-                    </div>
+                    </div>` : ''}
                     <div class="bg-slate-50 border border-slate-200 rounded-xl p-4 text-xs text-slate-600"><strong>${tr('externalSales.ruleTitle', 'Assignment rule:')}</strong> ${tr('externalSales.ruleBody', 'Customer ownership uses Customers.owner_id. Changing assignments here updates the same owner used by CRM, PO and External Sales data scope.')}</div>
                 </div>`;
             lucide.createIcons();

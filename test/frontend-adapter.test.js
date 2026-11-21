@@ -823,6 +823,10 @@ test('External Sales Front-end RBAC and Users Fallback check', () => {
   state.currentUser.role = 'SALES_SUPPORT';
   assert.equal(canView(), true);
   state.currentUser.role = 'EXTERNAL_SALES';
+  assert.equal(canView(), true);
+  state.currentUser.role = 'EXPORT';
+  assert.equal(canView(), true);
+  state.currentUser.role = 'PRODUCTION_WAREHOUSE';
   assert.equal(canView(), false);
 
   // Verify canManageExternalSales rules
