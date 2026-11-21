@@ -1642,6 +1642,8 @@
                 'calendar.planActualShort': 'แผน: {plan} · จริง: {actual}',
                 'calendar.reference': 'อ้างอิง',
                 'executive.title': "ภาพรวมผู้บริหาร",
+                'dashboard.fetchError': 'โหลดแดชบอร์ดไม่สำเร็จ กรุณากดรีเฟรชเพื่อลองอีกครั้ง',
+                'dashboard.analyticsError': 'ข้อมูลวิเคราะห์ไม่พร้อมใช้งานชั่วคราว กรุณากดรีเฟรชเพื่อลองอีกครั้ง',
                 'executive.period': "ช่วงเวลา",
                 'executive.all': "สัญญาที่เปิดทั้งหมด",
                 'executive.this_month': "เดือนนี้",
@@ -3005,6 +3007,8 @@
                 'calendar.planActualShort': 'Plan: {plan} · Actual: {actual}',
                 'calendar.reference': 'Reference',
                 'executive.title': "Executive Dashboard",
+                'dashboard.fetchError': 'Could not load the dashboard. Use Refresh to try again.',
+                'dashboard.analyticsError': 'Executive analytics are temporarily unavailable. Use Refresh to try again.',
                 'executive.period': "Period",
                 'executive.all': "All Active",
                 'executive.this_month': "This Month",
@@ -6239,7 +6243,7 @@
             ds.request = request;
             try {
                 const period = state.executivePeriod || 'all';
-                const res = await fetch(period === 'all' ? '/api/dashboard' : '/api/dashboard?period=' + encodeURIComponent(period));
+                const res = await fetch(period === 'all' ? '/api/dashboard' : '/api/dashboard?period=' + encodeURIComponent(period), {signal:AbortSignal.timeout(20000)});
                 if (ds.request !== request) return ds.data;
                 const body = await res.json().catch(() => null);
                 if (ds.request !== request) return ds.data;
@@ -6275,6 +6279,7 @@
             if (['ADMIN','MANAGER','SALES_SUPPORT'].includes(role)) actions.push(renderDashboardAction(t('dashboard.addCustomer'), 'user-plus', 'openAddCustomerModal()'));
             if (!warehouse) actions.push(renderDashboardAction(t('common.products'), 'package', "changeView('products')"));
             if (['ADMIN','MANAGER','EXPORT'].includes(role)) actions.push(renderDashboardAction(t('dashboard.addLogisticsPartner'), 'building-2', 'openLogisticsPartnerModal()'));
+            const bar = (value, color) => `<div class="h-2 overflow-hidden rounded-full bg-slate-100"><div class="h-full rounded-full ${color}" style="width:${value}%"></div></div>`;
             const grades = (data.gradeBreakdown || []).filter(item => item.grade !== 'OTHER' || item.contract || item.actual);
             const gradeCards = grades.map(item => `<div class="min-w-0 rounded-lg bg-slate-50 p-3">
                 <div class="flex justify-between gap-2 text-xs font-semibold"><span>${label(item.grade)}</span><span>${item.sharePct}%</span></div>
@@ -6301,7 +6306,6 @@
             const rate = Math.min(100,Math.max(0,Number(data.onPlanRatePct) || 0));
             const jump = (view, title) => `<button type="button" onclick="changeView('${view}')" aria-label="${esc(title)}" title="${esc(title)}" class="rounded-md px-2 py-1 text-sm font-semibold text-blue-700 hover:bg-blue-50">↗</button>`;
             const card = (title, primary, detail, action) => `<section class="rounded-xl border border-slate-200 bg-white p-5"><div class="flex items-start justify-between gap-2"><h2 class="text-xs font-semibold text-slate-500">${title}</h2>${action}</div><div class="mt-3 text-2xl font-bold text-slate-900">${primary}</div><div class="mt-2 space-y-2 text-xs text-slate-600">${detail}</div></section>`;
-            const bar = (value, color) => `<div class="h-2 overflow-hidden rounded-full bg-slate-100"><div class="h-full rounded-full ${color}" style="width:${value}%"></div></div>`;
             const progress = percent(data.actual, data.totalContract);
             const upcoming = data.upcoming;
             const peak = Math.max(1, ...data.months.flatMap(month => [month.actual, month.planned]));
@@ -6365,12 +6369,24 @@
             }
 
             const refreshBtn = renderDashboardAction(tr('common.refresh', 'Refresh'), 'refresh-cw', 'loadDashboardSummaryFromApi({ force: true })');
+            const dashboardBanner = (key, fallback) => `<div role="alert" class="mb-4 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-xs font-semibold text-rose-700">${escapeDashboardHtml(tr(key, fallback))}</div>`;
+            let analyticsFailed = hasLive && ds.data.executiveUnavailable;
+            let executive = '';
             if (hasLive && ds.data.executive) {
-                container.innerHTML = renderExecutiveDashboard(ds.data.executive, role, refreshBtn);
-                lucide.createIcons();
+                try {
+                    executive = renderExecutiveDashboard(ds.data.executive, role, refreshBtn);
+                } catch (error) {
+                    console.error('Dashboard analytics rendering failed', error);
+                    analyticsFailed = true;
+                }
+            }
+            const errBanner = (ds.error ? dashboardBanner('dashboard.fetchError', 'Could not load the dashboard. Use Refresh to try again.') : '')
+                + (analyticsFailed ? dashboardBanner('dashboard.analyticsError', 'Executive analytics are temporarily unavailable. Use Refresh to try again.') : '');
+            if (executive && role !== 'ADMIN') {
+                container.innerHTML = errBanner + executive;
+                if (typeof lucide !== 'undefined') lucide.createIcons();
                 return;
             }
-            const errBanner = ds.error ? `<div class="bg-rose-50 border border-rose-200 text-rose-700 rounded-xl px-4 py-3 text-xs font-bold">${escapeDashboardHtml(ds.error)}</div>` : '';
             const loadingBanner = (!hasLive && ds.loading) ? `<div class="bg-white border border-slate-200 rounded-xl p-6 text-center text-xs text-slate-400">${tr('dashboard.loading', 'Loading live D1 dashboard...')}</div>` : '';
 
             const formatDashboardMt = (val) => Number(val || 0).toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 2 });
@@ -6518,7 +6534,7 @@
                 container.innerHTML = `<div class="space-y-5">
                     ${renderDashboardHeader(tr('dashboard.adminTitle', 'System Administration'), tr('dashboard.adminSub', 'Live D1 health · Master data · Access control · Operational overview'), actions)}
                     ${errBanner}${loadingBanner}
-                    ${renderTeamOverviewSection(d?.team_overview)}
+                    ${executive || renderTeamOverviewSection(d?.team_overview)}
                     <div class="grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-3">
                         ${renderDashboardCard(tr('dashboard.kpiActiveUsers', 'Active Users'), Number(k.active_users || 0), 'user-check', 'emerald')}
                         ${renderDashboardCard(tr('dashboard.kpiInactiveUsers', 'Inactive Users'), Number(k.inactive_users || 0), 'user-x', 'slate')}
@@ -6528,8 +6544,8 @@
                         ${renderDashboardCard(tr('dashboard.kpiPayableCommissions', 'Payable Commissions'), Number(k.payable_commissions_count || 0), 'coins', 'fuchsia')}
                     </div>
                     <div class="grid xl:grid-cols-2 gap-4">
-                        <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden"><div class="px-4 py-3 border-b border-slate-100"><h3 class="text-sm font-black text-slate-900">${tr('dashboard.dataHealthTitle', 'D1 Data Health & Follow-up')}</h3><p class="text-[10px] text-slate-400 mt-0.5">${tr('dashboard.dataHealthSub', 'Live counts directly from production D1')}</p></div><div class="divide-y divide-slate-100">${healthRows || `<div class="p-6 text-center text-xs text-slate-400">${tr('dashboard.loadingHealth', 'Loading health checks...')}</div>`}</div></div>
-                        <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden"><div class="px-4 py-3 border-b border-slate-100 flex items-center justify-between"><div><h3 class="text-sm font-black text-slate-900">${tr('dashboard.userRolesTitle', 'User Roles')}</h3><p class="text-[10px] text-slate-400 mt-0.5">${tr('dashboard.userRolesSub', 'Active accounts by RBAC role')}</p></div><button onclick="changeView('users')" class="text-[11px] font-bold text-blue-600 hover:underline">${tr('dashboard.manageUsers', 'Manage Users')}</button></div><div class="divide-y divide-slate-100">${roleRows || `<div class="p-6 text-center text-xs text-slate-400">${tr('dashboard.loadingRoles', 'Loading roles...')}</div>`}</div></div>
+                        <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden"><div class="px-4 py-3 border-b border-slate-100"><h3 class="text-sm font-black text-slate-900">${tr('dashboard.dataHealthTitle', 'D1 Data Health & Follow-up')}</h3><p class="text-[10px] text-slate-400 mt-0.5">${tr('dashboard.dataHealthSub', 'Live counts directly from production D1')}</p></div><div class="divide-y divide-slate-100">${healthRows || `<div class="p-6 text-center text-xs text-slate-400">${d || ds.error ? tr('executive.empty', 'No records') : tr('dashboard.loadingHealth', 'Loading health checks...')}</div>`}</div></div>
+                        <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden"><div class="px-4 py-3 border-b border-slate-100 flex items-center justify-between"><div><h3 class="text-sm font-black text-slate-900">${tr('dashboard.userRolesTitle', 'User Roles')}</h3><p class="text-[10px] text-slate-400 mt-0.5">${tr('dashboard.userRolesSub', 'Active accounts by RBAC role')}</p></div><button onclick="changeView('users')" class="text-[11px] font-bold text-blue-600 hover:underline">${tr('dashboard.manageUsers', 'Manage Users')}</button></div><div class="divide-y divide-slate-100">${roleRows || `<div class="p-6 text-center text-xs text-slate-400">${d || ds.error ? tr('executive.empty', 'No records') : tr('dashboard.loadingRoles', 'Loading roles...')}</div>`}</div></div>
                     </div>
                 </div>`;
                 if (typeof lucide !== 'undefined' && lucide.createIcons) lucide.createIcons();

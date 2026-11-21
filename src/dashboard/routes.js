@@ -38,9 +38,22 @@ export function createDashboardHandler({ repo, resolveUser, db, now = () => new 
       return json({status:'ERROR',message:'Invalid dashboard period.'},400);
     }
     const snapshotTime = now();
-    const data = await activeRepo.getDashboardForCaller(caller, snapshotTime);
+    let data;
+    try {
+      data = await activeRepo.getDashboardForCaller(caller, snapshotTime);
+    } catch (error) {
+      console.error('Dashboard summary query failed', error);
+      return json({status:'ERROR',message:'Dashboard summary is unavailable.'},503);
+    }
     if (!data) return json({ status: 'ERROR', message: 'Permission denied.' }, 403);
-    if (activeRepo.getExecutiveDashboard) data.executive = await activeRepo.getExecutiveDashboard(caller, snapshotTime, period);
+    if (activeRepo.getExecutiveDashboard) {
+      try {
+        data.executive = await activeRepo.getExecutiveDashboard(caller, snapshotTime, period);
+      } catch (error) {
+        console.error('Dashboard analytics query failed', error);
+        data.executiveUnavailable = true;
+      }
+    }
     return json({ status: 'SUCCESS', data });
   };
 }

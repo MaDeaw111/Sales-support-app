@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFile } from 'node:fs/promises';
+import { readFile, readdir } from 'node:fs/promises';
 import { DatabaseSync } from 'node:sqlite';
 import worker from '../src/index.js';
 import { hashSessionToken } from '../src/auth/crypto.js';
@@ -8,17 +8,7 @@ import { createDashboardRepository } from '../src/dashboard/repository.js';
 
 async function setupTestDb() {
   const db = new DatabaseSync(':memory:');
-  for (const migration of [
-    '0001_auth.sql',
-    '0002_customers.sql',
-    '0003_product_specs.sql',
-    '0004_commercial_shipment_control.sql',
-    '0005_po_management.sql',
-    '0006_customer_ownership_type.sql',
-    '0007_shipping_di_integration.sql',
-    '0008_logistics_partners.sql',
-    '0009_commission_settlement.sql'
-  ]) {
+  for (const migration of (await readdir(new URL('../migrations/', import.meta.url))).filter(name=>/^00(?:0[1-9]|1[0-5])_.*\.sql$/.test(name)).sort()) {
     db.exec(await readFile(new URL(`../migrations/${migration}`, import.meta.url), 'utf8'));
   }
 
@@ -408,7 +398,6 @@ test('dashboard analytics resolve grade from specs and filter Bangkok calendar p
     UPDATE po_revision_lines SET spec_revision_id='PET1' WHERE line_id='L2';
     UPDATE po_revisions SET po_date='2026-11-01' WHERE revision_id='REV1';
     UPDATE po_revisions SET po_date='2026-10-01' WHERE revision_id='REV2';
-    ALTER TABLE phase6_shipments ADD COLUMN planned_loading_end_date TEXT;
     UPDATE phase6_shipments SET planned_loading_date='2026-11-22', planned_loading_end_date='2026-11-24', actual_loading_date='2026-11-24' WHERE shipment_id='SHP-1';
   `);
   const repo=createDashboardRepository(wrappedDb);
@@ -429,4 +418,31 @@ test('dashboard analytics resolve grade from specs and filter Bangkok calendar p
   assert.doesNotMatch(JSON.stringify(warehouse.insights),/USD|EUR/);
   const invalid=await worker.fetch(makeRequest('/api/dashboard?period=invalid','GET','admin-token'),{DB:wrappedDb});
   assert.equal(invalid.status,400);
+});
+
+test('dashboard endpoint returns live analytics for every period on the complete schema', async () => {
+  const {db,wrappedDb}=await setupTestDb();
+  await seedFullDashboardFixture(db);
+  db.exec(`
+    INSERT INTO product_applications(product_id,application) VALUES ('P1','FEED_GRADE'),('P2','PET_GRADE');
+    INSERT INTO standard_specs(standard_spec_id,product_id,application,revision_no,effective_date)
+      VALUES ('SPEC-F','P1','FEED_GRADE',1,'2026-01-01'),('SPEC-P','P2','PET_GRADE',1,'2026-01-01');
+    UPDATE po_headers SET header_status='OPEN', current_active_revision_id=NULL;
+    UPDATE po_revisions SET status='DRAFT';
+    UPDATE po_revision_lines SET spec_revision_id=CASE product_id WHEN 'P1' THEN 'SPEC-F' ELSE 'SPEC-P' END;
+  `);
+  for(const suffix of ['', '?period=all','?period=this_month','?period=this_quarter','?period=this_year']) {
+    const response=await worker.fetch(makeRequest('/api/dashboard'+suffix,'GET','admin-token'),{DB:wrappedDb});
+    assert.equal(response.status,200,suffix);
+    const {data}=await response.json();
+    assert.equal(data.executiveUnavailable,undefined);
+    assert.equal(data.executive.gradeBreakdown.length,2);
+    assert.ok(data.health.length);
+    assert.ok(data.role_breakdown.length);
+    if(!suffix || suffix==='?period=all') assert.equal(data.executive.totalContract,150);
+  }
+  const empty=await setupTestDb();
+  const overview=await createDashboardRepository(empty.wrappedDb).getExecutiveDashboard({role:'ADMIN'});
+  assert.equal(overview.totalContract,0);
+  assert.deepEqual(overview.products,[]);
 });

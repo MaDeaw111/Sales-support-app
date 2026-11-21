@@ -28,3 +28,24 @@ test('analytics render the donut, gauge, localized insight slides and four KPI j
   assert.match(output,/value="this_month" selected/);
   for(const view of ['po_engine','shipping','calendar','payments']) assert.ok(output.includes("changeView('"+view+"')"));
 });
+
+test('live admin response replaces loading placeholders with analytics and administration cards',()=>{
+  const container={innerHTML:''};
+  const data={role:'ADMIN',kpis:{active_users:7},health:[{label:'Data check',count:1,view:'customers'}],role_breakdown:[{role:'EXPORT',active_count:2,total_count:2}],executive:{openCount:1,totalContract:50,actual:0,remaining:50,upcoming:{},products:[{name:'Tapioca',contract:50}],gradeBreakdown:[{grade:'FEED_GRADE',sharePct:100,contract:50,actual:0,remaining:50}],months:[],watchlist:[]}};
+  const ctx=vm.createContext({state:{currentUser:{role:'ADMIN'},dashboardSummary:{data:null,loading:true}},escapeDashboardHtml:String,t:key=>key,renderDashboardAction:()=>'',renderDashboardHeader:title=>title,renderDashboardCard:(label,value)=>label+' '+value,lucide:{createIcons(){}},console:{error(){}}});
+  vm.runInContext(source,ctx);
+  const start=html.indexOf('        function renderDashboard(container)');
+  vm.runInContext(html.slice(start,html.indexOf('\n        }',start)+10),ctx);
+  ctx.renderDashboard(container);
+  assert.match(container.innerHTML,/dashboard.loading/);
+  ctx.state.dashboardSummary={data,loading:false};
+  ctx.renderDashboard(container);
+  assert.match(container.innerHTML,/data-executive-dashboard/);
+  assert.match(container.innerHTML,/dashboard.kpiActiveUsers 7/);
+  assert.match(container.innerHTML,/Data check|EXPORT/);
+  assert.doesNotMatch(container.innerHTML,/dashboard.loading/);
+  data.executive.products=null;
+  ctx.renderDashboard(container);
+  assert.match(container.innerHTML,/dashboard.analyticsError/);
+  assert.match(container.innerHTML,/dashboard.kpiActiveUsers 7/);
+});
