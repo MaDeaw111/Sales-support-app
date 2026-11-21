@@ -1435,6 +1435,31 @@
                 'shipping.applyCredit': 'ตัดใช้เครดิต',
                 'shipping.noHistory': 'ยังไม่มีประวัติการดำเนินการ',
                 'shipping.modalCreateDi': 'สร้าง Delivery Instruction (DI)',
+                'shipping.createLoading': "กำลังโหลด PO และข้อมูลการจัดส่ง…",
+                'shipping.guidedHelp': "เลือก PO และระบุปริมาณที่จะจัดส่ง ระบบตรวจสอบยอดคงเหลือก่อนบันทึก",
+                'shipping.poReference': "PO / สัญญาอ้างอิง *",
+                'shipping.choosePo': "เลือก PO / สัญญา",
+                'shipping.noEligiblePo': "ไม่มี PO ที่เปิดใช้งานพร้อมฉบับแก้ไข",
+                'shipping.draftRevision': "ฉบับร่าง Rev.",
+                'shipping.activeRevision': "ฉบับใช้งาน Rev.",
+                'shipping.draftScheduling': "กำลังวางแผนจาก PO ฉบับร่าง โดยไม่เปลี่ยนสถานะการอนุมัติ PO",
+                'shipping.optionalDiNo': "เลขที่ DI ลูกค้า (ไม่บังคับ)",
+                'shipping.shippingMonth': "เดือนจัดส่ง *",
+                'shipping.shippingHalf': "ช่วงเดือน *",
+                'shipping.firstHalf': "ครึ่งแรก (วันที่ 1–15)",
+                'shipping.secondHalf': "ครึ่งหลัง (วันที่ 16–สิ้นเดือน)",
+                'shipping.containerPlanSummary': "สรุปแผนบรรทุก",
+                'shipping.alreadyScheduled': "จัดส่งแล้วและจองไว้ (MT)",
+                'shipping.remainingBalance': "ยอดคงเหลือ (MT)",
+                'shipping.containerCount': "จำนวนตู้",
+                'shipping.plannedQty': "ปริมาณที่วางแผน (MT) *",
+                'shipping.quantityHelp': "คำนวณจากจำนวนตู้ × จำนวนหน่วย × น้ำหนักต่อหน่วย ÷ 1,000 หรือแก้ไข MT เอง ยอดคงเหลือรวมค่าคลาดเคลื่อนที่อนุญาต ระบุ 0 เพื่อไม่เลือกรายการ",
+                'shipping.quantityInvalid': "ระบุปริมาณมากกว่า 0 ภายในยอดคงเหลือ และจำนวนตู้เป็นจำนวนเต็มไม่ติดลบ",
+                'shipping.scheduleRequired': "กรุณาระบุเดือนและช่วงเดือนจัดส่ง",
+                'shipping.noPoLines': "PO ฉบับนี้ยังไม่มีรายการสินค้า กรุณาเพิ่มรายการในหน้า Manage ก่อน",
+                'shipping.createLoadFailed': "โหลด PO ไม่สำเร็จ กรุณาลองใหม่",
+                'shipping.balanceLoadFailed': "โหลดยอดคงเหลือไม่สำเร็จ กรุณาเลือก PO อีกครั้ง",
+                'shipping.createSaveFailed': "บันทึก DI ไม่สำเร็จ กรุณาตรวจสอบข้อมูลและลองใหม่",
                 'shipping.modalCreateDiSub': 'ใช้รายการจาก PO Revision ที่อนุมัติแล้วและตรวจสอบยอดคงเหลือก่อนบันทึก',
                 'shipping.partnerSuggestHint': 'ระบบจะแนะนำ Surveyor และ Forwarder เดิมของลูกค้าให้โดยอัตโนมัติ (แก้ไขได้)',
                 'shipping.saveDi': 'บันทึก DI',
@@ -2685,6 +2710,31 @@
                 'shipping.applyCredit': 'Apply Credit',
                 'shipping.noHistory': 'No history is available for this view.',
                 'shipping.modalCreateDi': 'Create Delivery Instruction',
+                'shipping.createLoading': "Loading purchase orders and shipment details…",
+                'shipping.guidedHelp': "Select a PO and enter shipment quantities. Remaining balances are checked before saving.",
+                'shipping.poReference': "PO Reference *",
+                'shipping.choosePo': "Choose a PO / Contract",
+                'shipping.noEligiblePo': "No open POs with an active or draft revision",
+                'shipping.draftRevision': "Draft Rev.",
+                'shipping.activeRevision': "Active Rev.",
+                'shipping.draftScheduling': "Scheduling from a draft PO revision. This does not approve or activate the PO.",
+                'shipping.optionalDiNo': "Customer DI No. (optional)",
+                'shipping.shippingMonth': "Shipping Month *",
+                'shipping.shippingHalf': "Shipping Half *",
+                'shipping.firstHalf': "First Half (1–15)",
+                'shipping.secondHalf': "Second Half (16–end)",
+                'shipping.containerPlanSummary': "Container Plan Summary",
+                'shipping.alreadyScheduled': "Shipped & Scheduled Qty (MT)",
+                'shipping.remainingBalance': "Remaining Balance (MT)",
+                'shipping.containerCount': "Number of Containers",
+                'shipping.plannedQty': "Planned Qty (MT) *",
+                'shipping.quantityHelp': "Containers × units × unit weight ÷ 1,000, or enter MT manually. Balance includes allowed tolerance. Use 0 to skip a line.",
+                'shipping.quantityInvalid': "Enter a positive quantity within the remaining balance and a non-negative whole container count.",
+                'shipping.scheduleRequired': "Select the shipping month and half.",
+                'shipping.noPoLines': "This PO revision has no product lines. Add a line in Manage first.",
+                'shipping.createLoadFailed': "Unable to load purchase orders. Please retry.",
+                'shipping.balanceLoadFailed': "Unable to load balances. Select the PO again to retry.",
+                'shipping.createSaveFailed': "DI could not be saved. Check the details and retry.",
                 'shipping.modalCreateDiSub': 'Use the approved PO revision line and the API balance check before saving.',
                 'shipping.partnerSuggestHint': 'Returning-Customer Surveyor and Forwarder suggestions are optional editable defaults.',
                 'shipping.saveDi': 'Save DI',
@@ -9791,32 +9841,135 @@
         }
 
         async function openCreatePhase6DeliveryInstruction() {
-            const tr = (k, fb, p) => (typeof t === 'function' ? t(k, p) : fb);
-            await loadPhase6ServicePartnersFromApi();
-            const today = new Date().toISOString().slice(0, 7);
-            openModal(`<div class="space-y-3"><div class="flex justify-between items-start"><div><h3 class="font-black text-slate-900">${tr('shipping.modalCreateDi', 'Create Delivery Instruction')}</h3><p class="text-[11px] text-slate-500">${tr('shipping.modalCreateDiSub', 'Use the approved PO revision line and the API balance check before saving.')}</p></div><button onclick="closeModal()" class="text-slate-400 text-xl">&times;</button></div><div class="grid grid-cols-1 md:grid-cols-2 gap-2 text-xs"><input id="phase6NewCustomer" onchange="applyPhase6PartnerSuggestions('phase6NewCustomer', 'phase6NewSurveyor', 'phase6NewForwarder')" placeholder="Customer ID *" class="border rounded p-2"><input id="phase6NewPo" placeholder="PO ID *" class="border rounded p-2"><input id="phase6NewRevision" placeholder="PO Revision ID *" class="border rounded p-2"><input id="phase6NewDiNo" placeholder="DI No. (optional)" class="border rounded p-2"><input id="phase6NewMonth" type="month" value="${today}" class="border rounded p-2"><select id="phase6NewPeriod" class="border rounded p-2"><option value="FIRST_HALF">FIRST_HALF</option><option value="SECOND_HALF">SECOND_HALF</option></select><input id="phase6NewContainerPlan" placeholder="Container plan *" class="border rounded p-2"><select id="phase6NewSurveyor" class="border rounded p-2">${phase6PartnerOptions('SURVEYOR')}</select><select id="phase6NewForwarder" class="border rounded p-2">${phase6PartnerOptions('FORWARDER')}</select><p class="md:col-span-2 text-[11px] text-slate-500">${tr('shipping.partnerSuggestHint', 'Returning-Customer Surveyor and Forwarder suggestions are optional editable defaults.')}</p><input id="phase6NewDriveUrl" placeholder="Google Drive URL (optional)" class="border rounded p-2"><textarea id="phase6NewLines" rows="4" class="md:col-span-2 border rounded p-2 font-mono text-[11px]" placeholder='[{"poId":"PO-1","poRevisionId":"REV-1","poRevisionLineId":"LINE-1","plannedQtyMt":20,"packingSnapshot":"25 kg bag"}]'></textarea><textarea id="phase6NewNote" rows="2" class="md:col-span-2 border rounded p-2" placeholder="Note (optional)"></textarea></div><div class="flex justify-end gap-2"><button onclick="closeModal()" class="px-3 py-2 border rounded text-xs font-bold">${tr('common.cancel', 'Cancel')}</button><button onclick="submitNewPhase6DeliveryInstruction()" class="px-3 py-2 bg-blue-600 text-white rounded text-xs font-bold">${tr('shipping.saveDi', 'Save DI')}</button></div></div>`);
+            if (!canEditPhase6Shipping()) return;
+            openModal(`<div class="p-6 text-sm text-slate-500">${t('shipping.createLoading')}</div>`);
+            const session = { pos: [], lines: [], balances: [], ready: false, saving: false, selectionVersion: 0 };
+            state.phase6Create = session;
+            try {
+                const [response] = await Promise.all([fetch('/api/pos'), loadPhase6ServicePartnersFromApi()]);
+                const body = await response.json();
+                if (!response.ok || body.status !== 'SUCCESS' || !Array.isArray(body.data?.pos)) throw new Error();
+                if (state.phase6Create !== session) return;
+                session.pos = body.data.pos.filter(po => po.header?.header_status !== 'CANCELLED' && po.header?.header_status !== 'CLOSED').map(po => {
+                    const revision = po.revisions?.find(item => item.status === 'ACTIVE') || po.revisions?.find(item => item.status === 'DRAFT');
+                    return { ...po, effectiveRevision: revision };
+                }).filter(po => po.effectiveRevision);
+                const esc = escapePhase6Text;
+                const control = 'mt-1 w-full rounded-lg border border-slate-200 bg-white p-2.5 text-sm';
+                const label = (key, input) => `<label class="block text-xs font-semibold text-slate-600">${t(key)}${input}</label>`;
+                openModal(`<form onsubmit="event.preventDefault();submitNewPhase6DeliveryInstruction()" class="space-y-5">
+                    <div><h3 class="text-lg font-bold text-slate-900">${t('shipping.modalCreateDi')}</h3><p class="mt-1 text-xs text-slate-500">${t('shipping.guidedHelp')}</p></div>
+                    ${label('shipping.poReference', `<select id="phase6NewPo" required onchange="selectPhase6CreatePO()" class="${control}"><option value="">${t(session.pos.length ? 'shipping.choosePo' : 'shipping.noEligiblePo')}</option>${session.pos.map(po => { const rev = po.effectiveRevision; const name = po.header.customer_name || (state.customers || []).find(c => c.id === po.header.customer_id)?.name || '-'; return `<option value="${esc(po.header.po_id)}">${esc(`${String(rev.customer_po_no || '').trim() || po.header.po_id} — ${name} (${po.header.po_id})`)} · ${rev.status === 'DRAFT' ? t('shipping.draftRevision') : t('shipping.activeRevision')} ${rev.revision_no}</option>`; }).join('')}</select>`)}
+                    <input type="hidden" id="phase6NewCustomer"><div id="phase6NewLineCards" class="space-y-3"></div>
+                    <div class="grid grid-cols-1 sm:grid-cols-2 gap-4 rounded-xl bg-slate-50 p-4">
+                        ${label('shipping.optionalDiNo', `<input id="phase6NewDiNo" class="${control}">`)}
+                        ${label('shipping.shippingMonth', `<input id="phase6NewMonth" required type="month" value="${new Date().toISOString().slice(0,7)}" class="${control}">`)}
+                        ${label('shipping.shippingHalf', `<select id="phase6NewPeriod" class="${control}"><option value="FIRST_HALF">${t('shipping.firstHalf')}</option><option value="SECOND_HALF">${t('shipping.secondHalf')}</option></select>`)}
+                        ${label('shipping.plannedLoading', `<input id="phase6NewLoadingDate" type="date" class="${control}">`)}
+                        ${label('shipping.surveyor', `<select id="phase6NewSurveyor" class="${control}">${phase6PartnerOptions('SURVEYOR')}</select>`)}
+                        ${label('shipping.forwarderSuggestion', `<select id="phase6NewForwarder" class="${control}">${phase6PartnerOptions('FORWARDER')}</select>`)}
+                        ${label('shipping.containerPlanSummary', `<input id="phase6NewContainerPlan" readonly class="${control}">`)}
+                        ${label('shipping.driveLink', `<input id="phase6NewDriveUrl" type="url" class="${control}">`)}
+                        <div class="sm:col-span-2">${label('common.note', `<textarea id="phase6NewNote" rows="2" class="${control}"></textarea>`)}</div>
+                    </div><p id="phase6NewError" role="alert" class="text-xs text-red-700"></p><div class="flex justify-end gap-2"><button type="button" onclick="state.phase6Create=null;closeModal()" class="rounded-lg border px-4 py-2 text-sm">${t('common.cancel')}</button><button id="phase6NewSave" disabled class="rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white disabled:opacity-40">${t('shipping.saveDi')}</button></div>
+                </form>`);
+            } catch {
+                if (state.phase6Create === session) openModal(`<div class="p-5 text-sm text-red-700">${t('shipping.createLoadFailed')}<button onclick="openCreatePhase6DeliveryInstruction()" class="ml-3 underline">${t('common.retry')}</button></div>`);
+            }
+        }
+
+        async function selectPhase6CreatePO() {
+            const session = state.phase6Create;
+            if (!session || session.saving) return;
+            const version = ++session.selectionVersion;
+            session.ready = false;
+            session.lines = [];
+            session.po = session.pos.find(po => po.header.po_id === document.getElementById('phase6NewPo')?.value);
+            const cards = document.getElementById('phase6NewLineCards');
+            const error = document.getElementById('phase6NewError');
+            document.getElementById('phase6NewSave').disabled = true;
+            document.getElementById('phase6NewContainerPlan').value = '';
+            error.textContent = '';
+            if (!session.po) { cards.innerHTML = ''; return; }
+            const po = session.po;
+            document.getElementById('phase6NewCustomer').value = po.header.customer_id;
+            applyPhase6PartnerSuggestions('phase6NewCustomer', 'phase6NewSurveyor', 'phase6NewForwarder');
+            cards.innerHTML = `<p class="text-xs text-slate-500">${t('shipping.createLoading')}</p>`;
+            try {
+                const response = await fetch(`/api/delivery-instructions/po-balance/${encodeURIComponent(po.header.po_id)}`);
+                const body = await response.json();
+                if (state.phase6Create !== session || version !== session.selectionVersion) return;
+                if (!response.ok || body.status !== 'SUCCESS' || !Array.isArray(body.data?.poLineBalances)) throw new Error();
+                session.balances = body.data.poLineBalances;
+                session.lines = po.effectiveRevision.lines || [];
+                const esc = escapePhase6Text;
+                const num = value => Number(value || 0).toLocaleString('en-US', {maximumFractionDigits:3});
+                const field = (key,value) => `<div><dt class="text-[10px] uppercase text-slate-400">${t(key)}</dt><dd class="mt-1 text-xs font-semibold text-slate-800">${esc(value)}</dd></div>`;
+                cards.innerHTML = `${po.effectiveRevision.status === 'DRAFT' ? `<p class="rounded-lg bg-amber-50 p-3 text-xs text-amber-800">${t('shipping.draftScheduling')}</p>` : ''}${session.lines.map((line,index) => {
+                    const balance = session.balances.find(b => b.po_revision_line_id === line.line_id && b.po_revision_id === po.effectiveRevision.revision_id);
+                    const available = Math.max(0,Number(balance?.available_qty_mt || 0));
+                    const product = (state.products || []).find(p => p.id === line.product_id);
+                    return `<section class="rounded-xl border border-slate-200 p-4 space-y-4"><div><h4 class="text-sm font-bold text-slate-900">${esc(line.product_name || product?.name || line.product_id || '-')}</h4><p class="text-xs text-slate-500">${esc([line.spec_application,line.spec_revision_id].filter(Boolean).join(' · '))}</p></div><dl class="grid grid-cols-2 sm:grid-cols-3 gap-3">${field('common.customer',po.header.customer_name || (state.customers || []).find(c=>c.id===po.header.customer_id)?.name || '-')}${field('po.destinationLabel',(line.destination_port ?? po.effectiveRevision.destination) || '-')}${field('po.incotermLabel',line.incoterm || po.effectiveRevision.incoterm || '-')}${field('po.colPackaging',line.packaging || '-')}${field('po.packageWeight',num(line.unit_weight_kg))}${field('po.unitsPerContainer',num(line.units_per_container))}${field('po.colContractQty',num(line.contract_qty_mt)+' MT')}${field('shipping.alreadyScheduled',num(Number(balance?.actual_qty_mt || 0)+Number(balance?.unrepresented_planned_qty_mt || 0))+' MT')}${field('shipping.remainingBalance',num(available)+' MT')}</dl><div class="grid grid-cols-2 gap-3"><label class="text-xs font-semibold text-slate-600">${t('shipping.containerCount')}<input id="phase6LineContainers${index}" type="number" min="0" step="1" value="0" oninput="recalculatePhase6CreateLine(${index})" class="mt-1 w-full rounded-lg border p-2"></label><label class="text-xs font-semibold text-slate-600">${t('shipping.plannedQty')}<input id="phase6LineQty${index}" type="number" min="0" max="${available}" step="0.001" value="0" oninput="updatePhase6CreatePlan()" class="mt-1 w-full rounded-lg border p-2"></label></div><p class="text-[11px] text-slate-500">${t('shipping.quantityHelp')}</p></section>`;
+                }).join('') || `<p class="text-xs text-amber-700">${t('shipping.noPoLines')}</p>`}`;
+                session.ready = true;
+                updatePhase6CreatePlan();
+            } catch {
+                if (state.phase6Create !== session || version !== session.selectionVersion) return;
+                cards.innerHTML = '';
+                error.textContent = t('shipping.balanceLoadFailed');
+            }
+        }
+
+        function recalculatePhase6CreateLine(index) {
+            const line = state.phase6Create?.lines[index];
+            if (!line) return;
+            const containers = Number(document.getElementById(`phase6LineContainers${index}`)?.value || 0);
+            const perContainer = Number(line.unit_weight_kg || 0) * Number(line.units_per_container || 0) / 1000 || Number(line.target_load_weight_mt || 0);
+            const input = document.getElementById(`phase6LineQty${index}`);
+            if (input) input.value = Math.round(containers * perContainer * 1000) / 1000;
+            updatePhase6CreatePlan();
+        }
+
+        function updatePhase6CreatePlan() {
+            const session = state.phase6Create;
+            if (!session) return;
+            let total = 0, invalid = false;
+            const parts = [];
+            session.lines.forEach((line,index) => {
+                const qty = Number(document.getElementById(`phase6LineQty${index}`)?.value || 0);
+                const containers = Number(document.getElementById(`phase6LineContainers${index}`)?.value || 0);
+                const balance = session.balances.find(b=>b.po_revision_line_id === line.line_id && b.po_revision_id === session.po?.effectiveRevision.revision_id);
+                if (!Number.isFinite(qty) || qty < 0 || !Number.isInteger(containers) || containers < 0 || (qty > 0 && (!balance || qty > Number(balance.available_qty_mt) + 0.000001))) invalid = true;
+                if (qty > 0) { total += qty; parts.push(`${containers > 0 ? containers+' × '+(line.container_type || t('shipping.containerCount'))+' · ' : ''}${qty} MT`); }
+            });
+            document.getElementById('phase6NewContainerPlan').value = parts.join(' / ');
+            document.getElementById('phase6NewError').textContent = invalid ? t('shipping.quantityInvalid') : '';
+            const valid = session.ready && total > 0 && !invalid;
+            document.getElementById('phase6NewSave').disabled = !valid || session.saving;
+            return valid;
         }
 
         async function submitNewPhase6DeliveryInstruction() {
+            const session = state.phase6Create;
+            if (!canEditPhase6Shipping() || !session || session.saving) return;
+            if (!updatePhase6CreatePlan()) { document.getElementById('phase6NewError').textContent = t('shipping.quantityInvalid'); return; }
+            const value = id => String(document.getElementById(id)?.value || '').trim();
+            if (!value('phase6NewMonth') || !value('phase6NewPeriod')) { document.getElementById('phase6NewError').textContent = t('shipping.scheduleRequired'); return; }
+            session.saving = true;
+            document.getElementById('phase6NewSave').disabled = true;
+            document.getElementById('phase6NewPo').disabled = true;
             try {
-                const payload = {
-                    customerId: document.getElementById('phase6NewCustomer')?.value.trim(),
-                    poId: document.getElementById('phase6NewPo')?.value.trim(),
-                    poRevisionId: document.getElementById('phase6NewRevision')?.value.trim(),
-                    diNo: phase6OptionalCustomerDiNo('phase6NewDiNo'),
-                    shippingMonth: document.getElementById('phase6NewMonth')?.value,
-                    shippingPeriod: document.getElementById('phase6NewPeriod')?.value,
-                    containerPlan: document.getElementById('phase6NewContainerPlan')?.value.trim(),
-                    lines: JSON.parse(document.getElementById('phase6NewLines')?.value || '[]'),
-                    googleDriveUrl: document.getElementById('phase6NewDriveUrl')?.value.trim() || null,
-                    surveyorPartnerId: document.getElementById('phase6NewSurveyor')?.value || null,
-                    forwarderPartnerId: document.getElementById('phase6NewForwarder')?.value || null,
-                    note: document.getElementById('phase6NewNote')?.value.trim() || null
-                };
-                await saveDeliveryInstructionToApi(payload);
-                closeModal();
+                const po = session.po, revision = po.effectiveRevision;
+                const lines = session.lines.map((line,index)=>({poId:po.header.po_id,poRevisionId:revision.revision_id,poRevisionLineId:line.line_id,plannedQtyMt:Number(value(`phase6LineQty${index}`)),packingSnapshot:line.packaging || t('po.bulkPackaging')})).filter(line=>line.plannedQtyMt>0);
+                await saveDeliveryInstructionToApi({customerId:po.header.customer_id,poId:po.header.po_id,poRevisionId:revision.revision_id,diNo:value('phase6NewDiNo') || null,shippingMonth:value('phase6NewMonth'),shippingPeriod:value('phase6NewPeriod'),plannedLoadingDate:value('phase6NewLoadingDate') || null,containerPlan:value('phase6NewContainerPlan'),lines,googleDriveUrl:value('phase6NewDriveUrl') || null,surveyorPartnerId:value('phase6NewSurveyor') || null,forwarderPartnerId:value('phase6NewForwarder') || null,note:value('phase6NewNote') || null});
+                if (state.phase6Create === session) { state.phase6Create = null; closeModal(); }
                 await refreshPhase6ShippingWorkspace();
-            } catch (err) { alert(`Delivery instruction was not saved: ${err.message}`); }
+            } catch (error) {
+                if (state.phase6Create === session) document.getElementById('phase6NewError').textContent = t(String(error.message).includes('QTY_EXCEEDS') ? 'shipping.quantityInvalid' : 'shipping.createSaveFailed');
+            } finally {
+                session.saving = false;
+                if (state.phase6Create === session) { document.getElementById('phase6NewPo').disabled = false; document.getElementById('phase6NewSave').disabled = false; }
+            }
         }
 
         async function openEditPhase6DeliveryInstruction(diId) {
@@ -9989,7 +10142,7 @@
                 <div class="space-y-5">
                     <div class="flex flex-col lg:flex-row lg:items-center justify-between gap-3">
                         <div><div class="text-[10px] font-black uppercase tracking-wider text-blue-600">${tr('shipping.eyebrow', 'Phase 6 / D1')}</div><h2 class="text-xl font-black text-slate-900">${tr('shipping.title', 'DI / Shipment List')}</h2><p class="text-xs text-slate-500 mt-1">${tr('shipping.subtitle', 'Enter shipment data progressively. Access and fields are confirmed by the API.')}</p></div>
-                        <div class="flex gap-2"><button onclick="setShippingWorkspace('LEGACY')" class="px-3 py-2 rounded-lg border border-slate-300 text-xs font-bold">${tr('shipping.legacyBtn', 'Legacy shipping')}</button>${canEditPhase6Shipping() ? `<button onclick="openCreatePhase6DeliveryInstruction()" class="px-3 py-2 rounded-lg bg-blue-600 text-white text-xs font-bold">${tr('shipping.createDi', 'Create DI')}</button>` : ''}<button onclick="refreshPhase6ShippingWorkspace()" class="px-3 py-2 rounded-lg border border-slate-300 text-xs font-bold"><i data-lucide="refresh-cw" class="w-3 h-3 inline"></i> ${tr('common.refresh', 'Refresh')}</button></div>
+                        <div class="flex gap-2">${canEditPhase6Shipping() ? `<button onclick="openCreatePhase6DeliveryInstruction()" class="px-3 py-2 rounded-lg bg-blue-600 text-white text-xs font-bold">${tr('shipping.createDi', 'Create DI')}</button>` : ''}<button onclick="refreshPhase6ShippingWorkspace()" class="px-3 py-2 rounded-lg border border-slate-300 text-xs font-bold"><i data-lucide="refresh-cw" class="w-3 h-3 inline"></i> ${tr('common.refresh', 'Refresh')}</button></div>
                     </div>
                     ${error}
                     ${summaryStrip}
@@ -10068,67 +10221,17 @@
         }
 
         function renderShipping(container) {
-            const tr = (k, fb) => (typeof t === 'function' ? t(k) : fb);
-            if (state.shippingWorkspace === 'PHASE6') {
-                renderShippingDiWorkspace(container);
-                return;
-            }
-            renderLegacyShippingWorkspace(container);
-            const toolbar = `<div class="mb-4 flex justify-end"><button onclick="setShippingWorkspace('PHASE6')" class="px-3 py-2 rounded-lg border border-blue-200 bg-blue-50 text-blue-700 text-xs font-bold">${tr('shipping.openPhase6Btn', 'Open Phase 6 DI Workspace')}</button></div>`;
-            container.insertAdjacentHTML('afterbegin', toolbar);
+            state.shippingWorkspace = 'PHASE6';
+            renderShippingDiWorkspace(container);
         }
 
         function setShippingWorkspace(workspace) {
-            state.shippingWorkspace = workspace;
+            state.shippingWorkspace = 'PHASE6';
             renderView();
         }
 
         function renderLegacyShippingWorkspace(container) {
-            if (state.currentUser.role === 'PRODUCTION_WAREHOUSE') { renderProductionOrders(container); return; }
-            const selectedDI = state.selectedDiId ? getScopedDIRecords().find(d => d.id === state.selectedDiId) : null;
-            if (selectedDI) {
-                if (state.lastLoadedShipmentId !== selectedDI.id) {
-                    state.lastLoadedShipmentId = selectedDI.id;
-                    (async () => {
-                        try {
-                            const po = getDIContext(selectedDI).po || {};
-                            await ensureShipmentAnchorToApi(selectedDI.id, {
-                                poId: selectedDI.poId,
-                                customerId: selectedDI.customerId || po.customerId,
-                                productId: selectedDI.productId || po.productId,
-                                isOneContainer: selectedDI.plannedContainers === 1 ? 1 : 0
-                            });
-                            await loadShipmentDetailFromApi(selectedDI.id);
-                            await loadShipmentExpensesFromApi(selectedDI.id);
-                            await loadShipmentDocumentLinksFromApi(selectedDI.id);
-                            await loadExpenseCategoriesFromApi();
-                            await loadFreightQuotesFromApi();
-                        } catch (err) {
-                            console.error(err);
-                        }
-                    })();
-                }
-                container.innerHTML = renderDIDetail(selectedDI);
-            } else {
-                container.innerHTML = `
-                    <div class="space-y-6">
-                        <div class="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
-                            <div>
-                                <div class="flex items-center gap-2 text-[10px] font-bold uppercase tracking-wider text-blue-600 mb-1">
-                                    <span>Legacy Shipping View</span>
-                                </div>
-                                <h2 class="text-xl font-bold text-slate-900">การส่งออก & ติดตามสถานะ (Export Tracking)</h2>
-                                <p class="text-xs text-slate-500 mt-1">PO → DI → WCAT / Invoice → Booking → Truck Allocation → Loading → Documents</p>
-                            </div>
-                            ${canCreateDI() ? `<button onclick="openCreateDIPrototype()" class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-xs font-bold flex items-center gap-2 shadow-sm"><i data-lucide="plus-circle" class="w-4 h-4"></i><span>Create DI</span></button>` : ''}
-                        </div>
-                        ${renderShippingSummaryCards()}
-                        ${renderExportPipeline()}
-                        ${renderDITrackingTable()}
-                    </div>
-                `;
-            }
-            lucide.createIcons();
+            renderShipping(container);
         }
 
         function renderShippingSummaryCards() {
@@ -11022,52 +11125,7 @@
         }
 
         function openCreateDIPrototype(poId = null) {
-            const preferredPO = (state.pos || []).find(p => p.id === poId);
-            const po = preferredPO || (state.pos || []).find(p => p.poStatus !== 'COMPLETED') || state.pos?.[0];
-            openModal(`
-                <div class="space-y-4">
-                    <div class="flex items-center justify-between border-b pb-3">
-                        <div><h3 class="font-bold text-slate-900">Create DI — Prototype</h3><p class="text-[11px] text-slate-500">DI Number กรอกโดยลูกค้า / ทีม Export · ยังไม่เชื่อม Apps Script</p></div>
-                        <button onclick="closeModal()"><i data-lucide="x" class="w-5 h-5 text-slate-400"></i></button>
-                    </div>
-                    <div class="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs">
-                        <div><label class="font-bold text-slate-700">DI No. *</label><input id="protoDiNo" oninput="validateDIPrototypeForm()" class="w-full border rounded p-2 mt-1" placeholder="Customer / Export DI No."></div>
-                        <div><label class="font-bold text-slate-700">PO Reference *</label><select id="protoPo" onchange="refreshDIPrototypePOContext()" class="w-full border rounded p-2 mt-1">${(state.pos||[]).map(p=>`<option value="${p.id}" ${p.id===po?.id?'selected':''}>${p.customerPoNo||p.id}</option>`).join('')}</select></div>
-                        <div><label class="font-bold text-slate-700">Customer</label><input id="protoCustomer" readonly class="w-full border bg-slate-50 rounded p-2 mt-1 text-slate-600"></div>
-                        <div><label class="font-bold text-slate-700">Product</label><input id="protoProduct" readonly class="w-full border bg-slate-50 rounded p-2 mt-1 text-slate-600"></div>
-                        <div><label class="font-bold text-slate-700">Destination Port</label><input id="protoDestination" readonly class="w-full border bg-slate-50 rounded p-2 mt-1 text-slate-600"></div>
-                        <div class="md:col-span-2 rounded-lg border border-blue-200 bg-blue-50 p-3">
-                            <div class="flex flex-col md:flex-row md:items-end gap-3">
-                                <div class="flex-1">
-                                    <label class="font-bold text-blue-900">PO Shipment Plan</label>
-                                    <div id="protoPoPlanSummary" class="mt-1 rounded border border-blue-200 bg-white p-2 text-[11px] text-slate-700">Loading PO shipment terms...</div>
-                                    <div class="text-[10px] text-blue-700 mt-1">DI จะใช้ Container / Packaging จาก PO เป็นค่าเริ่มต้น เพื่อคงข้อมูลตามข้อตกลงกับลูกค้า</div>
-                                </div>
-                                <label class="flex items-center gap-2 px-3 py-2 rounded border border-amber-300 bg-amber-50 text-amber-900 font-bold cursor-pointer whitespace-nowrap"><input id="protoShipmentOverride" type="checkbox" onchange="toggleShipmentOverridePrototype()"> Customize Shipment Plan</label>
-                            </div>
-                        </div>
-                        <div><label class="font-bold text-slate-700">Container Type</label><select id="protoContainerType" onchange="recalcDIPrototype()" class="w-full border rounded p-2 mt-1"><option value="20'">20'</option><option value="40'">40'</option><option value="40'HQ">40'HQ</option></select></div>
-                        <div><label class="font-bold text-slate-700">Packaging</label><input id="protoPackaging" readonly class="w-full border bg-slate-50 rounded p-2 mt-1 text-slate-700"></div>
-                        <div><label class="font-bold text-slate-700">Package / Unit Weight (kg)</label><input id="protoBagKg" type="number" min="0" step="0.01" onchange="recalcDIPrototype()" oninput="recalcDIPrototype()" class="w-full border rounded p-2 mt-1"></div>
-                        <div><label class="font-bold text-slate-700">Units / Bags per Container</label><input id="protoBags" type="number" value="20" min="1" oninput="recalcDIPrototype()" class="w-full border rounded p-2 mt-1"></div>
-                        <div><label class="font-bold text-slate-700">Pallets / Container</label><input id="protoPallets" type="number" value="20" min="0" oninput="recalcDIPrototype()" class="w-full border rounded p-2 mt-1"></div>
-                        <div><label class="font-bold text-slate-700">Containers</label><input id="protoCont" type="number" value="10" min="1" oninput="recalcDIPrototype()" class="w-full border rounded p-2 mt-1"></div>
-                        <div><label class="font-bold text-slate-700">Target Loading Date</label><input id="protoLoadingDate" type="date" onchange="validateDIPrototypeForm()" class="w-full border rounded p-2 mt-1"><div id="protoDeliveryPeriodHint" class="text-[10px] text-violet-700 mt-1"></div></div>
-                        <div><label class="font-bold text-slate-700">DI Qty (Auto)</label><input id="protoQty" readonly value="190.000" class="w-full border border-emerald-300 bg-emerald-50 rounded p-2 mt-1 font-black text-emerald-700"></div>
-                        <div><label class="font-bold text-slate-700">Total Pallets (Auto)</label><input id="protoTotalPallets" readonly value="200" class="w-full border border-blue-200 bg-blue-50 rounded p-2 mt-1 font-black text-blue-700"></div>
-                        <div id="protoChangeReasonWrap" class="md:col-span-2 hidden rounded-lg border border-amber-200 bg-amber-50 p-3"><label class="font-bold text-amber-900">Reason for Change *</label><textarea id="protoChangeReason" rows="2" oninput="validateDIPrototypeForm()" class="w-full border border-amber-300 bg-white rounded p-2 mt-1" placeholder="Example: container shortage, freight optimization, route disruption, customer request"></textarea><div class="text-[10px] text-amber-700 mt-1">Required whenเปลี่ยนจาก PO Shipment Plan.</div></div>
-                        <div class="md:col-span-2"><label class="font-bold text-slate-700">Special Instruction</label><textarea id="protoInstruction" rows="2" oninput="validateDIPrototypeForm()" class="w-full border rounded p-2 mt-1" placeholder="Optional note"></textarea></div>
-                    </div>
-                    <div id="protoBalanceBox" class="rounded-lg bg-blue-50 border border-blue-200 p-3 text-xs text-blue-950"></div>
-                    <div class="rounded-lg bg-amber-50 border border-amber-200 p-3 text-[11px] text-amber-900">Fixed package logic: Bag Weight × Bags / Container × Containers ÷ 1,000. DI Qty จะคำนวณอัตโนมัติและใช้เป็นยอด Allocate ของ PO</div>
-                    <div id="protoFormMessage" class="hidden rounded-lg border p-3 text-[11px]"></div>
-                    <div class="flex justify-end gap-2"><button onclick="closeModal()" class="px-4 py-2 border rounded text-xs font-bold">Cancel</button><button id="protoSaveDI" onclick="saveDIPrototype()" class="px-4 py-2 bg-blue-600 text-white rounded text-xs font-bold disabled:opacity-40 disabled:cursor-not-allowed">Save DI Prototype</button></div>
-                </div>
-            `);
-            refreshDIPrototypePOContext();
-            recalcDIPrototype();
-            validateDIPrototypeForm();
-            lucide.createIcons();
+            return openCreatePhase6DeliveryInstruction();
         }
 
         function getPOAllocationSnapshot(poId) {
@@ -11261,43 +11319,7 @@
         }
 
         function saveDIPrototype() {
-            if (!validateDIPrototypeForm()) return;
-            const poId = document.getElementById('protoPo').value;
-            const po = (state.pos || []).find(p => p.id === poId);
-            if (!po) return;
-
-            const bagKg = parseFloat(document.getElementById('protoBagKg').value) || 0;
-            const bagsPerContainer = parseFloat(document.getElementById('protoBags').value) || 0;
-            const plannedContainers = parseFloat(document.getElementById('protoCont').value) || 0;
-            const palletsPerContainer = parseFloat(document.getElementById('protoPallets').value) || 0;
-            const diNo = String(document.getElementById('protoDiNo').value || '').trim();
-            const newDI = {
-                id: getNextDIRecordId(),
-                diNo,
-                poId,
-                wcatNo: '',
-                status: 'PLANNED',
-                shipmentPlanSource: 'PO',
-                poShipmentPlanSnapshot: { containerType: po.containerType || '', packaging: po.packaging || '', packageWeightKg: parseFloat(po.packageWeightKg) || 0, unitsPerContainer: parseFloat(po.unitsPerContainer) || 0, totalWeightPerContainerMt: parseFloat(po.totalWeightPerContainerMt) || 0 },
-                shipmentOverride: Boolean(document.getElementById('protoShipmentOverride')?.checked),
-                shipmentChangeReason: String(document.getElementById('protoChangeReason')?.value || '').trim(),
-                containerType: document.getElementById('protoContainerType').value,
-                packaging: String(document.getElementById('protoPackaging')?.value || `Jumbo Bag ${bagKg} kg`).trim(),
-                packageWeightKg: bagKg,
-                bagsPerContainer,
-                palletsPerContainer,
-                plannedContainers,
-                targetLoadingDate: document.getElementById('protoLoadingDate').value || '',
-                specialInstruction: String(document.getElementById('protoInstruction').value || '').trim(),
-                booking: null,
-                documents: { stuffingReport: { status: 'PENDING', receivedDate: '', note: '' }, allShipDoc: { status: 'PENDING', receivedDate: '', note: '' } },
-                createdAt: new Date().toISOString(),
-                prototypeOnly: true
-            };
-
-            state.diRecords.push(newDI);
-            closeModal();
-            viewDIDetail(newDI.id);
+            return openCreatePhase6DeliveryInstruction();
         }
 
         function getNextCustomerCode() {

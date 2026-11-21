@@ -57,9 +57,19 @@ function isAvailabilityReservationFailure(error) {
   return String(error?.message || '').includes('CHECK constraint failed: planned_qty_mt > 0');
 }
 
+function requestedLoadingDateExpression(diIdExpression) {
+  return `(SELECT json_extract(metadata_json, '$.new.plannedLoadingDate')
+    FROM shipment_audit_events
+    WHERE entity_type = 'DI' AND entity_id = ${diIdExpression}
+      AND event_type IN ('DI_CREATED', 'DI_UPDATED')
+      AND json_type(metadata_json, '$.new.plannedLoadingDate') IS NOT NULL
+    ORDER BY rowid DESC LIMIT 1)`;
+}
+
 async function findDeliveryInstruction(db, diId) {
   const deliveryInstruction = await db.prepare(`
     SELECT di_id, customer_id, po_id, po_revision_id, di_no, shipping_month, shipping_period, container_plan,
+           ${requestedLoadingDateExpression('delivery_instructions.di_id')} AS planned_loading_date,
            status, lifecycle_version, note, cancellation_note, di_drive_url, surveyor_partner_id, forwarder_partner_id,
            created_by, created_at, updated_by, updated_at
     FROM delivery_instructions
@@ -507,8 +517,8 @@ function invoiceAuditForStateStatement(db, invoiceId, invoiceState, eventType, a
 function shipmentCreationStatement(db, diId, actorId, requirePreviousMutation = false) {
   const shipmentId = `SHP-${crypto.randomUUID()}`;
   return db.prepare(`
-    INSERT INTO phase6_shipments (shipment_id, di_id, status, created_by, updated_by)
-    SELECT ?, di_id, 'PLANNING', ?, ?
+    INSERT INTO phase6_shipments (shipment_id, di_id, status, created_by, updated_by, planned_loading_date)
+    SELECT ?, di_id, 'PLANNING', ?, ?, ${requestedLoadingDateExpression('delivery_instructions.di_id')}
     FROM delivery_instructions
     WHERE di_id = ? AND status = 'CONFIRMED'
       ${requirePreviousMutation ? 'AND changes() = 1' : ''}
@@ -541,6 +551,7 @@ function deliveryInstructionSnapshot(deliveryInstruction) {
     shippingMonth: value('shippingMonth', 'shipping_month'),
     shippingPeriod: value('shippingPeriod', 'shipping_period'),
     containerPlan: value('containerPlan', 'container_plan'),
+    plannedLoadingDate: Object.hasOwn(deliveryInstruction, 'plannedLoadingDate') ? deliveryInstruction.plannedLoadingDate : (deliveryInstruction.planned_loading_date || undefined),
     note: deliveryInstruction.note,
     googleDriveUrl: value('googleDriveUrl', 'di_drive_url'),
     surveyorPartnerId: value('surveyorPartnerId', 'surveyor_partner_id'),
@@ -846,6 +857,7 @@ function deliveryInstructionUpdateDto(existing, dto) {
     shippingMonth: existing.shipping_month,
     shippingPeriod: existing.shipping_period,
     containerPlan: existing.container_plan,
+    plannedLoadingDate: existing.planned_loading_date ?? undefined,
     note: existing.note,
     googleDriveUrl: existing.di_drive_url,
     surveyorPartnerId: existing.surveyor_partner_id,
@@ -2171,7 +2183,7 @@ export function createShippingDiRepository(db) {
           COALESCE((SELECT SUM(line.planned_qty_mt) FROM delivery_instruction_lines line WHERE line.di_id = di.di_id), 0) AS planned_qty_mt,
           COALESCE((SELECT GROUP_CONCAT(product.product_name, ', ') FROM delivery_instruction_lines line JOIN products product ON product.product_id = line.product_id WHERE line.di_id = di.di_id), '') AS product_summary,
           COALESCE((SELECT GROUP_CONCAT(line.packing_snapshot, ', ') FROM delivery_instruction_lines line WHERE line.di_id = di.di_id), '') AS packing_summary,
-          shipment.shipment_id, shipment.booking_no, ${hasBlNo ? 'shipment.bl_no' : 'NULL AS bl_no'}, shipment.planned_loading_date, shipment.actual_loading_date,
+          shipment.shipment_id, shipment.booking_no, ${hasBlNo ? 'shipment.bl_no' : 'NULL AS bl_no'}, CASE WHEN shipment.shipment_id IS NOT NULL THEN shipment.planned_loading_date ELSE ${requestedLoadingDateExpression('di.di_id')} END AS planned_loading_date, shipment.actual_loading_date,
           shipment.schedule_result, shipment.status AS shipment_status, shipment.payment_status
         FROM delivery_instructions di
         JOIN customers customer ON customer.customer_id = di.customer_id

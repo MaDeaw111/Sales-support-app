@@ -1497,7 +1497,7 @@ export function createPORepository(dbBinding) {
     },
 
     async getPO(poId) {
-      const header = await db.prepare(`SELECT h.*, c.owner_user_id, c.ownership_type
+      const header = await db.prepare(`SELECT h.*, c.owner_user_id, c.ownership_type, c.customer_name
         FROM po_headers h JOIN customers c ON c.customer_id = h.customer_id
         WHERE h.po_id = ?`).bind(poId).first();
       if (!header) return null;

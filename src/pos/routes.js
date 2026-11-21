@@ -123,6 +123,7 @@ function filterPOForRole(po, caller) {
           po_revision_id: line.po_revision_id,
           line_no: line.line_no,
           product_id: line.product_id,
+          product_name: line.product_name,
           spec_source: line.spec_source,
           spec_revision_id: line.spec_revision_id,
         spec_application: line.spec_application,
@@ -169,6 +170,7 @@ function filterPOForRole(po, caller) {
       header: {
         po_id: po.header.po_id,
         customer_id: po.header.customer_id,
+        customer_name: po.header.customer_name,
         header_status: po.header.header_status,
         created_at: po.header.created_at
       },

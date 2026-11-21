@@ -159,7 +159,7 @@ test('stale partner suggestions cannot overwrite a newer Customer and only prior
 });
 
 test('new DI Customer selection requests partner suggestions for editable defaults', () => {
-  const createForm = extractFunction('openCreatePhase6DeliveryInstruction()');
+  const createForm = extractFunction('selectPhase6CreatePO()');
   assert.match(createForm, /applyPhase6PartnerSuggestions\('phase6NewCustomer', 'phase6NewSurveyor', 'phase6NewForwarder'\)/);
 });
 
@@ -219,11 +219,11 @@ test('Phase 6 adapters reject API errors without replacing displayed state', asy
   }
 });
 
-test('shipping view keeps legacy and Phase 6 workspaces selectable', () => {
+test('shipping always uses the live D1 workspace', () => {
   const renderShipping = extractFunction('renderShipping(container)');
   assert.match(renderShipping, /state\.shippingWorkspace/);
   assert.match(renderShipping, /renderShippingDiWorkspace\(container\)/);
-  assert.match(renderShipping, /renderLegacyShippingWorkspace\(container\)/);
+  assert.doesNotMatch(renderShipping, /renderLegacyShippingWorkspace/);
 });
 
 test('restricted list rendering and requests use only each approved workspace read model', async () => {

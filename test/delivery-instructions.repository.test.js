@@ -748,3 +748,26 @@ test('concurrent DRAFT DI edits reserve the revised quantity only once', async (
   assert.match(results.find((result) => result.status === 'rejected').reason.message, /DI_QTY_EXCEEDS_MAX_ALLOWED/);
   assert.equal(db.prepare("SELECT SUM(planned_qty_mt) AS total FROM delivery_instruction_lines WHERE po_revision_line_id = 'LINE-10'").get().total, 100);
 });
+
+test('draft Rev. 0 scheduling retains loading date and transfers it on confirmation',async()=>{
+  const {db,wrappedDb}=await setupTestDb();const repo=createShippingDiRepository(wrappedDb);
+  db.prepare("UPDATE po_revisions SET status='DRAFT' WHERE revision_id='REV-1'").run();
+  const created=await repo.createDeliveryInstruction(diPayload({plannedLoadingDate:'2026-09-12'}),'U_EXPORT');
+  assert.equal(created.planned_loading_date,'2026-09-12');
+  assert.equal((await repo.listDeliveryInstructionWorkspace())[0].planned_loading_date,'2026-09-12');
+  await repo.updateDraftDeliveryInstruction(created.di_id,{note:'Keep schedule'},'U_EXPORT');
+  await repo.confirmDeliveryInstruction(created.di_id,'U_EXPORT');
+  assert.equal(db.prepare('SELECT planned_loading_date FROM phase6_shipments WHERE di_id=?').get(created.di_id).planned_loading_date,'2026-09-12');
+  assert.equal(db.prepare("SELECT status FROM po_revisions WHERE revision_id='REV-1'").get().status,'DRAFT');
+  await assert.rejects(repo.createDeliveryInstruction(diPayload({plannedLoadingDate:'not-a-date'}),'U_EXPORT'));
+  await assert.rejects(repo.createDeliveryInstruction(diPayload({lines:[{...diPayload().lines[0],plannedQtyMt:80}]}),'U_EXPORT'),/DI_QTY_EXCEEDS_MAX_ALLOWED/);
+});
+
+test('draft loading dates can be cleared without restoring an earlier audit value',async()=>{
+  const {db,wrappedDb}=await setupTestDb();const repo=createShippingDiRepository(wrappedDb);
+  const created=await repo.createDeliveryInstruction(diPayload({plannedLoadingDate:'2026-09-12'}),'U_EXPORT');
+  await repo.updateDraftDeliveryInstruction(created.di_id,{plannedLoadingDate:null},'U_EXPORT');
+  assert.equal((await repo.getDeliveryInstruction(created.di_id)).planned_loading_date,null);
+  await repo.confirmDeliveryInstruction(created.di_id,'U_EXPORT');
+  assert.equal(db.prepare('SELECT planned_loading_date FROM phase6_shipments WHERE di_id=?').get(created.di_id).planned_loading_date,null);
+});
