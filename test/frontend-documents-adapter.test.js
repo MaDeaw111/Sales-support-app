@@ -418,6 +418,10 @@ function createCreatePoModalHarness(options = {}) {
 
   const fnNames = [
     'getNextPOCode',
+    'escapePricingHtml',
+    'poProductOptionLabel',
+    'getScopedCustomers',
+    'updateNewPOSpecOptions',
     'openNewPOModal',
     'validateNewPODeliveryPeriod',
     'formatDeliveryPeriod',
@@ -655,4 +659,35 @@ test('handleNewPOSubmit refreshes PO list and surfaces bilingual retry message w
     assert.match(h.state.poNotice.message, expectedWarn);
     assert.match(h.alerts[0], expectedWarn);
   }
+});
+
+test('Create PO sends selected currency and complete initial line with full product display', async () => {
+  for (const currency of ['USD', 'EUR']) {
+    let sent;
+    const h = createCreatePoModalHarness({ lang: 'EN', fetch: async (url, options) => { sent = JSON.parse(options.body); return { ok: true, json: async () => ({ status: 'SUCCESS', data: { po: { header: { po_id: 'NEW' } } } }) }; } });
+    h.elements.set('newPoCurrency', { value: currency });
+    h.state.selectedPoId = 'OLD';
+    h.api.openNewPOModal();
+    assert.match(h.getLastModalHtml(), /Tapioca Pellet 65% — THP65 \[THP-65\]/);
+    assert.match(h.api.renderNewPOReview(), new RegExp(currency + ' 350.00 / MT'));
+    await h.api.handleNewPOSubmit({ preventDefault() {} }, 'NEW');
+    assert.equal(sent.currency, currency);
+    assert.equal(h.state.selectedPoId, null);
+    assert.equal(sent.lines[0].productId, 'P1');
+    assert.equal(sent.lines[0].contractQtyMt, 100);
+    assert.equal(sent.lines[0].tolerancePct, 5);
+    assert.equal(sent.lines[0].unitWeightKg, 850);
+    assert.equal(sent.lines[0].unitsPerContainer, 32);
+    assert.equal(sent.lines[0].unitPrice, 350);
+    assert.equal(h.getLoadPOsCount(), 1);
+  }
+});
+
+test('external Create PO customer dropdown contains only assigned customers', () => {
+  const h = createCreatePoModalHarness({ lang: 'EN' });
+  h.state.currentUser = { id: 'SIRA', role: 'EXTERNAL_SALES' };
+  h.state.customers = [{ id: 'OWN', name: 'Assigned Buyer', code: 'OWN', ownerId: 'SIRA' }, { id: 'OTHER', name: 'Other Buyer', code: 'OTHER', ownerId: 'OTHER' }, { id: 'HOUSE', name: 'House Buyer', code: 'HOUSE', ownerId: '' }];
+  h.api.openNewPOModal();
+  assert.match(h.getLastModalHtml(), /Assigned Buyer/);
+  assert.doesNotMatch(h.getLastModalHtml(), /Other Buyer|House Buyer/);
 });

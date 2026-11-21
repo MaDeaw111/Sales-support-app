@@ -260,3 +260,14 @@ test('external payments exclude House Accounts even with a stale owner link', as
   assert.equal(result.items.length, 0);
   db.close();
 });
+
+test('payments expose PO currency separately from invoice currency', async () => {
+  const { db, wrappedDb } = await setupTestDb();
+  seedPaymentsFixture(db);
+  db.exec("UPDATE po_revisions SET currency = 'EUR' WHERE revision_id = 'REV1'");
+  const result = await createPaymentsRepository(wrappedDb).listPaymentsDashboard();
+  const item = result.items.find(row => row.shipment_id === 'SHP-1');
+  assert.equal(item.po_currency, 'EUR');
+  assert.equal(item.currency, 'USD');
+  db.close();
+});

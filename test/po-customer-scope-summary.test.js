@@ -86,3 +86,80 @@ test('PO summary falls back to a matching legacy header product when revision li
   db.prepare("UPDATE pos SET customer_id = 'OTHER' WHERE po_id = ?").run(pos[0].header.po_id);
   assert.equal((await repo.getPO(pos[0].header.po_id)).mainProductName, '');
 });
+
+for (const currency of ['USD', 'EUR']) {
+  test(`POST PO atomically saves ${currency} draft line and packaging`, async t => {
+    const { db, repo } = await fixture(t);
+    const handler = createPOHandler({ repo, db, resolveUser: async () => ({ user_id: 'ADMIN', role: 'ADMIN' }) });
+    const line = { productId: 'P1', specSource: 'STANDARD', specRevisionId: 'SPEC', contractQtyMt: 540, tolerancePct: 5, unitPrice: 185, packaging: 'Jumbo Bag', unitWeightKg: 850, unitsPerContainer: 32, containerType: '40HC', loadingPattern: 'Palletized' };
+    const response = await handler(new Request('https://test/api/pos', { method: 'POST', body: JSON.stringify({ customerId: 'MEELUNIE', customerPoNo: `NEW-${currency}`, currency, incoterm: 'CFR', destination: 'Rotterdam', lines: [line] }) }));
+    assert.equal(response.status, 200);
+    const created = (await response.json()).data.po;
+    const detail = await repo.getPO(created.header.po_id);
+    assert.equal(detail.revisions[0].currency, currency);
+    assert.equal(detail.revisions[0].lines.length, 1);
+    assert.equal(detail.revisions[0].lines[0].currency, currency);
+    assert.equal(detail.revisions[0].lines[0].unit_weight_kg, 850);
+    assert.equal(detail.revisions[0].lines[0].units_per_container, 32);
+    assert.equal(detail.revisions[0].lines[0].unit_price, 185);
+    assert.equal(detail.totalMt, 540);
+    assert.equal(detail.revisions[0].destination, 'Rotterdam');
+    const count = db.prepare('SELECT COUNT(*) AS n FROM po_headers').get().n;
+    await assert.rejects(repo.createDraftPO({ customerId: 'MEELUNIE', customerPoNo: 'BAD', currency, lines: [{ ...line, productId: 'MISSING' }] }, 'ADMIN'));
+    assert.equal(db.prepare('SELECT COUNT(*) AS n FROM po_headers').get().n, count);
+  });
+}
+
+test('external sales may create only assigned customer POs and cannot assign commissions', async t => {
+  const { handler, db } = await fixture(t);
+  const payload = { customerId: 'MEELUNIE', customerPoNo: 'OWN-NEW', currency: 'EUR', lines: [{ productId: 'P1', specSource: 'STANDARD', specRevisionId: 'SPEC', contractQtyMt: 27.2, tolerancePct: 0, unitPrice: 185, packaging: 'Bag', containerType: '40HC', loadingPattern: 'Palletized' }] };
+  const send = data => handler(new Request('https://test/api/pos', { method: 'POST', body: JSON.stringify(data) }));
+  assert.equal((await send(payload)).status, 200);
+  assert.equal((await send({ ...payload, customerId: 'OTHER' })).status, 403);
+  assert.equal((await send({ ...payload, customerId: 'HOUSE' })).status, 403);
+  assert.equal((await send({ ...payload, lines: [{ ...payload.lines[0], commissionRateUsdMt: 20 }] })).status, 403);
+  db.exec("UPDATE customers SET ownership_type = 'HOUSE_ACCOUNT' WHERE customer_id = 'MEELUNIE'");
+  assert.equal((await send(payload)).status, 403);
+});
+
+test('legacy draft line editor saves EUR atomically and bypasses USD price notes', async t => {
+  const { db, repo, pos } = await fixture(t);
+  const revisionId = pos[0].revision.revision_id;
+  db.prepare('DELETE FROM po_revision_lines WHERE po_revision_id = ?').run(revisionId);
+  db.exec("INSERT INTO manager_price_notes (note_id, sales_user_id, customer_id, product_id, incoterm, offer_price_usd_per_mt, created_by_manager_id) VALUES ('USD-NOTE','SIRA','MEELUNIE','P1','FOB',350,'ADMIN')");
+  const line = await repo.saveDraftRevisionLine(revisionId, null, { currency: 'EUR', productId: 'P1', specSource: 'STANDARD', specRevisionId: 'SPEC', contractQtyMt: 27.2, tolerancePct: 5, unitPrice: 185, packaging: 'Bag', unitWeightKg: 850, unitsPerContainer: 32, containerType: '40HC', loadingPattern: 'Palletized' }, 'ADMIN');
+  assert.equal(line.currency, 'EUR');
+  assert.equal(line.suggested_price, null);
+  assert.equal(line.unit_price, 185);
+  await assert.rejects(repo.saveDraftRevisionLine(revisionId, line.line_id, { currency: 'USD', unitPrice: -1 }, 'ADMIN'));
+  assert.equal((await repo.getPO(pos[0].header.po_id)).revisions[0].currency, 'EUR');
+  const edited = await repo.saveDraftRevisionLine(revisionId, line.line_id, { currency: 'EUR', unitPrice: 190, contractQtyMt: 540 }, 'ADMIN');
+  assert.equal(edited.unit_price, 190);
+  assert.equal(edited.unit_weight_kg, 850);
+  assert.equal((await repo.getPO(pos[0].header.po_id)).totalMt, 540);
+});
+
+test('external PO creation cannot copy another customer contact snapshot', async t => {
+  const { db, handler } = await fixture(t);
+  db.exec("INSERT INTO customer_contacts (contact_id, customer_id, contact_name, email) VALUES ('FOREIGN-CONTACT','OTHER','Private Contact','private@example.com')");
+  const response = await handler(new Request('https://test/api/pos', { method: 'POST', body: JSON.stringify({ customerId: 'MEELUNIE', customerPoNo: 'CONTACT-TEST', customerContactId: 'FOREIGN-CONTACT', currency: 'EUR', lines: [{ productId: 'P1', specSource: 'STANDARD', specRevisionId: 'SPEC', contractQtyMt: 1, tolerancePct: 0, unitPrice: 185 }] }) }));
+  assert.equal(response.status, 400);
+  assert.equal(db.prepare("SELECT COUNT(*) AS n FROM po_revisions WHERE customer_po_no = 'CONTACT-TEST'").get().n, 0);
+});
+
+test('currency migration preserves sibling price provenance and cloned packaging', async t => {
+  const { db, repo, pos } = await fixture(t);
+  const revisionId = pos[0].revision.revision_id;
+  db.exec("INSERT INTO manager_price_notes (note_id, sales_user_id, customer_id, product_id, incoterm, offer_price_usd_per_mt, created_by_manager_id) VALUES ('KEEP-NOTE','SIRA','MEELUNIE','P1','FOB',100,'ADMIN')");
+  db.prepare("UPDATE po_revision_lines SET source_price_note_id = 'KEEP-NOTE', suggested_price = 100 WHERE po_revision_id = ?").run(revisionId);
+  await repo.saveDraftRevisionLine(revisionId, null, { currency: 'USD', productId: 'P1', specSource: 'STANDARD', specRevisionId: 'SPEC', contractQtyMt: 10, tolerancePct: 0, unitPrice: 100, unitWeightKg: 850, unitsPerContainer: 32 }, 'ADMIN');
+  const lines = (await repo.getPO(pos[0].header.po_id)).revisions[0].lines;
+  assert.equal(lines[0].source_price_note_id, 'KEEP-NOTE');
+  db.prepare("UPDATE po_revisions SET currency = 'EUR', status = 'ACTIVE' WHERE revision_id = ?").run(revisionId);
+  db.prepare('UPDATE po_headers SET current_active_revision_id = ?, current_draft_revision_id = NULL WHERE po_id = ?').run(revisionId, pos[0].header.po_id);
+  await repo.createNextRevision(pos[0].header.po_id, 'ADMIN');
+  const draft = (await repo.getPO(pos[0].header.po_id)).revisions.find(r => r.status === 'DRAFT');
+  assert.equal(draft.lines[1].currency, 'EUR');
+  assert.equal(draft.lines[1].unit_weight_kg, 850);
+  assert.equal(draft.lines[1].units_per_container, 32);
+});

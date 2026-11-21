@@ -42,6 +42,9 @@ function filterPOForRole(po, caller) {
         spec_source: line.spec_source,
         spec_revision_id: line.spec_revision_id,
         spec_override_json: line.spec_override_json,
+        currency: line.currency,
+        unit_weight_kg: line.unit_weight_kg,
+        units_per_container: line.units_per_container,
         contract_qty_mt: line.contract_qty_mt,
         tolerance_pct: line.tolerance_pct,
         min_qty_mt: line.min_qty_mt,
@@ -94,7 +97,8 @@ function filterPOForRole(po, caller) {
       header: {
         po_id: po.header.po_id,
         customer_id: po.header.customer_id,
-        header_status: po.header.header_status
+        header_status: po.header.header_status,
+        created_at: po.header.created_at
       },
       mainProductName: po.mainProductName,
       mainProductShortName: po.mainProductShortName,
@@ -152,7 +156,8 @@ function filterPOForRole(po, caller) {
       header: {
         po_id: po.header.po_id,
         customer_id: po.header.customer_id,
-        header_status: po.header.header_status
+        header_status: po.header.header_status,
+        created_at: po.header.created_at
       },
       revisions: cleanRevisions
     };
@@ -188,7 +193,8 @@ function filterPOForRole(po, caller) {
       header: {
         po_id: po.header.po_id,
         customer_id: po.header.customer_id,
-        header_status: po.header.header_status
+        header_status: po.header.header_status,
+        created_at: po.header.created_at
       },
       revisions: cleanRevisions
     };
@@ -231,11 +237,14 @@ export function createPOHandler({ repo, resolveUser, db }) {
 
     // POST /api/pos (Create PO)
     if (path === '/api/pos' && method === 'POST') {
-      if (!canWrite) {
+      if (!canWrite && caller.role !== 'EXTERNAL_SALES') {
         return json({ status: 'ERROR', message: 'Permission denied.' }, 403);
       }
       const body = await readJson(request);
       if (!body) return json({ status: 'ERROR', message: 'Invalid request body.' }, 400);
+      if (caller.role === 'EXTERNAL_SALES' && (!Array.isArray(body.lines) || !body.lines.length || !(await repo.canCreateForCustomer(body.customerId, caller.user_id)) || body.lines.some(line => !line || typeof line !== 'object' || line.commissionRecipientUserId || Number(line.commissionRateUsdMt || 0) !== 0))) {
+        return json({ status: 'ERROR', message: 'Permission denied.' }, 403);
+      }
 
       try {
         const po = await repo.createDraftPO(body, caller.user_id);
@@ -460,7 +469,11 @@ export function createPOHandler({ repo, resolveUser, db }) {
       const revisionId = linesMatch[2];
       const body = await readJson(request);
       try {
-        const line = await repo.createPORevisionLine(revisionId, body, caller.user_id);
+        const detail = await repo.getPO(linesMatch[1]);
+        if (!detail?.revisions.some(r => r.revision_id === revisionId)) return json({ status: 'ERROR', message: 'Revision not found.' }, 404);
+        const line = body?.currency
+          ? await repo.saveDraftRevisionLine(revisionId, null, body, caller.user_id)
+          : await repo.createPORevisionLine(revisionId, body, caller.user_id);
         return json({ status: 'SUCCESS', data: { line } });
       } catch (err) {
         return handleRepoError(err);
@@ -479,7 +492,11 @@ export function createPOHandler({ repo, resolveUser, db }) {
         }
         const body = await readJson(request);
         try {
-          const line = await repo.updatePORevisionLine(lineId, body);
+          const detail = await repo.getPO(patchLineMatch[1]);
+          if (!detail?.revisions.some(r => r.revision_id === revisionId && r.lines.some(l => l.line_id === lineId))) return json({ status: 'ERROR', message: 'Line not found.' }, 404);
+          const line = body?.currency
+            ? await repo.saveDraftRevisionLine(revisionId, lineId, body, caller.user_id)
+            : await repo.updatePORevisionLine(lineId, body);
           return json({ status: 'SUCCESS', data: { line } });
         } catch (err) {
           return handleRepoError(err);

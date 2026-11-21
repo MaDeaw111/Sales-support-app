@@ -287,10 +287,129 @@ async function generateAndLogFieldDiffs(db, poId, newRevisionId, oldRevisionId, 
   }
 }
 
+async function preparePORevisionLine(db, revisionId, revision, header, dto, actorId, existingLine = null) {
+      dto = { lineNo: 1, tolerancePct: 0, packaging: '', containerType: '', loadingPattern: '', ...dto };
+      for (const key of ['contractQtyMt', 'tolerancePct', 'unitPrice']) {
+        if (typeof dto[key] !== 'number' || !Number.isFinite(dto[key])) throw new Error('Invalid numeric field: ' + key);
+      }
+      for (const key of ['unitWeightKg', 'unitsPerContainer']) {
+        if (dto[key] !== undefined && (!Number.isFinite(dto[key]) || dto[key] < 0)) throw new Error('Invalid packaging quantity: ' + key);
+      }
+      if (!dto.specSource || !dto.specRevisionId) {
+        const spec = await db.prepare("SELECT standard_spec_id FROM standard_specs WHERE product_id = ? AND status = 'ACTIVE' ORDER BY revision_no DESC, standard_spec_id LIMIT 1").bind(dto.productId).first();
+        if (!spec) throw new Error('An active product specification is required.');
+        dto = { ...dto, specSource: 'STANDARD', specRevisionId: spec.standard_spec_id };
+      }
+      // Validate the line before preparing any writes.
+      if (dto.contractQtyMt < 0) throw new Error('Contract quantity cannot be negative');
+      if (dto.tolerancePct < 0 || dto.tolerancePct > 100) throw new Error('Tolerance must be between 0 and 100');
+      if (dto.unitPrice < 0) throw new Error('Unit price cannot be negative');
+      if (dto.commissionRateUsdMt !== undefined && dto.commissionRateUsdMt < 0) {
+        throw new Error('Commission rate cannot be negative');
+      }
+
+      // Validate specification reference and product match
+      await validateSpecReference(db, dto.productId, dto.specSource, dto.specRevisionId);
+      if (dto.specSource === 'CUSTOMER') {
+        const specCustomer = await db.prepare('SELECT customer_id FROM customer_specs WHERE customer_spec_id = ?').bind(dto.specRevisionId).first();
+        if (specCustomer?.customer_id !== header.customer_id) throw new Error('Specification does not belong to this customer.');
+      }
+
+      // 3. Enforce line_no uniqueness
+      const duplicate = await db.prepare("SELECT 1 FROM po_revision_lines WHERE po_revision_id = ? AND line_no = ? AND line_id != ?").bind(revisionId, dto.lineNo, existingLine?.line_id || '').first();
+      if (duplicate) {
+        const err = new Error(`Duplicate line number: ${dto.lineNo}`);
+        err.code = 'PO_LINE_NUMBER_DUPLICATE';
+        throw err;
+      }
+
+      // 4. Match Manager Price Note
+
+      const note = revision.currency === 'EUR' ? null : await matchManagerPriceNote(
+        db,
+        header.customer_id,
+        dto.productId,
+        revision.incoterm,
+        revision.ownership_type_snapshot,
+        revision.sales_owner_user_id_snapshot
+      );
+
+      let suggestedPrice = null;
+      let sourcePriceNoteId = null;
+      if (note) {
+        suggestedPrice = note.offer_price_usd_per_mt;
+        sourcePriceNoteId = note.note_id;
+      }
+
+      // Validate unit price vs suggested price override reason
+      if (suggestedPrice !== null && dto.unitPrice !== suggestedPrice) {
+        if (!dto.priceOverrideReason || !dto.priceOverrideReason.trim()) {
+          const err = new Error('Price override reason is required when price differs from suggested price');
+          err.code = 'PO_PRICE_OVERRIDE_REASON_REQUIRED';
+          throw err;
+        }
+      }
+
+      // 5. Calculate tolerance boundaries (rounded to 4 decimal places)
+      const minQty = Math.round((dto.contractQtyMt * (1 - dto.tolerancePct / 100)) * 10000) / 10000;
+      const maxQty = Math.round((dto.contractQtyMt * (1 + dto.tolerancePct / 100)) * 10000) / 10000;
+
+      const lineId = existingLine?.line_id || `LINE-${crypto.randomUUID()}`;
+      const priceUnit = dto.priceUnit || '/MT';
+      const commissionRate = dto.commissionRateUsdMt || 0;
+
+      // 6. Insert PO Line
+      const statements = [db.prepare(`
+        INSERT INTO po_revision_lines (
+          line_id, po_revision_id, line_no, previous_line_id, product_id, spec_source, spec_revision_id,
+          spec_override_json, contract_qty_mt, tolerance_pct, min_qty_mt, max_qty_mt, unit_price, price_unit,
+          source_price_note_id, suggested_price, price_override_reason, packaging, container_type, loading_pattern,
+          commission_recipient_user_id, commission_rate_usd_mt, commercial_line_term, operational_line_note
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ${existingLine ? 'ON CONFLICT(line_id) DO UPDATE SET ' + ['line_no', 'spec_source', 'spec_revision_id', 'spec_override_json', 'contract_qty_mt', 'tolerance_pct', 'min_qty_mt', 'max_qty_mt', 'unit_price', 'price_unit', 'source_price_note_id', 'suggested_price', 'price_override_reason', 'packaging', 'container_type', 'loading_pattern', 'commission_recipient_user_id', 'commission_rate_usd_mt', 'commercial_line_term', 'operational_line_note'].map(key => key + ' = excluded.' + key).join(', ') : ''}
+      `).bind(
+        lineId,
+        revisionId,
+        dto.lineNo,
+        dto.previousLineId || null,
+        dto.productId,
+        dto.specSource,
+        dto.specRevisionId,
+        dto.specOverrideJson ? JSON.stringify(dto.specOverrideJson) : null,
+        dto.contractQtyMt,
+        dto.tolerancePct,
+        minQty,
+        maxQty,
+        dto.unitPrice,
+        priceUnit,
+        sourcePriceNoteId,
+        suggestedPrice,
+        dto.priceOverrideReason || null,
+        dto.packaging,
+        dto.containerType,
+        dto.loadingPattern,
+        dto.commissionRecipientUserId || null,
+        commissionRate,
+        dto.commercialLineTerm || null,
+        dto.operationalLineNote || null
+      )];
+
+      if (dto.unitWeightKg !== undefined || dto.unitsPerContainer !== undefined) {
+        statements.push(db.prepare('UPDATE po_revision_lines SET unit_weight_kg = ?, units_per_container = ? WHERE line_id = ?').bind(dto.unitWeightKg || 0, dto.unitsPerContainer || 0, lineId));
+      }
+      if (actorId && !existingLine) statements.push(db.prepare("INSERT INTO po_audit_events (event_id, po_id, po_revision_id, event_type, actor_id, metadata_json) VALUES (?, ?, ?, 'PO_LINE_ADDED', ?, ?)").bind('EVT-' + crypto.randomUUID(), revision.po_id, revisionId, actorId, JSON.stringify({ lineNo: dto.lineNo, productId: dto.productId, action: existingLine ? 'UPDATED' : 'ADDED' })));
+      return { lineId, statements };
+}
+
 export function createPORepository(dbBinding) {
   const db = wrapDb(dbBinding);
   
   return {
+    async canCreateForCustomer(customerId, userId) {
+      const row = await db.prepare("SELECT 1 FROM customers WHERE customer_id = ? AND owner_user_id = ? AND ownership_type = 'ASSIGNED_SALES'").bind(customerId, userId).first();
+      return Boolean(row);
+    },
+
     async createDraftPO(dto, creatorId) {
       if (!dto.customerId) {
         throw new Error('customerId is required to create a PO');
@@ -357,7 +476,8 @@ export function createPORepository(dbBinding) {
       
       let customerContactSnapshotJson = null;
       if (customerContactId) {
-        const contact = await db.prepare("SELECT contact_name, email, phone FROM customer_contacts WHERE contact_id = ?").bind(customerContactId).first();
+        const contact = await db.prepare("SELECT contact_name, email, phone FROM customer_contacts WHERE contact_id = ? AND customer_id = ?").bind(customerContactId, dto.customerId).first();
+        if (!contact) throw new Error('Contact does not belong to this customer.');
         if (contact) {
           customerContactSnapshotJson = JSON.stringify({
             name: contact.contact_name,
@@ -368,6 +488,7 @@ export function createPORepository(dbBinding) {
       }
       
       const currency = dto.currency || 'USD';
+      if (!['USD', 'EUR', 'THB'].includes(currency)) throw new Error('Unsupported PO currency');
       const incoterm = dto.incoterm || 'FOB';
       const destination = dto.destination || null;
       const deliveryStart = dto.deliveryStart || '';
@@ -422,7 +543,17 @@ export function createPORepository(dbBinding) {
       `).bind(revCreatedEventId, poId, revisionId, creatorId, JSON.stringify({ revision_no: 0 }));
 
       // Batch execute insertion & updates
-      await db.batch([headerStmt, revisionStmt, updateHeaderStmt, logPoCreatedStmt, logRevCreatedStmt]);
+      const initialLineStatements = [];
+      if (dto.lines !== undefined && (!Array.isArray(dto.lines) || dto.lines.length === 0)) throw new Error('At least one PO line is required.');
+      const lineNumbers = new Set();
+      for (const [index, line] of (dto.lines || []).entries()) {
+        const lineNo = line.lineNo ?? index + 1;
+        if (lineNumbers.has(lineNo)) throw new Error('Duplicate line number');
+        lineNumbers.add(lineNo);
+        const prepared = await preparePORevisionLine(db, revisionId, { po_id: poId, currency, incoterm, ownership_type_snapshot, sales_owner_user_id_snapshot }, { customer_id: dto.customerId }, { ...line, lineNo }, creatorId);
+        initialLineStatements.push(...prepared.statements);
+      }
+      await db.batch([headerStmt, revisionStmt, updateHeaderStmt, logPoCreatedStmt, logRevCreatedStmt, ...initialLineStatements]);
       
       // Retrieve the newly created objects to return
       const createdHeader = await db.prepare("SELECT * FROM po_headers WHERE po_id = ?").bind(poId).first();
@@ -543,6 +674,12 @@ export function createPORepository(dbBinding) {
         );
       });
 
+      for (const [index, line] of (lines || []).entries()) {
+        if (line.unit_weight_kg !== undefined) {
+          insertLineStmts.push(db.prepare('UPDATE po_revision_lines SET unit_weight_kg = ?, units_per_container = ? WHERE po_revision_id = ? AND line_no = ?').bind(line.unit_weight_kg, line.units_per_container, newRevId, line.line_no));
+        }
+      }
+
       // C. Fetch and clone Documents
       const { results: docs } = await db.prepare("SELECT * FROM po_revision_documents WHERE po_revision_id = ?").bind(header.current_active_revision_id).all();
       const insertDocStmts = (docs || []).map(doc => {
@@ -655,121 +792,41 @@ export function createPORepository(dbBinding) {
       return updatedRevision;
     },
 
+    async saveDraftRevisionLine(revisionId, lineId, dto, actorId) {
+      await enforceNotCancelledByRevisionId(db, revisionId);
+      const revision = await db.prepare('SELECT * FROM po_revisions WHERE revision_id = ?').bind(revisionId).first();
+      if (!revision || revision.status !== 'DRAFT') throw new Error('Only draft revision lines can be edited.');
+      const currency = dto.currency || revision.currency;
+      if (!['USD', 'EUR'].includes(currency)) throw new Error('Unsupported PO currency');
+      const existing = lineId ? await db.prepare('SELECT * FROM po_revision_lines WHERE line_id = ? AND po_revision_id = ?').bind(lineId, revisionId).first() : null;
+      if (lineId && !existing) throw new Error('Line not found in this revision.');
+      if (existing && dto.productId && dto.productId !== existing.product_id) throw new Error('Product cannot be replaced on an existing line');
+      const fields = { lineNo: 'line_no', previousLineId: 'previous_line_id', productId: 'product_id', specSource: 'spec_source', specRevisionId: 'spec_revision_id', contractQtyMt: 'contract_qty_mt', tolerancePct: 'tolerance_pct', unitPrice: 'unit_price', priceUnit: 'price_unit', packaging: 'packaging', containerType: 'container_type', loadingPattern: 'loading_pattern', commissionRecipientUserId: 'commission_recipient_user_id', commissionRateUsdMt: 'commission_rate_usd_mt', priceOverrideReason: 'price_override_reason', commercialLineTerm: 'commercial_line_term', operationalLineNote: 'operational_line_note', unitWeightKg: 'unit_weight_kg', unitsPerContainer: 'units_per_container' };
+      const defaults = existing ? Object.fromEntries(Object.entries(fields).map(([key, column]) => [key, existing[column]])) : {};
+      if (existing?.spec_override_json) defaults.specOverrideJson = JSON.parse(existing.spec_override_json);
+      if (!existing && dto.lineNo === undefined) {
+        const next = await db.prepare('SELECT COALESCE(MAX(line_no), 0) + 1 AS next_line FROM po_revision_lines WHERE po_revision_id = ?').bind(revisionId).first();
+        defaults.lineNo = next.next_line;
+      }
+      const header = await db.prepare('SELECT customer_id FROM po_headers WHERE po_id = ?').bind(revision.po_id).first();
+      const prepared = await preparePORevisionLine(db, revisionId, { ...revision, currency }, header, { ...defaults, ...dto }, actorId, existing);
+      await db.batch([db.prepare('UPDATE po_revisions SET currency = ? WHERE revision_id = ?').bind(currency, revisionId), ...prepared.statements]);
+      return db.prepare('SELECT * FROM po_revision_lines WHERE line_id = ?').bind(prepared.lineId).first();
+    },
+
     async createPORevisionLine(revisionId, dto, actorId = null) {
       await enforceNotCancelledByRevisionId(db, revisionId);
-      // 1. Enforce status constraint
-      const revision = await db.prepare("SELECT status, po_id, incoterm, ownership_type_snapshot, sales_owner_user_id_snapshot FROM po_revisions WHERE revision_id = ?").bind(revisionId).first();
-      if (!revision) {
-        throw new Error(`Revision not found: ${revisionId}`);
-      }
+      const revision = await db.prepare('SELECT * FROM po_revisions WHERE revision_id = ?').bind(revisionId).first();
+      if (!revision) throw new Error('Revision not found: ' + revisionId);
       if (revision.status !== 'DRAFT') {
         const err = new Error('Cannot modify lines of an active or superseded revision');
         err.code = 'PO_ACTIVE_IMMUTABLE';
         throw err;
       }
-
-      // 2. Validate inputs
-      if (dto.contractQtyMt < 0) throw new Error('Contract quantity cannot be negative');
-      if (dto.tolerancePct < 0 || dto.tolerancePct > 100) throw new Error('Tolerance must be between 0 and 100');
-      if (dto.unitPrice < 0) throw new Error('Unit price cannot be negative');
-      if (dto.commissionRateUsdMt !== undefined && dto.commissionRateUsdMt < 0) {
-        throw new Error('Commission rate cannot be negative');
-      }
-
-      // Validate specification reference and product match
-      await validateSpecReference(db, dto.productId, dto.specSource, dto.specRevisionId);
-
-      // 3. Enforce line_no uniqueness
-      const duplicate = await db.prepare("SELECT 1 FROM po_revision_lines WHERE po_revision_id = ? AND line_no = ?").bind(revisionId, dto.lineNo).first();
-      if (duplicate) {
-        const err = new Error(`Duplicate line number: ${dto.lineNo}`);
-        err.code = 'PO_LINE_NUMBER_DUPLICATE';
-        throw err;
-      }
-
-      // 4. Match Manager Price Note
-      const header = await db.prepare("SELECT customer_id FROM po_headers WHERE po_id = ?").bind(revision.po_id).first();
-      if (!header) {
-        throw new Error(`PO header not found for po_id: ${revision.po_id}`);
-      }
-
-      const note = await matchManagerPriceNote(
-        db,
-        header.customer_id,
-        dto.productId,
-        revision.incoterm,
-        revision.ownership_type_snapshot,
-        revision.sales_owner_user_id_snapshot
-      );
-
-      let suggestedPrice = null;
-      let sourcePriceNoteId = null;
-      if (note) {
-        suggestedPrice = note.offer_price_usd_per_mt;
-        sourcePriceNoteId = note.note_id;
-      }
-
-      // Validate unit price vs suggested price override reason
-      if (suggestedPrice !== null && dto.unitPrice !== suggestedPrice) {
-        if (!dto.priceOverrideReason || !dto.priceOverrideReason.trim()) {
-          const err = new Error('Price override reason is required when price differs from suggested price');
-          err.code = 'PO_PRICE_OVERRIDE_REASON_REQUIRED';
-          throw err;
-        }
-      }
-
-      // 5. Calculate tolerance boundaries (rounded to 4 decimal places)
-      const minQty = Math.round((dto.contractQtyMt * (1 - dto.tolerancePct / 100)) * 10000) / 10000;
-      const maxQty = Math.round((dto.contractQtyMt * (1 + dto.tolerancePct / 100)) * 10000) / 10000;
-
-      const lineId = `LINE-${crypto.randomUUID()}`;
-      const priceUnit = dto.priceUnit || '/MT';
-      const commissionRate = dto.commissionRateUsdMt || 0;
-
-      // 6. Insert PO Line
-      await db.prepare(`
-        INSERT INTO po_revision_lines (
-          line_id, po_revision_id, line_no, previous_line_id, product_id, spec_source, spec_revision_id,
-          spec_override_json, contract_qty_mt, tolerance_pct, min_qty_mt, max_qty_mt, unit_price, price_unit,
-          source_price_note_id, suggested_price, price_override_reason, packaging, container_type, loading_pattern,
-          commission_recipient_user_id, commission_rate_usd_mt, commercial_line_term, operational_line_note
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `).bind(
-        lineId,
-        revisionId,
-        dto.lineNo,
-        dto.previousLineId || null,
-        dto.productId,
-        dto.specSource,
-        dto.specRevisionId,
-        dto.specOverrideJson ? JSON.stringify(dto.specOverrideJson) : null,
-        dto.contractQtyMt,
-        dto.tolerancePct,
-        minQty,
-        maxQty,
-        dto.unitPrice,
-        priceUnit,
-        sourcePriceNoteId,
-        suggestedPrice,
-        dto.priceOverrideReason || null,
-        dto.packaging,
-        dto.containerType,
-        dto.loadingPattern,
-        dto.commissionRecipientUserId || null,
-        commissionRate,
-        dto.commercialLineTerm || null,
-        dto.operationalLineNote || null
-      ).run();
-
-      // Log PO_LINE_ADDED audit event
-      if (actorId) {
-        await logPOAuditEvent(db, revision.po_id, revisionId, 'PO_LINE_ADDED', actorId, {
-          lineNo: dto.lineNo,
-          productId: dto.productId
-        });
-      }
-
-      return await db.prepare("SELECT * FROM po_revision_lines WHERE line_id = ?").bind(lineId).first();
+      const header = await db.prepare('SELECT customer_id FROM po_headers WHERE po_id = ?').bind(revision.po_id).first();
+      const prepared = await preparePORevisionLine(db, revisionId, revision, header, dto, actorId);
+      await db.batch(prepared.statements);
+      return db.prepare('SELECT * FROM po_revision_lines WHERE line_id = ?').bind(prepared.lineId).first();
     },
 
     async updatePORevisionLine(lineId, dto) {
@@ -780,7 +837,7 @@ export function createPORepository(dbBinding) {
         throw new Error(`Line not found: ${lineId}`);
       }
 
-      const revision = await db.prepare("SELECT status, po_id, incoterm, ownership_type_snapshot, sales_owner_user_id_snapshot FROM po_revisions WHERE revision_id = ?").bind(existingLine.po_revision_id).first();
+      const revision = await db.prepare("SELECT status, po_id, currency, incoterm, ownership_type_snapshot, sales_owner_user_id_snapshot FROM po_revisions WHERE revision_id = ?").bind(existingLine.po_revision_id).first();
       if (!revision) {
         throw new Error(`Revision not found: ${existingLine.po_revision_id}`);
       }
@@ -802,6 +859,9 @@ export function createPORepository(dbBinding) {
       const commissionRate = dto.commissionRateUsdMt !== undefined ? dto.commissionRateUsdMt : existingLine.commission_rate_usd_mt;
       const priceOverrideReason = dto.priceOverrideReason !== undefined ? dto.priceOverrideReason : existingLine.price_override_reason;
 
+      for (const key of ['unitWeightKg', 'unitsPerContainer']) {
+        if (dto[key] !== undefined && (!Number.isFinite(dto[key]) || dto[key] < 0)) throw new Error('Invalid packaging quantity: ' + key);
+      }
       if (contractQty < 0) throw new Error('Contract quantity cannot be negative');
       if (tolerancePct < 0 || tolerancePct > 100) throw new Error('Tolerance must be between 0 and 100');
       if (unitPrice < 0) throw new Error('Unit price cannot be negative');
@@ -828,7 +888,7 @@ export function createPORepository(dbBinding) {
         throw new Error(`PO header not found for po_id: ${revision.po_id}`);
       }
 
-      const note = await matchManagerPriceNote(
+      const note = revision.currency === 'EUR' ? null : await matchManagerPriceNote(
         db,
         header.customer_id,
         existingLine.product_id,
@@ -868,6 +928,8 @@ export function createPORepository(dbBinding) {
         unitPrice: 'unit_price',
         priceUnit: 'price_unit',
         priceOverrideReason: 'price_override_reason',
+        unitWeightKg: 'unit_weight_kg',
+        unitsPerContainer: 'units_per_container',
         packaging: 'packaging',
         containerType: 'container_type',
         loadingPattern: 'loading_pattern',
@@ -1371,7 +1433,7 @@ export function createPORepository(dbBinding) {
     },
 
     async listPOs() {
-      const { results } = await db.prepare("SELECT * FROM po_headers ORDER BY created_at DESC").all();
+      const { results } = await db.prepare("SELECT * FROM po_headers ORDER BY created_at DESC, rowid DESC").all();
       return results || [];
     },
 

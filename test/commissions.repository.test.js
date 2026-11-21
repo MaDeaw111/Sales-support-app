@@ -235,3 +235,15 @@ test('settleCommission freezes immutable snapshot, enforces idempotency & double
   assert.equal(detail.auditHistory[0].event_type, 'COMMISSION_NOTE_UPDATED');
   assert.equal(detail.auditHistory[1].event_type, 'COMMISSION_SETTLED');
 });
+
+test('EUR PO currency is separate from USD commission calculation', async () => {
+  const { db, wrappedDb } = await setupTestDb();
+  seedCommissionFixture(db);
+  db.exec("UPDATE po_revisions SET currency = 'EUR' WHERE revision_id = 'REV1'");
+  const result = await createCommissionsRepository(wrappedDb).listCommissions();
+  const item = result.items.find(row => row.shipment_id === 'SHP-1');
+  assert.equal(item.po_currency, 'EUR');
+  assert.equal(item.currency, 'USD');
+  assert.equal(item.commission_amount_usd, 350);
+  db.close();
+});

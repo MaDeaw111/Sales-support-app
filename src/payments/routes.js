@@ -11,6 +11,7 @@ const EXTERNAL_SALES_ITEM_FIELDS = [
   'customer_name',
   'customer_po_no',
   'currency',
+  'po_currency',
   'shipment_status',
   'etd',
   'actual_loading_date',

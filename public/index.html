@@ -1475,6 +1475,33 @@
                 'calendar.dow.4': 'ศ.',
                 'calendar.dow.5': 'ส.',
                 'calendar.dow.6': 'อา.',
+                'common.price': 'ราคา',
+                'po.sellingPriceCurrency': "ราคาขาย ({currency}/MT) *",
+                'po.manualCurrencyPrice': "กรอกราคาขายเป็น {currency} โดยไม่ใช้ราคาแนะนำ USD",
+                'po.suggestedPrice': "ราคาขายแนะนำ: USD {price} / MT",
+                'po.noSuggestedPrice': "ไม่พบราคาที่อนุมัติและมีผลใช้งาน",
+                'po.belowSuggested': "ราคาขายต่ำกว่าราคาแนะนำ USD ต้องได้รับอนุมัติ",
+                'po.addLine': "เพิ่มรายการสินค้า",
+                'po.editLine': "แก้ไขรายการสินค้า",
+                'po.spec': "ข้อกำหนดสินค้า",
+                'po.saveLine': "บันทึกรายการ",
+                'po.packageWeight': "น้ำหนักต่อหน่วย (กก.)",
+                'po.unitsPerContainer': "จำนวนหน่วยต่อตู้",
+                'po.priceOverrideReason': "เหตุผลที่ปรับราคา",
+                'po.currencyApplies': "สกุลเงินใช้กับทุกรายการในฉบับร่างนี้ โดยไม่แปลงราคาที่มีอยู่",
+                'po.poCurrency': "สกุลเงิน PO",
+                'po.lineSaveFailed': "ไม่สามารถบันทึกรายการ PO ได้",
+                'po.lineSaved': "บันทึกรายการ PO แล้ว",
+                'po.deliveryRequired': "กรุณาระบุวันเริ่มต้นและสิ้นสุดการส่งมอบ",
+                'po.deliveryInvalid': "วันสิ้นสุดต้องไม่ก่อนวันเริ่มต้นการส่งมอบ",
+                'po.priceSource': "แหล่งราคา",
+                'po.priceApproval': "การอนุมัติราคา",
+                'po.shipment': "การขนส่ง",
+                'po.maxAllowed': "ปริมาณสูงสุด",
+                'po.perLoad': "ตันต่อเที่ยว",
+                'po.contract': "สัญญา",
+                'po.manualPrice': "ราคากรอกเอง",
+                'po.chooseSpec': "เลือกข้อกำหนดที่ใช้งานอยู่",
                 'po.moreProducts': '+{count} รายการเพิ่มเติม',
                 'calendar.moreEvents': '+{count} รายการ',
                 'calendar.noEventsDay': 'ไม่มีรายการ',
@@ -2666,6 +2693,33 @@
                 'calendar.dow.4': 'FRI',
                 'calendar.dow.5': 'SAT',
                 'calendar.dow.6': 'SUN',
+                'common.price': 'Price',
+                'po.sellingPriceCurrency': "Selling Price ({currency}/MT) *",
+                'po.manualCurrencyPrice': "Enter the selling price in {currency}; USD suggestions do not apply.",
+                'po.suggestedPrice': "Suggested Selling Price: USD {price} / MT",
+                'po.noSuggestedPrice': "No active approved price found",
+                'po.belowSuggested': "Selling price is below the USD suggested price; approval is required.",
+                'po.addLine': "Add Line",
+                'po.editLine': "Edit Line",
+                'po.spec': "Specification",
+                'po.saveLine': "Save Line",
+                'po.packageWeight': "Unit Weight (kg)",
+                'po.unitsPerContainer': "Units per Container",
+                'po.priceOverrideReason': "Price Override Reason",
+                'po.currencyApplies': "Currency applies to every line in this draft. Existing prices are not converted.",
+                'po.poCurrency': "PO Currency",
+                'po.lineSaveFailed': "Unable to save the PO line.",
+                'po.lineSaved': "PO line saved.",
+                'po.deliveryRequired': "Delivery start and end are required.",
+                'po.deliveryInvalid': "Delivery end must not precede delivery start.",
+                'po.priceSource': "Price Source",
+                'po.priceApproval': "Price Approval",
+                'po.shipment': "Shipment",
+                'po.maxAllowed': "Maximum Allowed",
+                'po.perLoad': "MT / Load",
+                'po.contract': "Contract",
+                'po.manualPrice': "Manual price",
+                'po.chooseSpec': "Select an active specification",
                 'po.moreProducts': '+{count} more',
                 'calendar.moreEvents': '+{count} more',
                 'calendar.noEventsDay': 'No events',
@@ -3843,7 +3897,7 @@
                     shipmentType: firstLine.container_type ? 'Container' : 'Bulk Vessel',
                     containerType: firstLine.container_type || '-',
                     packaging: firstLine.packaging || '',
-                    packageWeightKg: firstLine.package_weight_kg || 0,
+                    packageWeightKg: firstLine.unit_weight_kg ?? firstLine.package_weight_kg ?? 0,
                     unitsPerContainer: firstLine.units_per_container || 0,
                     totalWeightPerContainerMt: firstLine.total_weight_per_container_mt || 0,
                     poCurrency: displayRev.currency || 'USD',
@@ -7085,7 +7139,7 @@
                     renderView();
                     return;
                 }
-                state.pos = data.data.pos;
+                state.pos = data.data.pos.sort((a, b) => String(b.header?.created_at || '').localeCompare(String(a.header?.created_at || '')) || String(b.header?.po_id || '').localeCompare(String(a.header?.po_id || ''), undefined, { numeric: true }));
                 state.posLoaded = true;
                 state.posLoading = false;
                 renderView();
@@ -7144,7 +7198,7 @@
                                     <span>${tr('po.backToList', 'ดูรายการ PO ทั้งหมด')}</span>
                                 </button>
                             ` : ''}
-                            ${canWritePO() ? `<button onclick="openNewPOModal()" class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-xs font-semibold flex items-center space-x-2 shadow-sm transition-colors"><i data-lucide="plus-circle" class="w-4 h-4"></i><span>${tr('po.newPoBtn', 'สร้าง PO ใหม่ (New PO)')}</span></button>` : ''}
+                            ${(canWritePO() || state.currentUser.role === 'EXTERNAL_SALES') ? `<button onclick="openNewPOModal()" class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-xs font-semibold flex items-center space-x-2 shadow-sm transition-colors"><i data-lucide="plus-circle" class="w-4 h-4"></i><span>${tr('po.newPoBtn', 'สร้าง PO ใหม่ (New PO)')}</span></button>` : ''}
                         </div>
                     </div>
 
@@ -7175,11 +7229,75 @@
             const history = po.audit_events || po.auditEvents || [];
             const poId = header.po_id || po.id;
             const revisionTabs = revisions.map(item => `<button onclick="state.selectedRevisionId='${item.revision_id}'; renderView();" class="px-3 py-1.5 rounded text-xs font-bold ${revision?.revision_id === item.revision_id ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-600'}">Rev. ${item.revision_no} · ${typeof translateStatus === 'function' ? translateStatus(item.status) : item.status}</button>`).join('');
-            const lineRows = lines.length ? lines.map(line => `<tr><td class="p-3">${line.line_no}</td><td class="p-3 font-bold">${line.product_id}</td><td class="p-3 text-right">${Number(line.contract_qty_mt || 0).toFixed(3)} MT</td><td class="p-3 text-right">${Number(line.min_qty_mt || 0).toFixed(3)}–${Number(line.max_qty_mt || 0).toFixed(3)} MT</td><td class="p-3">${line.packaging || '-'}</td></tr>`).join('') : `<tr><td colspan="5" class="p-5 text-center text-slate-400">${tr('po.noLines', 'No lines in this revision.')}</td></tr>`;
+            const editable = canWritePO() && revision?.status === 'DRAFT' && header.header_status !== 'CANCELLED';
+            const lineRows = lines.length ? lines.map(line => {
+                const product = (state.products || []).find(p => p.id === line.product_id);
+                return `<tr><td class="p-3">${line.line_no}</td><td class="p-3">${renderPricingProduct(product || { productName: line.product_name || line.product_id, shortName: line.short_name, productCode: line.product_code })}</td><td class="p-3 text-right">${Number(line.contract_qty_mt || 0).toFixed(3)} MT</td><td class="p-3 text-right">${Number(line.min_qty_mt || 0).toFixed(3)}–${Number(line.max_qty_mt || 0).toFixed(3)} MT</td><td class="p-3">${escapePricingHtml(line.packaging || '-')}</td><td class="p-3 text-right">${line.unit_price === undefined ? '-' : escapePricingHtml(revision.currency || line.currency || 'USD') + ' ' + Number(line.unit_price).toFixed(2) + ' / MT'}</td><td class="p-3">${editable ? `<button class="text-blue-600 font-bold" onclick="openPODraftLineModal('${poId}', '${revision.revision_id}', '${line.line_id}')">${tr('po.editLine', 'Edit Line')}</button>` : ''}</td></tr>`;
+            }).join('') : `<tr><td colspan="7" class="p-5 text-center text-slate-400">${tr('po.noLines', 'No lines in this revision.')}</td></tr>`;
+
             const documentRows = documents.length ? documents.map(document => `<li class="flex justify-between gap-3 py-2 border-b last:border-0"><span>${document.label || document.document_type}</span>${document.url ? `<a class="text-blue-600 font-bold" href="${document.url}" target="_blank" rel="noopener">${tr('common.open', 'Open')}</a>` : ''}</li>`).join('') : `<li class="py-3 text-slate-400">${tr('po.noDocs', 'No documents.')}</li>`;
             const historyRows = history.length ? history.map(event => `<li class="py-2 border-b last:border-0"><span class="font-bold">${event.event_type || event.type || 'Event'}</span><span class="text-slate-500"> · ${event.created_at || event.createdAt || '-'}</span></li>`).join('') : `<li class="py-3 text-slate-400">${tr('po.noHistory', 'No history entries.')}</li>`;
             const poAttachmentsHtml = typeof renderPoAttachmentsSection === 'function' ? renderPoAttachmentsSection(poId) : '';
-            return `<div class="space-y-4"><section class="bg-white rounded-xl border border-blue-200 p-5"><div class="flex justify-between gap-4"><div><div class="text-xs text-slate-400 font-mono">${poId}</div><h3 class="text-xl font-black">${revision?.customer_po_no || poId}</h3><p class="text-sm text-slate-600">${customer?.name || customerId || '-'}</p></div><span class="px-2 py-1 h-fit rounded text-xs font-bold bg-blue-100 text-blue-800">${typeof translateStatus === 'function' ? translateStatus(header.header_status || 'OPEN') : (header.header_status || 'OPEN')}</span></div><div class="mt-4 flex flex-wrap gap-2">${revisionTabs}</div></section><section class="bg-white rounded-xl border border-slate-200 p-5"><h4 class="font-black">${tr('po.overview', 'Overview')}</h4><div class="grid md:grid-cols-3 gap-3 mt-3 text-xs"><div>${tr('po.revisionLabel', 'Revision:')} <strong>${revision ? `Rev. ${revision.revision_no} · ${typeof translateStatus === 'function' ? translateStatus(revision.status) : revision.status}` : '-'}</strong></div><div>Incoterm: <strong>${revision?.incoterm || '-'}</strong></div><div>${tr('po.deliveryLabel', 'Delivery:')} <strong>${revision?.delivery_start || '-'} – ${revision?.delivery_end || '-'}</strong></div></div></section><section class="bg-white rounded-xl border border-slate-200 overflow-hidden"><div class="p-4 border-b font-black">${tr('po.lines', 'Lines')}</div><table class="ui-table w-full text-xs"><thead><tr><th class="p-3">#</th><th class="p-3">${tr('common.product', 'Product')}</th><th class="p-3 text-right">${tr('po.colContractQty', 'Contract Qty')}</th><th class="p-3 text-right">${tr('po.colAllowedQty', 'Allowed Qty')}</th><th class="p-3">${tr('po.colPackaging', 'Packaging')}</th></tr></thead><tbody>${lineRows}</tbody></table></section><section class="bg-white rounded-xl border border-slate-200 p-5 space-y-4"><h4 class="font-black">${tr('po.documents', 'Documents')}</h4>${poAttachmentsHtml}<ul class="mt-2 text-xs">${documentRows}</ul></section><section class="bg-white rounded-xl border border-slate-200 p-5"><h4 class="font-black">${tr('po.history', 'History')}</h4><ul class="mt-2 text-xs">${historyRows}</ul></section></div>`;
+            return `<div class="space-y-4"><section class="bg-white rounded-xl border border-blue-200 p-5"><div class="flex justify-between gap-4"><div><div class="text-xs text-slate-400 font-mono">${poId}</div><h3 class="text-xl font-black">${revision?.customer_po_no || poId}</h3><p class="text-sm text-slate-600">${customer?.name || customerId || '-'}</p></div><span class="px-2 py-1 h-fit rounded text-xs font-bold bg-blue-100 text-blue-800">${typeof translateStatus === 'function' ? translateStatus(header.header_status || 'OPEN') : (header.header_status || 'OPEN')}</span></div><div class="mt-4 flex flex-wrap gap-2">${revisionTabs}</div></section><section class="bg-white rounded-xl border border-slate-200 p-5"><h4 class="font-black">${tr('po.overview', 'Overview')}</h4><div class="grid md:grid-cols-3 gap-3 mt-3 text-xs"><div>${tr('po.revisionLabel', 'Revision:')} <strong>${revision ? `Rev. ${revision.revision_no} · ${typeof translateStatus === 'function' ? translateStatus(revision.status) : revision.status}` : '-'}</strong></div><div>Incoterm: <strong>${revision?.incoterm || '-'}</strong></div><div>${tr('po.deliveryLabel', 'Delivery:')} <strong>${revision?.delivery_start || '-'} – ${revision?.delivery_end || '-'}</strong></div></div></section><section class="bg-white rounded-xl border border-slate-200 overflow-hidden"><div class="p-4 border-b font-black flex justify-between">${tr('po.lines', 'Lines')}${editable ? `<button class="text-blue-600" onclick="openPODraftLineModal('${poId}', '${revision.revision_id}')">${tr('po.addLine', 'Add Line')}</button>` : ''}</div><table class="ui-table w-full text-xs"><thead><tr><th class="p-3">#</th><th class="p-3">${tr('common.product', 'Product')}</th><th class="p-3 text-right">${tr('po.colContractQty', 'Contract Qty')}</th><th class="p-3 text-right">${tr('po.colAllowedQty', 'Allowed Qty')}</th><th class="p-3">${tr('po.colPackaging', 'Packaging')}</th><th class="p-3">${tr('common.price', 'Price')}</th><th class="p-3">${tr('common.action', 'Action')}</th></tr></thead><tbody>${lineRows}</tbody></table></section><section class="bg-white rounded-xl border border-slate-200 p-5 space-y-4"><h4 class="font-black">${tr('po.documents', 'Documents')}</h4>${poAttachmentsHtml}<ul class="mt-2 text-xs">${documentRows}</ul></section><section class="bg-white rounded-xl border border-slate-200 p-5"><h4 class="font-black">${tr('po.history', 'History')}</h4><ul class="mt-2 text-xs">${historyRows}</ul></section></div>`;
+        }
+
+        function updatePODraftLineSpecs() {
+            const product = (state.products || []).find(p => p.id === document.getElementById('draftLineProduct')?.value);
+            const select = document.getElementById('draftLineSpec');
+            if (!select) return;
+            select.innerHTML = (product?.standardSpecs || []).filter(spec => !spec.status || spec.status === 'ACTIVE').map(spec => `<option value="STANDARD:${escapePricingHtml(spec.id)}">${escapePricingHtml(spec.application || '')} · Rev. ${spec.revisionNo ?? 0}</option>`).join('');
+        }
+
+        function openPODraftLineModal(poId, revisionId, lineId = '') {
+            if (!canWritePO()) return;
+            const po = (state.pos || []).find(p => p.header?.po_id === poId);
+            const revision = po?.revisions.find(r => r.revision_id === revisionId);
+            if (!revision || revision.status !== 'DRAFT' || po.header.header_status === 'CANCELLED') return;
+            const line = revision.lines?.find(l => l.line_id === lineId);
+            if (lineId && !line) return;
+            const esc = escapePricingHtml;
+            const currency = revision.currency || 'USD';
+            const productId = line?.product_id || state.products?.[0]?.id || '';
+            const product = (state.products || []).find(p => p.id === productId);
+            const specs = (product?.standardSpecs || []).filter(spec => !spec.status || spec.status === 'ACTIVE');
+            const currentSpec = line ? `<option value="${line.spec_source}:${esc(line.spec_revision_id)}">${esc(line.spec_revision_id)}</option>` : '';
+            openModal(`<form onsubmit="savePODraftLine(event, '${poId}', '${revisionId}', '${lineId}')" class="space-y-4 text-sm">
+                <h3 class="text-lg font-bold">${t(lineId ? 'po.editLine' : 'po.addLine')}</h3>
+                <label class="block">${t('po.fieldProductSpec')}<select id="draftLineProduct" ${line ? 'disabled' : ''} onchange="updatePODraftLineSpecs()" class="w-full border rounded p-2">${(state.products || []).map(p => `<option value="${esc(p.id)}" ${p.id === productId ? 'selected' : ''}>${esc(poProductOptionLabel(p))}</option>`).join('')}</select></label>
+                <label class="block">${t('po.spec')}<select id="draftLineSpec" required class="w-full border rounded p-2">${currentSpec}${specs.map(spec => `<option value="STANDARD:${esc(spec.id)}">${esc(spec.application || '')} · Rev. ${spec.revisionNo ?? 0}</option>`).join('')}</select></label>
+                <label class="block">${t('common.currency')}<select id="draftLineCurrency" onchange="document.getElementById('draftLinePriceLabel').textContent=t('po.sellingPriceCurrency',{currency:this.value})" class="w-full border rounded p-2"><option value="USD" ${currency === 'USD' ? 'selected' : ''}>USD</option><option value="EUR" ${currency === 'EUR' ? 'selected' : ''}>EUR</option></select></label>
+                <p class="text-xs text-slate-500">${t('po.currencyApplies')}</p>
+                <div class="grid grid-cols-2 gap-3"><label><span id="draftLinePriceLabel">${t('po.sellingPriceCurrency', { currency })}</span><input id="draftLinePrice" required type="number" min="0" step="any" value="${line?.unit_price ?? ''}" class="w-full border rounded p-2"></label><label>${t('po.fieldContractMt')}<input id="draftLineQty" required type="number" min="0" step="any" value="${line?.contract_qty_mt ?? ''}" class="w-full border rounded p-2"></label></div>
+                <label class="block">${t('po.qtyTolTitle')}<input id="draftLineTolerance" type="number" min="0" max="100" step="any" value="${line?.tolerance_pct ?? 5}" class="w-full border rounded p-2"></label>
+                <label class="block">${t('po.colPackaging')}<input id="draftLinePackaging" required value="${esc(line?.packaging || '')}" class="w-full border rounded p-2"></label>
+                <div class="grid grid-cols-2 gap-3"><label>${t('po.packageWeight')}<input id="draftLineWeight" type="number" min="0" step="any" value="${line?.unit_weight_kg ?? 0}" class="w-full border rounded p-2"></label><label>${t('po.unitsPerContainer')}<input id="draftLineUnits" type="number" min="0" step="any" value="${line?.units_per_container ?? 0}" class="w-full border rounded p-2"></label></div>
+                <label class="block">${t('po.priceOverrideReason')}<input id="draftLineReason" value="${esc(line?.price_override_reason || '')}" class="w-full border rounded p-2"></label>
+                <p id="draftLineError" class="text-red-700"></p><div class="flex justify-end gap-2"><button type="button" onclick="closeModal()" class="border rounded p-2">${t('common.cancel')}</button><button id="draftLineSave" class="bg-blue-600 text-white rounded p-2">${t('po.saveLine')}</button></div>
+            </form>`);
+        }
+
+        async function savePODraftLine(event, poId, revisionId, lineId = '') {
+            event.preventDefault();
+            const value = id => document.getElementById(id)?.value || '';
+            const [specSource, ...specParts] = value('draftLineSpec').split(':');
+            const button = document.getElementById('draftLineSave');
+            const error = document.getElementById('draftLineError');
+            if (button) button.disabled = true;
+            try {
+                const response = await fetch(`/api/pos/${encodeURIComponent(poId)}/revisions/${encodeURIComponent(revisionId)}/lines${lineId ? '/' + encodeURIComponent(lineId) : ''}`, {
+                    method: lineId ? 'PATCH' : 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ productId: value('draftLineProduct'), specSource, specRevisionId: specParts.join(':'), currency: value('draftLineCurrency'), unitPrice: Number(value('draftLinePrice')), contractQtyMt: Number(value('draftLineQty')), tolerancePct: Number(value('draftLineTolerance')), packaging: value('draftLinePackaging'), unitWeightKg: Number(value('draftLineWeight')), unitsPerContainer: Number(value('draftLineUnits')), priceOverrideReason: value('draftLineReason') })
+                });
+                const body = await response.json();
+                if (!response.ok || body.status !== 'SUCCESS') throw new Error(body.message || t('po.lineSaveFailed'));
+                closeModal();
+                state.selectedPoId = poId;
+                state.selectedRevisionId = revisionId;
+                state.poNotice = { tone: 'success', message: t('po.lineSaved') };
+                await loadPOsFromApi();
+            } catch (err) {
+                if (error) error.textContent = err.message || t('po.lineSaveFailed');
+            } finally { if (button) button.disabled = false; }
         }
 
         function getPoProductSummary(po) {
@@ -7390,6 +7508,24 @@
             return `PO-${currentYear}-${String(nextNum).padStart(3, '0')}`;
         }
 
+        function poProductOptionLabel(product) {
+            return `${product.name || product.productName || product.id}${product.shortName ? ' — ' + product.shortName : ''} [${product.code || product.productCode || ''}]`;
+        }
+
+        function updateNewPOSpecOptions() {
+            const product = (state.products || []).find(p => p.id === document.getElementById('newPoProductId')?.value);
+            const select = document.getElementById('newPoSpecId');
+            if (select) select.innerHTML = (product?.standardSpecs || []).filter(spec => !spec.status || spec.status === 'ACTIVE').map(spec => `<option value="${escapePricingHtml(spec.id)}">${escapePricingHtml(spec.application || '')} · Rev. ${spec.revisionNo ?? spec.revision_no ?? 0}</option>`).join('');
+        }
+
+        function updateNewPOCurrency() {
+            const currency = document.getElementById('newPoCurrency')?.value || 'USD';
+            const label = document.getElementById('newPoPriceLabel');
+            if (label) label.textContent = t('po.sellingPriceCurrency', { currency });
+            updateNewPOPriceSuggestion();
+            updateNewPOReview();
+        }
+
         function openNewPOModal() {
             const tr = (k, fb, p) => (typeof t === 'function' ? t(k, p) : fb);
             resetNewPOPendingFiles();
@@ -7445,12 +7581,13 @@
                             </div>
                             <div>
                                 <label class="font-semibold text-slate-700">${tr('po.fieldProductSpec', 'สินค้า & สเปก (อ้างอิงจาก Products) *')}</label>
-                                <select id="newPoProductId" onchange="updateNewPOPriceSuggestion(); updateNewPOReview()" class="w-full border border-slate-300 rounded p-2 mt-1 outline-none bg-blue-50/50 font-medium text-slate-800 focus:border-blue-500">
-                                    ${(state.products || []).map(p => `<option value="${p.id}">${p.shortName || p.name} [${p.code}]</option>`).join('')}
+                                <select id="newPoProductId" onchange="updateNewPOSpecOptions(); updateNewPOPriceSuggestion(); updateNewPOReview()" class="w-full border border-slate-300 rounded p-2 mt-1 outline-none bg-blue-50/50 font-medium text-slate-800 focus:border-blue-500">
+                                    ${(state.products || []).map(p => `<option value="${escapePricingHtml(p.id)}">${escapePricingHtml(poProductOptionLabel(p))}</option>`).join('')}
                                 </select>
                             </div>
                         </div>
 
+<div><label class="font-semibold text-slate-700">${tr('po.spec', 'Specification')}</label><select id="newPoSpecId" class="w-full border rounded p-2 mt-1"></select></div>
                         <!-- Contract Qty & +/- Tolerance Setting -->
                         <div class="p-3 bg-amber-50/50 rounded-lg border border-amber-200 space-y-2">
                             <div class="font-bold text-amber-900 flex items-center justify-between">
@@ -7480,8 +7617,8 @@
                         <div class="p-3 bg-fuchsia-50/50 rounded-lg border border-fuchsia-200 space-y-2">
                             <div class="font-bold text-fuchsia-900">${tr('commissions.colCommission', 'Commission')}</div>
                             <div class="grid grid-cols-2 gap-3">
-                                <div><label class="font-semibold text-slate-700">${tr('po.commRecipient', 'Commission Recipient')}</label><select id="newPoCommissionRecipient" class="w-full border border-slate-300 bg-white rounded p-2 mt-1"><option value="">${tr('po.noCommission', 'No Commission')}</option>${(state.customerOwners||[]).map(u=>`<option value="${u.id}">${u.name}</option>`).join('')}</select></div>
-                                <div><label class="font-semibold text-slate-700">${tr('po.commRate', 'Commission Rate (USD / MT)')}</label><input id="newPoCommissionRate" type="number" step="0.01" min="0" value="0" class="w-full border border-slate-300 bg-white rounded p-2 mt-1"></div>
+                                <div><label class="font-semibold text-slate-700">${tr('po.commRecipient', 'Commission Recipient')}</label><select ${state.currentUser.role === 'EXTERNAL_SALES' ? 'disabled' : ''} id="newPoCommissionRecipient" class="w-full border border-slate-300 bg-white rounded p-2 mt-1"><option value="">${tr('po.noCommission', 'No Commission')}</option>${(state.customerOwners||[]).map(u=>`<option value="${u.id}">${u.name}</option>`).join('')}</select></div>
+                                <div><label class="font-semibold text-slate-700">${tr('po.commRate', 'Commission Rate (USD / MT)')}</label><input ${state.currentUser.role === 'EXTERNAL_SALES' ? 'disabled' : ''} id="newPoCommissionRate" type="number" step="0.01" min="0" value="0" class="w-full border border-slate-300 bg-white rounded p-2 mt-1"></div>
                             </div>
                         </div>
 
@@ -7546,10 +7683,10 @@
 
                         <div class="grid grid-cols-2 gap-3">
                             <div>
-                                <label class="font-semibold text-slate-700">${tr('po.fieldSellPrice', 'ราคาขายต่อตัน (USD/MT) *')}</label>
+                                <label class="font-semibold text-slate-700">${tr('common.currency', 'Currency')}</label><select id="newPoCurrency" onchange="updateNewPOCurrency()" class="border rounded p-2 mb-2 ml-2"><option value="USD">USD</option><option value="EUR">EUR</option></select><br><label id="newPoPriceLabel" class="font-semibold text-slate-700">${tr('po.sellingPriceCurrency', 'Selling Price (USD/MT) *', { currency: 'USD' })}</label>
                                 <input type="number" id="newPoPrice" required step="any" oninput="updateNewPOPriceWarning(); updateNewPOReview()" placeholder="e.g. 185" class="w-full border border-slate-300 rounded p-2 mt-1 outline-none font-bold text-emerald-600 focus:border-blue-500">
                                 <div id="newPoSuggestedPrice" class="mt-1.5 text-[10px] text-slate-500">${tr('po.suggestedPrice', 'Suggested Selling Price:')} -</div>
-                                <div id="newPoPriceWarning" class="hidden mt-1 text-[10px] font-bold text-amber-700"></div>
+                                <label class="block mt-2">${tr('po.priceOverrideReason', 'Price Override Reason')}<input id="newPoPriceOverrideReason" class="w-full border rounded p-2"></label><div id="newPoPriceWarning" class="hidden mt-1 text-[10px] font-bold text-amber-700"></div>
                             </div>
                             <div>
                                 <label class="font-semibold text-slate-700">Incoterm</label>
@@ -7623,10 +7760,11 @@
             lucide.createIcons();
             
             // Auto fill destination port from first customer default
-            if (state.customers && state.customers.length > 0) {
-                autoFillCustomerDefaults(state.customers[0].id);
+            if (getScopedCustomers().length > 0) {
+                autoFillCustomerDefaults(getScopedCustomers()[0].id);
                 updateNewPOPriceSuggestion();
             }
+            updateNewPOSpecOptions();
             const deliveryStart = document.getElementById('newPoDeliveryStart');
             const deliveryEnd = document.getElementById('newPoDeliveryEnd');
             if (deliveryStart && !deliveryStart.value) deliveryStart.value = todayStr;
@@ -7635,6 +7773,13 @@
         }
 
         function updateNewPOPriceSuggestion() {
+            const currency = document.getElementById('newPoCurrency')?.value || 'USD';
+            if (currency !== 'USD') {
+                const label = document.getElementById('newPoSuggestedPrice');
+                if (label) label.textContent = t('po.manualCurrencyPrice', { currency });
+                updateNewPOPriceWarning();
+                return;
+            }
             const customerId = document.getElementById('newPoCustomerId')?.value || '';
             const productId = document.getElementById('newPoProductId')?.value || '';
             const poDate = document.getElementById('newPoDate')?.value || getTodayIso();
@@ -7644,13 +7789,18 @@
             if (priceInput && suggestion.price > 0) priceInput.value = suggestion.price.toFixed(2);
             if (label) {
                 label.innerHTML = suggestion.price > 0
-                    ? `Suggested Selling Price: <strong>USD ${suggestion.price.toFixed(2)} / MT</strong> · ${suggestion.source} · ${suggestion.reference}`
-                    : '<strong class="text-amber-700">No active approved price found</strong>';
+                    ? `${t('po.suggestedPrice', { price: suggestion.price.toFixed(2) })} · ${suggestion.source} · ${suggestion.reference}`
+                    : t('po.noSuggestedPrice');
             }
             updateNewPOPriceWarning();
         }
 
         function updateNewPOPriceWarning() {
+            if ((document.getElementById('newPoCurrency')?.value || 'USD') !== 'USD') {
+                const warning = document.getElementById('newPoPriceWarning');
+                if (warning) { warning.textContent = ''; warning.classList.add('hidden'); }
+                return;
+            }
             const customerId = document.getElementById('newPoCustomerId')?.value || '';
             const productId = document.getElementById('newPoProductId')?.value || '';
             const poDate = document.getElementById('newPoDate')?.value || getTodayIso();
@@ -7660,12 +7810,12 @@
             if (!warning) return;
             const needsApproval = suggestion.price > 0 && entered > 0 && entered < suggestion.price;
             warning.className = needsApproval ? 'mt-1 text-[10px] font-bold text-amber-700' : 'hidden mt-1 text-[10px] font-bold text-amber-700';
-            warning.textContent = needsApproval ? `Selling Price ต่ำกว่า Suggested Price (USD ${suggestion.price.toFixed(2)}) → NEEDS_APPROVAL` : '';
+            warning.textContent = needsApproval ? t('po.belowSuggested') : '';
         }
 
         function validateNewPODeliveryPeriod(startDate, endDate) {
-            if (!startDate || !endDate) return { valid: false, message: 'กรุณาระบุ Delivery Start และ Delivery End' };
-            if (endDate < startDate) return { valid: false, message: 'Delivery End ต้องไม่มาก่อน Delivery Start' };
+            if (!startDate || !endDate) return { valid: false, message: typeof t === 'function' ? t('po.deliveryRequired') : 'Delivery start and end are required.' };
+            if (endDate < startDate) return { valid: false, message: typeof t === 'function' ? t('po.deliveryInvalid') : 'Delivery end must not precede delivery start.' };
             return { valid: true, message: '' };
         }
 
@@ -7697,7 +7847,8 @@
             const tol = parseFloat(document.getElementById('newPoTolerancePct')?.value) || 0;
             const max = qty * (1 + tol / 100);
             const price = parseFloat(document.getElementById('newPoPrice')?.value) || 0;
-            const priceSuggestion = getSuggestedSellingPrice(customerId, productId, document.getElementById('newPoDate')?.value || getTodayIso());
+            const currency = document.getElementById('newPoCurrency')?.value || 'USD';
+            const priceSuggestion = currency === 'USD' ? getSuggestedSellingPrice(customerId, productId, document.getElementById('newPoDate')?.value || getTodayIso()) : { price: 0, source: tr('po.manualPrice', 'Manual price'), reference: '' };
             const priceApproval = priceSuggestion.price > 0 && price > 0 && price < priceSuggestion.price ? 'NEEDS_APPROVAL' : 'APPROVED';
             const shipmentType = document.getElementById('newPoShipmentType')?.value || '-';
             const containerType = shipmentType === 'Container' ? (document.getElementById('newPoContainerType')?.value || '-') : '-';
@@ -7713,17 +7864,17 @@
                 : esc(tr('po.attachReviewNone', 'ไม่มีไฟล์แนบ'));
             return `
                 <div class="grid grid-cols-2 gap-x-4 gap-y-1">
-                    <span>Customer</span><strong class="text-right">${esc(customer?.name || '-')}</strong>
-                    <span>Product</span><strong class="text-right">${esc(product?.shortName || product?.name || '-')}</strong>
-                    <span>Delivery Period</span><strong class="text-right">${esc(formatDeliveryPeriod(start, end))}</strong>
-                    <span>Contract</span><strong class="text-right">${qty.toFixed(3)} MT ±${tol}%</strong>
-                    <span>Maximum Allowed</span><strong class="text-right">${max.toFixed(3)} MT</strong>
-                    <span>Price</span><strong class="text-right">USD ${price.toFixed(2)} / MT</strong>
-                    <span>Price Source</span><strong class="text-right">${esc(priceSuggestion.source)}${priceSuggestion.reference ? ' · ' + esc(priceSuggestion.reference) : ''}</strong>
-                    <span>Price Approval</span><strong class="text-right ${priceApproval === 'NEEDS_APPROVAL' ? 'text-amber-700' : 'text-emerald-700'}">${priceApproval}</strong>
-                    <span>Shipment</span><strong class="text-right">${esc(shipmentType)}${containerType !== '-' ? ' · ' + esc(containerType) : ''}</strong>
-                    <span>Packaging</span><strong class="text-right">${esc(packaging)}${bagKg ? ` · ${bagKg} kg` : ''}${units ? ` · ${units} units` : ''}</strong>
-                    <span>MT / Load</span><strong class="text-right">${perLoad.toFixed(3)} MT</strong>
+                    <span>${tr('common.customer', 'Customer')}</span><strong class="text-right">${esc(customer?.name || '-')}</strong>
+                    <span>${tr('common.product', 'Product')}</span><strong class="text-right">${esc(product?.name || '-')}<span class="block text-[10px] text-slate-500">${esc(product?.shortName || '')}${product?.code ? ` [${esc(product.code)}]` : ''}</span></strong>
+                    <span>${tr('po.deliveryPeriodTitle', 'Delivery Period')}</span><strong class="text-right">${esc(formatDeliveryPeriod(start, end))}</strong>
+                    <span>${tr('po.contract', 'Contract')}</span><strong class="text-right">${qty.toFixed(3)} MT ±${tol}%</strong>
+                    <span>${tr('po.maxAllowed', 'Maximum Allowed')}</span><strong class="text-right">${max.toFixed(3)} MT</strong>
+                    <span>${tr('common.price', 'Price')}</span><strong class="text-right">${currency} ${price.toFixed(2)} / MT</strong>
+                    <span>${tr('po.priceSource', 'Price Source')}</span><strong class="text-right">${esc(priceSuggestion.source)}${priceSuggestion.reference ? ' · ' + esc(priceSuggestion.reference) : ''}</strong>
+                    <span>${tr('po.priceApproval', 'Price Approval')}</span><strong class="text-right ${priceApproval === 'NEEDS_APPROVAL' ? 'text-amber-700' : 'text-emerald-700'}">${priceApproval}</strong>
+                    <span>${tr('po.shipment', 'Shipment')}</span><strong class="text-right">${esc(shipmentType)}${containerType !== '-' ? ' · ' + esc(containerType) : ''}</strong>
+                    <span>${tr('po.colPackaging', 'Packaging')}</span><strong class="text-right">${esc(packaging)}${bagKg ? ` · ${bagKg} kg` : ''}${units ? ` · ${units} units` : ''}</strong>
+                    <span>${tr('po.perLoad', 'MT / Load')}</span><strong class="text-right">${perLoad.toFixed(3)} MT</strong>
                     <span>${esc(tr('po.attachReviewLabel', 'ไฟล์แนบ PO'))}</span><strong data-review-po-attachments class="text-right ${pendingFiles.length > 0 ? 'text-blue-700' : 'text-slate-400 font-normal'}">${attachedSummary}</strong>
                 </div>`;
         }
@@ -7932,7 +8083,23 @@
                         customerId,
                         customerPoNo,
                         poDate,
-                        currency: 'USD',
+                        currency: document.getElementById('newPoCurrency')?.value || 'USD',
+                        lines: [{
+                            productId: document.getElementById('newPoProductId')?.value || '',
+                            specSource: 'STANDARD',
+                            specRevisionId: document.getElementById('newPoSpecId')?.value || undefined,
+                            contractQtyMt: Number(document.getElementById('newPoQty')?.value),
+                            tolerancePct: Number(document.getElementById('newPoTolerancePct')?.value || 0),
+                            unitPrice: Number(document.getElementById('newPoPrice')?.value),
+                            priceOverrideReason: document.getElementById('newPoPriceOverrideReason')?.value || '',
+                            packaging: document.getElementById('newPoPackagingSelect')?.value === 'CUSTOM' ? document.getElementById('newPoPackagingCustom')?.value || '' : document.getElementById('newPoPackagingSelect')?.value || '',
+                            unitWeightKg: Number(document.getElementById('newPoPackageWeightKg')?.value || 0),
+                            unitsPerContainer: Number(document.getElementById('newPoUnitsPerCont')?.value || 0),
+                            containerType: document.getElementById('newPoContainerType')?.value || '',
+                            loadingPattern: document.getElementById('newPoShipmentType')?.value || '',
+                            commissionRecipientUserId: state.currentUser.role === 'EXTERNAL_SALES' ? null : document.getElementById('newPoCommissionRecipient')?.value || null,
+                            commissionRateUsdMt: state.currentUser.role === 'EXTERNAL_SALES' ? 0 : Number(document.getElementById('newPoCommissionRate')?.value || 0)
+                        }],
                         incoterm,
                         destination: destination || null,
                         deliveryStart,
@@ -7989,6 +8156,8 @@
             }
 
             resetNewPOPendingFiles();
+            state.selectedPoId = null;
+            state.selectedRevisionId = null;
             if (typeof closeModal === 'function') closeModal();
 
             if (uploadError) {
@@ -14358,7 +14527,7 @@
                                 </td>
                                 <td class="p-3">
                                     <div class="font-bold text-slate-800">${escapePaymentHtml(r.customer_name || '-')}</div>
-                                    <div class="text-[10px] font-mono text-slate-400">${escapePaymentHtml(r.customer_po_no || r.po_id || '-')}</div>
+                                    <div class="text-[10px] font-mono text-slate-400">${escapePaymentHtml(r.customer_po_no || r.po_id || '-')} · ${tr('po.poCurrency', 'PO Currency')}: ${escapePaymentHtml(r.po_currency || r.currency || 'USD')}</div>
                                 </td>
                                 <td class="p-3">
                                     <div class="font-mono font-bold text-blue-700">${escapePaymentHtml(r.final_invoice_nos || '-')}</div>
@@ -14481,7 +14650,7 @@
                     <div>
                         <div class="text-[10px] font-black uppercase text-blue-600">${tr('payments.detailEyebrow', 'Shipment Payment Detail')}</div>
                         <h3 class="text-lg font-black text-slate-900 mt-0.5">${escapePaymentHtml(s.di_no)} · ${escapePaymentHtml(s.customer_name)}</h3>
-                        <div class="text-slate-500 mt-0.5">PO: ${escapePaymentHtml(s.customer_po_no || s.po_id || '-')} · ${tr('commissions.shipmentBtn', 'Shipment')}: ${escapePaymentHtml(s.shipment_status)} · ${paymentStatusBadge(s.payment_status)}</div>
+                        <div class="text-slate-500 mt-0.5">PO: ${escapePaymentHtml(s.customer_po_no || s.po_id || '-')} · ${tr('po.poCurrency', 'PO Currency')}: ${escapePaymentHtml(s.po_currency || s.currency || 'USD')} · ${tr('commissions.shipmentBtn', 'Shipment')}: ${escapePaymentHtml(s.shipment_status)} · ${paymentStatusBadge(s.payment_status)}</div>
                     </div>
                     <button onclick="closeModal()" class="text-slate-400 hover:text-slate-700 font-bold">✕</button>
                 </div>
@@ -14939,7 +15108,7 @@
                         ${!isExternal ? `<td class="p-3 font-bold text-slate-900">${escapeCommissionHtml(r.recipient_name || r.recipient_user_id)}</td>` : ''}
                         <td class="p-3">
                             <div class="font-bold text-slate-800">${escapeCommissionHtml(r.customer_name || '-')}</div>
-                            <div class="text-[10px] font-mono text-slate-400">${escapeCommissionHtml(r.customer_po_no || r.po_id || '-')}</div>
+                            <div class="text-[10px] font-mono text-slate-400">${escapeCommissionHtml(r.customer_po_no || r.po_id || '-')} · ${tr('po.poCurrency', 'PO Currency')}: ${escapeCommissionHtml(r.po_currency || 'USD')}</div>
                         </td>
                         <td class="p-3">
                             <div class="font-bold text-slate-900">${escapeCommissionHtml(r.di_no || '-')}</div>
@@ -15034,7 +15203,7 @@
                     <div>
                         <div class="text-[10px] font-black uppercase text-emerald-600">${tr('commissions.settleEyebrow', 'Settle Commission Payout')}</div>
                         <h3 class="text-lg font-black text-slate-900 mt-0.5">${escapeCommissionHtml(item.recipient_name)} · ${escapeCommissionHtml(item.di_no)}</h3>
-                        <p class="text-slate-500 mt-0.5">${escapeCommissionHtml(item.customer_name)} · PO ${escapeCommissionHtml(item.customer_po_no || item.po_id || '-')}</p>
+                        <p class="text-slate-500 mt-0.5">${escapeCommissionHtml(item.customer_name)} · PO ${escapeCommissionHtml(item.customer_po_no || item.po_id || '-')} · ${tr('po.poCurrency', 'PO Currency')}: ${escapeCommissionHtml(item.po_currency || 'USD')}</p>
                     </div>
                     <button onclick="closeModal()" class="text-slate-400 hover:text-slate-700 font-bold">✕</button>
                 </div>
@@ -15135,7 +15304,7 @@
                     <div>
                         <div class="text-[10px] font-black uppercase text-emerald-600">${tr('commissions.receiptEyebrow', 'Commission Settlement Receipt')}</div>
                         <h3 class="text-lg font-black text-slate-900 mt-0.5">${escapeCommissionHtml(s.settlement_id)} · ${escapeCommissionHtml(s.di_no)}</h3>
-                        <p class="text-slate-500 mt-0.5">${escapeCommissionHtml(s.customer_name)} · PO ${escapeCommissionHtml(s.customer_po_no || '-')} · ${tr('commissions.paidShort', 'Paid')} ${escapeCommissionHtml(s.paid_date)}</p>
+                        <p class="text-slate-500 mt-0.5">${escapeCommissionHtml(s.customer_name)} · PO ${escapeCommissionHtml(s.customer_po_no || '-')} · ${tr('po.poCurrency', 'PO Currency')}: ${escapeCommissionHtml(s.po_currency || 'USD')} · ${tr('commissions.paidShort', 'Paid')} ${escapeCommissionHtml(s.paid_date)}</p>
                     </div>
                     <button onclick="closeModal()" class="text-slate-400 hover:text-slate-700 font-bold">✕</button>
                 </div>
