@@ -1,3 +1,4 @@
+import {semanticBadges} from './semantic-badge-fixture.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
@@ -5,7 +6,7 @@ import vm from 'node:vm';
 const html = await readFile(new URL('../public/index.html', import.meta.url), 'utf8');
 function context() {
   const product = { id: 'P1', name: 'Organic Tapioca Residue Pellet', shortName: 'Org_TRP', code: 'WCAT_PRO_009', status: 'ACTIVE' };
-  const ctx = vm.createContext({ state: { currentUser: { id: 'SIRA', role: 'EXTERNAL_SALES' }, products: [product], customers: [{ id: 'C1', name: 'MEELUNIE B.V.', ownerId: 'SIRA', ownershipType: 'ASSIGNED_SALES' }], pos: [], standardPrices: [], specialPrices: [{ id: 'SP1', customerId: 'C1', productId: 'P1' }], priceNotes: [{ id: 'PN1', customer_id: 'C1', product_id: 'P1' }], adminUsers: [] }, lucide: { createIcons() {} }, canWritePO: () => false, canManagePricing: () => true, getTodayIso: () => '2026-11-21', getSalesUsers: () => [], openModal: value => { ctx.modal = value; } });
+  const ctx = vm.createContext({ ...semanticBadges, state: { currentUser: { id: 'SIRA', role: 'EXTERNAL_SALES' }, products: [product], customers: [{ id: 'C1', name: 'MEELUNIE B.V.', ownerId: 'SIRA', ownershipType: 'ASSIGNED_SALES' }], pos: [], standardPrices: [], specialPrices: [{ id: 'SP1', customerId: 'C1', productId: 'P1' }], priceNotes: [{ id: 'PN1', customer_id: 'C1', product_id: 'P1' }], adminUsers: [] }, lucide: { createIcons() {} }, canWritePO: () => false, canManagePricing: () => true, getTodayIso: () => '2026-11-21', getSalesUsers: () => [], openModal: value => { ctx.modal = value; } });
   for (const name of ['escapePricingHtml', 'pricingProductSubtitle', 'pricingProductOptionLabel', 'renderPricingProduct', 'getPoProductSummary', 'getScopedCustomers', 'getScopedPOs', 'getScopedDIRecords', 'getScopedShipments', 'pricingStatusBadge', 'renderRealPOListTable', 'renderPricing', 'openEditStandardPrice', 'openRequestSpecialPrice', 'openAddPriceNoteModal']) {
     const start = html.indexOf(`        function ${name}(`);
     if (start < 0) continue;

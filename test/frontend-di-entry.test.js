@@ -1,7 +1,8 @@
+import {semanticBadges} from './semantic-badge-fixture.js';
 import test from 'node:test';import assert from 'node:assert/strict';import vm from 'node:vm';import {readFile} from 'node:fs/promises';
 const html=await readFile(new URL('../public/index.html',import.meta.url),'utf8');
 function load(ctx,name){const start=Math.max(html.indexOf(`        function ${name}(`),html.indexOf(`        async function ${name}(`));assert.ok(start>=0,name);vm.runInContext(html.slice(start,html.indexOf('\n        }',start)+'\n        }'.length),ctx);}
-function harness(){const fields={phase6ContainerError:{},phase6InvoiceError:{},phase6ContainerSummary:{},phase6InvoiceTotal:{},phase6ContainerRows:{}};const calls=[];const shipment={shipment_id:'S1',status:'BOOKED',products:[{po_revision_line_id:'L1',product_name:'Organic Tapioca Pellet',product_code:'WCAT009',spec_application:'FEED_GRADE',unit_weight_kg:850,unit_price:185,currency:'EUR',planned_qty_mt:54.4}],containers:[]};const ctx=vm.createContext({state:{phase6ShipmentDetail:shipment,selectedPhase6DeliveryInstructionId:'D1'},document:{getElementById:id=>fields[id],querySelectorAll:()=>[]},t:key=>key,canEditPhase6Shipping:()=>true,selectPhase6DeliveryInstruction:async()=>{},updatePhase6ShipmentSectionToApi:async(id,section,payload)=>calls.push({id,section,payload}),fetch:async(url,options)=>{calls.push({url,options});return {ok:true,json:async()=>({status:'SUCCESS'})};}});
+function harness(){const fields={phase6ContainerError:{},phase6InvoiceError:{},phase6ContainerSummary:{},phase6InvoiceTotal:{},phase6ContainerRows:{}};const calls=[];const shipment={shipment_id:'S1',status:'BOOKED',products:[{po_revision_line_id:'L1',product_name:'Organic Tapioca Pellet',product_code:'WCAT009',spec_application:'FEED_GRADE',unit_weight_kg:850,unit_price:185,currency:'EUR',planned_qty_mt:54.4}],containers:[]};const ctx=vm.createContext({ ...semanticBadges, state:{phase6ShipmentDetail:shipment,selectedPhase6DeliveryInstructionId:'D1'},document:{getElementById:id=>fields[id],querySelectorAll:()=>[]},t:key=>key,canEditPhase6Shipping:()=>true,selectPhase6DeliveryInstruction:async()=>{},updatePhase6ShipmentSectionToApi:async(id,section,payload)=>calls.push({id,section,payload}),fetch:async(url,options)=>{calls.push({url,options});return {ok:true,json:async()=>({status:'SUCCESS'})};}});
 for(const name of ['bindPhase6EntryForms','escapePhase6Text','phase6EntryText','getPhase6EntryDraft','renderPhase6ContainerRows','renderPhase6ContainerForm','renderPhase6InvoiceForm','changePhase6ContainerRow','addPhase6ContainerRow','removePhase6ContainerRow','updatePhase6EntryTotals','collectPhase6Containers','collectPhase6InvoiceLines','phase6EntryError','setPhase6EntryBusy','submitPhase6Containers','submitPhase6Invoice','finalizePhase6Invoice'])load(ctx,name);return {ctx,fields,calls,shipment};}
 test('visual container builder estimates editable weight and serializes API containers',async()=>{const {ctx,fields,calls}=harness();const markup=ctx.renderPhase6ContainerForm();assert.doesNotMatch(markup,/<textarea|JSON/);assert.match(markup,/Organic Tapioca Pellet/);ctx.changePhase6ContainerRow(0,'containerNo','MSKU1234567');ctx.changePhase6ContainerRow(0,'sealNo','SL998877');ctx.changePhase6ContainerRow(0,'numberOfBags','32');let draft=ctx.getPhase6EntryDraft();assert.equal(draft.rows[0].netWeightMt,27.2);ctx.changePhase6ContainerRow(0,'netWeightMt','27.1');ctx.addPhase6ContainerRow();assert.equal(draft.rows.length,2);ctx.removePhase6ContainerRow(1);await ctx.submitPhase6Containers('S1');assert.equal(calls.length,1);assert.deepEqual(JSON.parse(JSON.stringify(calls[0].payload)),{containers:[{containerNo:'MSKU1234567',sealNo:'SL998877',lines:[{poRevisionLineId:'L1',numberOfBags:32,netWeightMt:27.1}]}]});assert.match(fields.phase6ContainerSummary.innerHTML,/27.1/);});
 test('invoice form prefills loaded quantity, calculates EUR totals, saves and finalizes structured lines',async()=>{const {ctx,fields,calls,shipment}=harness();shipment.containers=[{container_no:'C1',seal_no:'S1',lines:[{po_revision_line_id:'L1',number_of_bags:32,qty_mt:27.2}]}];const markup=ctx.renderPhase6InvoiceForm();assert.doesNotMatch(markup,/<textarea|JSON/);assert.match(markup,/EUR 5,032.00/);const draft=ctx.getPhase6EntryDraft();assert.equal(draft.quantities[0],27.2);fields.phase6InvoiceQty0={value:'20'};fields.phase6InvoiceAmount0={};ctx.updatePhase6EntryTotals();assert.match(fields.phase6InvoiceTotal.textContent,/EUR 3,700.00/);fields.phase6InvoiceNo={value:'INV1'};fields.phase6InvoiceDate={value:'2026-11-21'};fields.phase6InvoiceVersion={value:'PRELIMINARY'};await ctx.submitPhase6Invoice('S1');assert.equal(JSON.parse(calls[0].options.body).lines[0].qtyMt,20);await ctx.finalizePhase6Invoice('S1','I1');assert.equal(calls[1].url,'/api/shipments-v2/S1/invoices/I1/finalize');assert.deepEqual(JSON.parse(calls[1].options.body),{lines:[{poRevisionLineId:'L1',qtyMt:20}]});});
@@ -40,8 +41,8 @@ test('recorded preliminary invoices use the primary green finalize button', () =
   const output=render();
   assert.match(output,/<button[^>]*data-phase6-action="finalize-invoice"[^>]*data-phase6-invoice-id="PRE1"[^>]*class="di-invoice-finalize/);
   assert.doesNotMatch(output,/data-phase6-invoice-id="FIN1"/);
-  assert.match(output,/WCAT014[\s\S]*bg-amber-100/);
-  assert.match(output,/WCAT015[\s\S]*bg-emerald-100/);
+  assert.match(output,/WCAT014[\s\S]*semantic-amber/);
+  assert.match(output,/WCAT015[\s\S]*semantic-green/);
   assert.match(html,/\.di-invoice-finalize\s*\{[^}]*background: #15803d;[^}]*border: 1px solid #14532d;[^}]*color: #ffffff;/);
   assert.match(html,/\.di-invoice-finalize:hover:not\(:disabled\)\s*\{\s*background: #166534;/);
   ctx.canEditPhase6Shipping=()=>false;
@@ -57,10 +58,23 @@ test('DI schedule shows a pending badge and two aligned date rows',()=>{
   const render=()=>ctx.renderPhase6DeliveryInstructionDetail({di_id:'D1',di_status:'IN_PROGRESS'});
   const output=render();
   assert.match(output,/2026-01-22 – 2026-01-24/);
-  assert.match(output,/bg-slate-100 text-slate-600">PENDING/);
+  assert.match(output,/semantic-slate">PENDING/);
   assert.match(output,/data-schedule-row="planned"[\s\S]*phase6PlannedLoadingUpdate[\s\S]*phase6PlannedLoadingEnd[\s\S]*data-phase6-schedule-kind="planned"/);
   assert.match(output,/data-schedule-row="actual"[\s\S]*shipping.actualLoadingDate[\s\S]*phase6ActualLoading[\s\S]*phase6ScheduleNote[\s\S]*data-phase6-schedule-kind="actual"/);
   shipment.actual_loading_date='2026-01-22';
   shipment.schedule_result='ON_PLAN';
-  assert.match(render(),/bg-emerald-100 text-emerald-800">ON PLAN/);
+  assert.match(render(),/semantic-green">ON PLAN/);
+});
+
+test('semantic pills normalize status aliases and use the exact pastel palette',()=>{
+  const {renderSemanticStatusBadge,getStatusBadgeStyle}=semanticBadges;
+  for(const [status,tone] of [['ON PLAN','green'],['OUT OF PLAN','red'],['OUT PLAN','red'],['UNPAID','red'],['DOCS SENT','indigo'],['PAID','green'],['LOADED','sky'],['PRELIM INV','amber'],['DRAFT','slate']]){
+    assert.match(renderSemanticStatusBadge(status),new RegExp('semantic-badge semantic-'+tone));
+  }
+  assert.equal(getStatusBadgeStyle('DOCS_READY',2),'semantic-badge semantic-teal');
+  assert.equal(getStatusBadgeStyle('DOCS_READY',0),'semantic-badge semantic-slate');
+  assert.match(html,/\.semantic-green \{ background: #dcfce7; color: #166534; border-color: #bbf7d0;/);
+  assert.match(html,/\.semantic-red \{ background: #fee2e2; color: #991b1b; border-color: #fecaca;/);
+  assert.match(html,/\.semantic-indigo \{ background: #ede9fe; color: #5b21b6; border-color: #ddd6fe;/);
+  assert.match(renderSemanticStatusBadge('PAID','<Paid>'),/&lt;Paid&gt;/);
 });

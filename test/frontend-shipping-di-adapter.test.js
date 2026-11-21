@@ -1,8 +1,10 @@
+import {semanticBadges} from './semantic-badge-fixture.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 
 const html = await readFile(new URL('../public/index.html', import.meta.url), 'utf8');
+Object.assign(globalThis,semanticBadges);
 
 function extractFunction(name) {
   const start = html.indexOf(`async function ${name}`) >= 0
@@ -757,7 +759,7 @@ test('Shipping PO references use customer number first and system number beneath
     assert.deepEqual(headings,['DI No.','Customer & PO','Product & Load Plan','Shipping & Loading','Booking / BL No.','Status','Action']);
     assert.match(list,/PO 1606 · PO-2025-009/);
     assert.match(list,/WCAT014/);
-    assert.match(list,/data-docs-ready-badge class="di-list-pill[^"]*">Docs Ready \(2\)/);
+    assert.match(list,/data-docs-ready-badge class="semantic-badge semantic-teal">Docs Ready \(2\)/);
     assert.match(list,/di-list-status">DOCS_SENTUNPAID/);
     assert.match(list,/2026-01 · 1st Half/);
     assert.match(list,/data-phase6-row-ref="DI1"/);

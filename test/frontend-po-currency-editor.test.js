@@ -1,3 +1,4 @@
+import {semanticBadges} from './semantic-badge-fixture.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
@@ -12,7 +13,7 @@ function load(ctx, name) {
 function harness() {
   const fields = {};
   const product = { id: 'P1', name: 'Organic Tapioca Residue Pellet', shortName: 'Org_TRP', code: 'WCAT_PRO_009', standardSpecs: [{ id: 'SPEC', application: 'FEED_GRADE', revisionNo: 0 }] };
-  const ctx = vm.createContext({ document: { getElementById: id => fields[id] || null }, state: { products: [product], pos: [{ header: { po_id: 'PO1', customer_id: 'C1', header_status: 'OPEN' }, revisions: [{ revision_id: 'REV0', status: 'DRAFT', revision_no: 0, currency: 'EUR', lines: [] }] }] }, canWritePO: () => true, t: (key, params) => key === 'po.sellingPriceCurrency' ? `Selling Price (${params.currency}/MT)` : key, getTodayIso: () => '2026-11-21', getSuggestedSellingPrice: () => ({ price: 350, source: 'STANDARD', reference: 'STD' }), openModal: text => { ctx.markup = text; }, closeModal() {}, loadPOsFromApi: async () => {}, fetch: async () => {} });
+  const ctx = vm.createContext({ ...semanticBadges, document: { getElementById: id => fields[id] || null }, state: { products: [product], pos: [{ header: { po_id: 'PO1', customer_id: 'C1', header_status: 'OPEN' }, revisions: [{ revision_id: 'REV0', status: 'DRAFT', revision_no: 0, currency: 'EUR', lines: [] }] }] }, canWritePO: () => true, t: (key, params) => key === 'po.sellingPriceCurrency' ? `Selling Price (${params.currency}/MT)` : key, getTodayIso: () => '2026-11-21', getSuggestedSellingPrice: () => ({ price: 350, source: 'STANDARD', reference: 'STD' }), openModal: text => { ctx.markup = text; }, closeModal() {}, loadPOsFromApi: async () => {}, fetch: async () => {} });
   for (const name of ['escapePricingHtml', 'poProductOptionLabel', 'renderPricingProduct', 'pricingProductSubtitle', 'updateNewPOPriceSuggestion', 'updateNewPOPriceWarning', 'openPODraftLineModal', 'savePODraftLine']) load(ctx, name);
   return { ctx, fields };
 }

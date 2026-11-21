@@ -460,10 +460,8 @@
         .di-list-table tbody tr[data-phase6-row-ref]:not([data-phase6-row-ref=""]) { cursor: pointer; transition: background-color 150ms; }
         .di-list-table tbody tr:hover { background: #f8fafc; }
         .di-list-single { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-        .di-list-pill { display: inline-flex; white-space: nowrap; border-radius: 999px; padding: 2px 9px; font-size: 11px; line-height: 1.2; }
         .di-list-status { display: flex; flex-direction: column; gap: 4px; align-items: flex-start; }
         .di-list-status > span { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-        .di-list-table td .di-list-pill { max-width: 100%; }
         @media (max-width: 1279px) { .di-list-table { min-width: 480px; } .di-list-table:has(col:nth-child(7)) { min-width: 860px; } }
         .crm-directory th, .crm-directory td { text-align: left; vertical-align: middle; padding: 12px 14px; }
         .crm-directory .crm-numeric { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
@@ -475,6 +473,14 @@
         .crm-line { white-space: nowrap; }
         .crm-pill { display: inline-flex; align-items: center; white-space: nowrap; padding: 2px 10px; border-radius: 999px; font-weight: 600; }
         .crm-status-stack { display: flex; flex-direction: column; gap: 4px; align-items: flex-start; }
+        .semantic-badge { display: inline-flex; align-items: center; white-space: nowrap; border: 1px solid; border-radius: 999px; padding: 3px 10px; font-size: 11px; font-weight: 700; letter-spacing: .02em; line-height: 1.2; }
+        .semantic-green { background: #dcfce7; color: #166534; border-color: #bbf7d0; }
+        .semantic-red { background: #fee2e2; color: #991b1b; border-color: #fecaca; }
+        .semantic-indigo { background: #ede9fe; color: #5b21b6; border-color: #ddd6fe; }
+        .semantic-sky { background: #e0f2fe; color: #075985; border-color: #bae6fd; }
+        .semantic-amber { background: #fef3c7; color: #92400e; border-color: #fde68a; }
+        .semantic-teal { background: #ccfbf1; color: #115e59; border-color: #99f6e4; }
+        .semantic-slate { background: #f1f5f9; color: #475569; border-color: #e2e8f0; }
     </style>
 </head>
 <body class="bg-slate-100 text-slate-800 antialiased min-h-screen flex flex-col">
@@ -6545,13 +6551,13 @@
             const upcoming = data.upcoming;
             const peak = Math.max(1, ...data.months.flatMap(month => [month.actual, month.planned]));
             const section = (name, body) => `<section class="min-w-0 rounded-xl border border-slate-200 bg-white p-5"><h2 class="text-sm font-bold text-slate-900">${label(name)}</h2><div class="mt-4 space-y-4">${body || '<p class="text-xs text-slate-500">' + label('empty') + '</p>'}</div></section>`;
-            const badgeStyles = {outOfPlan:'bg-rose-100 text-rose-800',preliminary:'bg-amber-100 text-amber-800',awaitingPayment:'bg-amber-100 text-amber-800',upcomingLoading:'bg-blue-100 text-blue-800'};
+            const watchStatus = {outOfPlan:'OUT_OF_PLAN',preliminary:'PRELIMINARY',awaitingPayment:'AWAITING_PAYMENT',upcomingLoading:'UPCOMING_LOADING'};
             const rows = data.watchlist.map((row, index) => {
                 const target = row.diId || row.poId;
                 const ref = row.ref || row.customerPO || label('loading');
                 const title = target ? `<button type="button" class="font-bold text-blue-700 hover:underline" onclick="openExecutiveWatchlistItem(${index})">${esc(ref)}</button>` : `<strong>${esc(ref)}</strong>`;
                 const date = [row.start, row.end !== row.start ? row.end : null].filter(Boolean).join(' – ');
-                return `<tr class="border-t border-slate-100"><td class="p-3">${title}${row.customerPO && row.ref !== row.customerPO ? `<div class="text-slate-500">${esc(row.customerPO)}</div>` : ''}</td><td class="p-3">${row.customer ? `<strong>${esc(row.customer)}</strong><br>` : ''}${esc(row.product)}</td><td class="p-3 whitespace-nowrap">${mt(row.planned)} / ${mt(row.actual)}${!warehouse && row.currency ? `<div class="text-slate-500">${money(row.currency,row.amount)}</div>` : ''}</td><td class="p-3 whitespace-nowrap">${esc(date || '—')}</td><td class="p-3"><span class="rounded-full px-2 py-1 font-semibold ${badgeStyles[row.alert] || ''}">${label(row.alert)}</span></td></tr>`;
+                return `<tr class="border-t border-slate-100"><td class="p-3">${title}${row.customerPO && row.ref !== row.customerPO ? `<div class="text-slate-500">${esc(row.customerPO)}</div>` : ''}</td><td class="p-3">${row.customer ? `<strong>${esc(row.customer)}</strong><br>` : ''}${esc(row.product)}</td><td class="p-3 whitespace-nowrap">${mt(row.planned)} / ${mt(row.actual)}${!warehouse && row.currency ? `<div class="text-slate-500">${money(row.currency,row.amount)}</div>` : ''}</td><td class="p-3 whitespace-nowrap">${esc(date || '—')}</td><td class="p-3">${renderSemanticStatusBadge(watchStatus[row.alert], label(row.alert))}</td></tr>`;
             }).join('');
             const controls = `<div class="flex flex-wrap gap-2 print:hidden"><select aria-label="${label('period')}" class="rounded-lg border bg-white px-3 py-2 text-xs" onchange="setExecutivePeriod(this.value)">${['all','this_month','this_quarter','this_year'].map(value=>`<option value="${value}" ${(data.period || 'all')===value?'selected':''}>${label(value)}</option>`).join('')}</select><button type="button" class="rounded-lg border bg-white px-3 py-2 text-xs font-semibold" onclick="window.print()">${label('print')}</button></div>`;
             return `<div data-executive-dashboard class="space-y-5">
@@ -8139,7 +8145,7 @@
             return `<div class="space-y-5">
                 <section class="rounded-xl border border-slate-200 bg-white p-5 sm:p-6">
                     <div class="flex flex-col lg:flex-row lg:items-start lg:justify-between gap-6">
-                        <div class="min-w-0"><div class="flex flex-wrap items-center gap-3"><h3 class="text-xl font-bold tracking-tight text-slate-900">${esc(String(revision?.customer_po_no || '').trim() || poId)}</h3><span class="rounded-full bg-blue-50 px-2.5 py-1 text-[10px] font-semibold text-blue-700">${esc(status(header.header_status || 'OPEN'))}</span></div><p class="mt-2 text-sm font-semibold text-slate-700">${esc(customer?.name || customerId || '-')}</p><p class="mt-1 text-xs text-slate-500">${tr('po.systemPo', 'System PO')}: ${esc(poId)}</p><div class="mt-4 flex flex-wrap gap-2">${revisionTabs}</div></div>
+                        <div class="min-w-0"><div class="flex flex-wrap items-center gap-3"><h3 class="text-xl font-bold tracking-tight text-slate-900">${esc(String(revision?.customer_po_no || '').trim() || poId)}</h3>${renderSemanticStatusBadge(header.header_status || 'OPEN')}</div><p class="mt-2 text-sm font-semibold text-slate-700">${esc(customer?.name || customerId || '-')}</p><p class="mt-1 text-xs text-slate-500">${tr('po.systemPo', 'System PO')}: ${esc(poId)}</p><div class="mt-4 flex flex-wrap gap-2">${revisionTabs}</div></div>
                         <dl class="grid grid-cols-1 sm:grid-cols-3 gap-5 rounded-xl bg-slate-50 p-4 lg:min-w-[420px]">${field(tr('po.totalContractQty', 'Total Contract Qty'), `${number(totalQty)} MT`)}${field(tr('po.totalPOValue', 'Total PO Value'), totalValue)}${field(tr('po.incotermLabel', 'Incoterm'), terms.join(' / ') || revision?.incoterm || '-')}</dl>
                     </div>
                     ${typeof canEditPhase6Shipping === 'function' && canEditPhase6Shipping() && ['OPEN','PARTIALLY_SHIPPED'].includes(header.header_status) ? `<button type="button" data-po-id="${esc(poId)}" onclick="openCreatePhase6DeliveryInstruction(this.dataset.poId)" class="mt-4 rounded-lg bg-blue-600 px-3 py-2 text-xs font-semibold text-white hover:bg-blue-700">+ ${tr('shipping.createDi', 'Create DI')}</button>` : ''}
@@ -8446,13 +8452,13 @@
                                                 <td class="p-3 font-medium text-slate-700">${renderPricingProduct(summary)}${summary.additionalProductCount ? `<div class="text-[10px] text-slate-500">${typeof t === 'function' ? t('po.moreProducts', { count: summary.additionalProductCount }) : `+${summary.additionalProductCount} more`}</div>` : ''}</td>
                                                 <td class="p-3 text-right font-bold text-slate-900">${Number(summary.totalMt || 0).toLocaleString(undefined, {maximumFractionDigits: 3})} MT</td>
                                                 <td class="p-3 text-center">
-                                                    ${activeRevNo !== '-' ? `<span class="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-100 text-emerald-800">${activeRevNo}</span>` : '<span class="text-slate-400">-</span>'}
+                                                    ${activeRevNo !== '-' ? renderSemanticStatusBadge('ACTIVE',activeRevNo) : '<span class="text-slate-400">-</span>'}
                                                 </td>
                                                 <td class="p-3 text-center">
-                                                    ${draftRevNo !== '-' ? `<span class="px-2 py-0.5 rounded text-[10px] font-bold bg-amber-100 text-amber-800">${draftRevNo}</span>` : '<span class="text-slate-400">-</span>'}
+                                                    ${draftRevNo !== '-' ? renderSemanticStatusBadge('DRAFT',draftRevNo) : '<span class="text-slate-400">-</span>'}
                                                 </td>
                                                 <td class="p-3 text-center">
-                                                    <span class="px-2 py-0.5 rounded text-[10px] font-bold ${header.header_status === 'OPEN' ? 'bg-blue-100 text-blue-800' : 'bg-slate-200 text-slate-600'}">${typeof translateStatus === 'function' ? translateStatus(header.header_status || 'OPEN') : (header.header_status || 'OPEN')}</span>
+                                                    ${renderSemanticStatusBadge(header.header_status || 'OPEN')}
                                                 </td>
                                                 <td class="p-3 text-right">
                                                     <button onclick="state.selectedPoId='${poId}'; renderView();" class="px-2.5 py-1.5 rounded bg-blue-100 text-blue-700 font-bold text-[10px] hover:bg-blue-200">${tr('po.manageBtn', 'Manage')}</button>${state.currentUser?.role === 'ADMIN' ? `<button class="ml-2 text-red-700 font-bold" onclick="openPODeleteModal('${poId}')">${tr('po.deletePO', 'Delete PO')}</button>` : ''}
@@ -10362,9 +10368,28 @@
             });
         }
 
+        function getStatusBadgeStyle(status, documentCount = 0) {
+            const key = String(status || '').trim().toUpperCase().replace(/[\s-]+/g, '_');
+            const groups = {
+                green: ['ON_PLAN','PAID','DELIVERED','COMPLETED','FINAL','FINALIZED','APPROVED','ACTIVE'],
+                red: ['OUT_OF_PLAN','OUT_PLAN','UNPAID','OVERDUE','CANCELLED'],
+                indigo: ['DOCS_SENT','SHIPPED','IN_TRANSIT'],
+                sky: ['BOOKED','LOADING','LOADED','STUFFING','UPCOMING_LOADING','OPEN'],
+                amber: ['PARTIAL','PARTIALLY_PAID','PENDING_PAYMENT','PRELIMINARY','PRELIMINARY_ONLY','PRELIM_INV','AWAITING_PAYMENT']
+            };
+            const tone = key === 'DOCS_READY' && documentCount > 0 ? 'teal' :
+                Object.keys(groups).find(name => groups[name].includes(key)) || 'slate';
+            return 'semantic-badge semantic-' + tone;
+        }
+
+        function renderSemanticStatusBadge(status, label, documentCount = 0) {
+            const escape = value => String(value).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+            const text = label ?? (status && typeof translateStatus === 'function' ? translateStatus(status) : String(status || '—').replaceAll('_',' '));
+            return '<span class="' + getStatusBadgeStyle(status,documentCount) + '">' + escape(text) + '</span>';
+        }
+
         function phase6StatusBadge(value) {
-            const label = value && typeof translateStatus === 'function' ? translateStatus(value) : (value || '-');
-            return `<span class="px-2 py-1 rounded-md text-[10px] font-bold ${getStatusBadgeClass(value)}">${escapePhase6Text(label)}</span>`;
+            return renderSemanticStatusBadge(value);
         }
 
         function setPhase6ShippingFilter(name, value) {
@@ -11062,7 +11087,7 @@
                 {width:115,label:warehouse ? tr('shipping.colLoading','Loading') : tr('dashboard.colDiNo','DI No.'),cell:di=>{
                     const label = warehouse ? tr('shipping.openLoadingPlan','Open loading plan') : di.di_no || '—';
                     const count = Number(di.customer_docs_count || 0);
-                    return `<strong>${compact(label)}</strong>${!restricted && di.invoice_no ? `<div class="text-slate-500">${compact(di.invoice_no)}</div>` : ''}${!warehouse && count>0 ? `<div class="mt-1"><span data-docs-ready-badge class="di-list-pill bg-emerald-100 text-emerald-800">${esc(tr('docs.docsReadyBadge','Docs Ready ({count})',{count}))}</span></div>` : ''}`;
+                    return `<strong>${compact(label)}</strong>${!restricted && di.invoice_no ? `<div class="text-slate-500">${compact(di.invoice_no)}</div>` : ''}${!warehouse && count>0 ? `<div class="mt-1"><span data-docs-ready-badge class="${getStatusBadgeStyle('DOCS_READY', count)}">${esc(tr('docs.docsReadyBadge','Docs Ready ({count})',{count}))}</span></div>` : ''}`;
                 }},
                 ...(!restricted ? [{width:210,label:tr('shipping.combinedCustomer','Customer & PO'),cell:di=>{
                     const customerPO = String(di.customer_po_no || '').trim();
@@ -11156,9 +11181,8 @@
 
             const invoiceBadge = version => {
                 const preliminary = version === 'PRELIMINARY';
-                const tone = preliminary ? 'bg-amber-100 text-amber-800' : 'bg-emerald-100 text-emerald-800';
                 const label = preliminary ? tr('shipping.preliminary', 'PRELIMINARY') : tr('shipping.final', 'FINAL');
-                return `<span class="rounded-full px-2 py-0.5 font-semibold ${tone}">${escapePhase6Text(label)}</span>`;
+                return renderSemanticStatusBadge(version, label);
             };
             if (di.di_status === 'DRAFT') {
                 const draftInvoices = write && shipment?.draft_di ? `<section class="bg-white rounded-xl border p-4 space-y-3"><h3 class="font-bold">${tr('shipping.secInvoice', 'Invoice')}</h3>${invoices.map(invoice => `<div>${escapePhase6Text(invoice.invoice_no)} ${invoiceBadge(invoice.version)} ${action('finalize-invoice', tr('shipping.finalizeToFinal', 'Finalize to FINAL'), 'di-invoice-finalize ml-2', ` data-phase6-invoice-id="${escapePhase6Text(invoice.invoice_id)}"`)}</div>`).join('')}<div class="flex flex-wrap gap-3"><label>${tr('shipping.invoiceNoPh', 'Invoice No.')}<input id="phase6InvoiceNo" class="block border rounded p-2"></label><label>${tr('shipping.invoiceDate', 'Invoice Date')}<input id="phase6InvoiceDate" type="date" class="block border rounded p-2"></label><input id="phase6InvoiceVersion" type="hidden" value="PRELIMINARY"></div>${renderPhase6InvoiceForm()}${action('save-invoice', tr('shipping.saveInvoice', 'Save Invoice'), 'bg-blue-600 text-white rounded p-2 font-bold')}</section>` : '';
@@ -11171,7 +11195,7 @@
             if (state.currentUser?.role === 'EXTERNAL_SALES') {
                 return `<div class="space-y-5">
                     <div class="flex items-start justify-between gap-3">
-                        <div>${back}<h2 class="text-xl font-black text-slate-900 mt-2">${escapePhase6Text(di.di_no || shipment.di_no || '-')}</h2><p class="text-xs text-slate-500">${escapePhase6Text(typeof translateStatus === 'function' ? translateStatus(shipment.status) : (shipment.status || '-'))}</p></div>
+                        <div>${back}<h2 class="text-xl font-black text-slate-900 mt-2">${escapePhase6Text(di.di_no || shipment.di_no || '-')}</h2>${renderSemanticStatusBadge(shipment.status)}</div>
                         <div class="flex gap-2">${action('refresh-detail', tr('shipping.refreshDetail', 'Refresh detail'), 'px-3 py-2 border rounded-lg text-xs font-bold')}</div>
                     </div>
                     ${customerDocsCard}
@@ -11182,14 +11206,13 @@
 
             const scheduleStatus = shipment.actual_loading_date ? shipment.schedule_result || 'PENDING' : 'PENDING';
             const scheduleLabel = typeof translateStatus === 'function' ? translateStatus(scheduleStatus) : scheduleStatus.replaceAll('_',' ');
-            const scheduleTone = scheduleStatus === 'ON_PLAN' ? 'bg-emerald-100 text-emerald-800' : scheduleStatus === 'OUT_OF_PLAN' ? 'bg-amber-100 text-amber-800' : 'bg-slate-100 text-slate-600';
             const plannedWindow = shipment.planned_loading_end_date && shipment.planned_loading_end_date !== shipment.planned_loading_date
                 ? [shipment.planned_loading_date, shipment.planned_loading_end_date].filter(Boolean).join(' – ')
                 : shipment.planned_loading_date;
             const confirmedCancel = write && di.di_status === 'CONFIRMED'
                 ? action('cancel-confirmed', tr('shipping.cancelConfirmed', 'Cancel confirmed DI'), 'px-3 py-2 border border-red-200 text-red-700 rounded-lg text-xs font-bold')
                 : '';
-            return `<div class="space-y-5"><div class="flex items-start justify-between gap-3"><div>${back}<h2 class="text-xl font-black text-slate-900 mt-2">${escapePhase6Text(di.di_no || di.di_id)}</h2><p class="text-xs text-slate-500">${escapePhase6Text(tr('shipping.shipmentMeta', 'Shipment {id} · {status}', { id: shipment.shipment_id, status: typeof translateStatus === 'function' ? translateStatus(shipment.status) : shipment.status }))}</p></div><div class="flex gap-2">${confirmedCancel}${action('refresh-detail', tr('shipping.refreshDetail', 'Refresh detail'), 'px-3 py-2 border rounded-lg text-xs font-bold')}</div></div>
+            return `<div class="space-y-5"><div class="flex items-start justify-between gap-3"><div>${back}<h2 class="text-xl font-black text-slate-900 mt-2">${escapePhase6Text(di.di_no || di.di_id)}</h2><p class="text-xs text-slate-500">${escapePhase6Text(shipment.shipment_id)}</p>${renderSemanticStatusBadge(shipment.status)}</div><div class="flex gap-2">${confirmedCancel}${action('refresh-detail', tr('shipping.refreshDetail', 'Refresh detail'), 'px-3 py-2 border rounded-lg text-xs font-bold')}</div></div>
                 ${customerDocsCard}
                 ${internalDiDocsCard}
                 ${section(tr('shipping.secDi', 'DI'), `<div class="grid grid-cols-2 md:grid-cols-4 gap-4">${field(tr('common.customer', 'Customer'), di.customer_id)}<div><div class="font-bold text-slate-900">${escapePhase6Text(String(di.customer_po_no || '').trim() || di.po_id || '-')}</div><div class="text-[10px] font-mono text-slate-400">${tr('po.systemPo', 'System PO')}: ${escapePhase6Text(di.po_id || '-')}</div></div>${field(tr('shipping.colShippingPlan', 'Shipping plan'), [di.shipping_month, di.shipping_period].filter(Boolean).join(' / '))}${field(tr('dashboard.colContainerPlan', 'Container plan'), di.container_plan)}${field(tr('shipping.diStatus', 'DI status'), typeof translateStatus === 'function' ? translateStatus(di.di_status || di.status) : (di.di_status || di.status))}${field(tr('shipping.surveyor', 'Surveyor'), di.surveyor_partner_id)}${field(tr('shipping.forwarderSuggestion', 'Forwarder suggestion'), di.forwarder_partner_id)}${field(tr('shipping.driveLink', 'Drive link'), di.di_drive_url)}</div><div class="text-xs text-slate-600">${escapePhase6Text(di.note || '')}</div>${balances.length ? `<div class="rounded-lg bg-slate-50 p-3 text-[11px]"><strong>${tr('shipping.poBalanceLabel', 'PO balance from API:')}</strong> ${balances.map(balance => `${escapePhase6Text(balance.product_code || balance.po_revision_line_id)} ${tr('shipping.availableMt', '{qty} MT available', { qty: Number(balance.available_qty_mt || 0).toFixed(3) })}`).join(' · ')}</div>` : ''}`)}
@@ -11198,7 +11221,7 @@
                     <div class="grid grid-cols-1 gap-3 rounded-lg bg-slate-50 p-3 sm:grid-cols-3">
                         ${field(tr('shipping.plannedLoading', 'Planned loading'), plannedWindow)}
                         ${field(tr('shipping.actualLoading', 'Actual loading'), shipment.actual_loading_date)}
-                        <div><div class="text-[10px] uppercase font-bold text-slate-400">${tr('shipping.colScheduleResult','Schedule result')}</div><div class="mt-1">${`<span class="inline-flex whitespace-nowrap rounded-full px-2.5 py-1 text-xs font-semibold ${scheduleTone}">${escapePhase6Text(scheduleLabel)}</span>`}</div></div>
+                        <div><div class="text-[10px] uppercase font-bold text-slate-400">${tr('shipping.colScheduleResult','Schedule result')}</div><div class="mt-1">${renderSemanticStatusBadge(scheduleStatus, scheduleLabel)}</div></div>
                     </div>
                     ${write ? `<div class="space-y-3 text-xs">
                         <div data-schedule-row="planned" class="grid items-end gap-3 sm:grid-cols-[1fr_1fr_12rem]">
@@ -11215,7 +11238,7 @@
                 ${section(tr('shipping.secContainers', 'Containers'), `<div class="text-xs text-slate-600">${(shipment.containers || []).length ? shipment.containers.map(container => `<div>${escapePhase6Text(container.container_no)} · Seal ${escapePhase6Text(container.seal_no || '-')} · ${escapePhase6Text((container.lines || []).map(line => `${line.product_name || line.product_code}: ${line.qty_mt} MT`).join(', '))}</div>`).join('') : tr('shipping.noContainers', 'No actual containers recorded.')}</div>${write ? `${renderPhase6ContainerForm()}${action('save-containers', tr('shipping.saveContainers', 'Save Containers'), 'px-3 py-2 bg-blue-600 text-white rounded text-xs font-bold')}` : ''}`)}
                 ${section(tr('shipping.secInvoice', 'Invoice'), `<div class="text-xs space-y-1">${invoices.length ? invoices.map(invoice => `<div><strong>${escapePhase6Text(invoice.invoice_no)}</strong> · ${invoiceBadge(invoice.version)} · ${Number(invoice.total_amount || 0).toFixed(2)} ${escapePhase6Text(invoice.currency || '')}${write && invoice.version === 'PRELIMINARY' ? ` ${action('finalize-invoice', tr('shipping.finalizeToFinal', 'Finalize to FINAL'), 'di-invoice-finalize ml-2', ` data-phase6-invoice-id="${escapePhase6Text(invoice.invoice_id)}"`)}` : ''}</div>`).join('') : tr('shipping.noInvoices', 'No invoices recorded.')}</div>${write ? `<div class="grid grid-cols-1 md:grid-cols-4 gap-2 text-xs"><label class="text-xs font-semibold text-slate-600">${tr('shipping.invoiceNoPh', 'Invoice No.')}<input id="phase6InvoiceNo" class="mt-1 w-full border rounded-lg p-2"></label><label class="text-xs font-semibold text-slate-600">${tr('shipping.invoiceDate', 'Invoice Date')}<input id="phase6InvoiceDate" type="date" class="mt-1 w-full border rounded-lg p-2"></label><label class="text-xs font-semibold text-slate-600">${tr('shipping.invoiceType', 'Invoice Type')}<select id="phase6InvoiceVersion" class="mt-1 w-full border rounded-lg p-2"><option value="PRELIMINARY">${tr('shipping.preliminary', 'Preliminary')}</option><option value="FINAL">${tr('shipping.final', 'Final')}</option></select></label>${action('save-invoice', tr('shipping.saveInvoice', 'Save Invoice'), 'bg-blue-600 text-white rounded p-2 font-bold')}<div class="md:col-span-4">${renderPhase6InvoiceForm()}</div><p class="md:col-span-4 text-[11px] text-slate-500">${tr('shipping.invoiceHint', 'Create PRELIMINARY invoices first when needed, then enter actual FINAL lines above and use Finalize to FINAL.')}</p></div>` : ''}`)}
                 ${section(tr('shipping.secDocuments', 'Documents'), `<div class="grid grid-cols-2 md:grid-cols-4 gap-3 text-xs">${field(tr('shipping.digitalSent', 'Digital sent'), shipment.digital_docs_sent_date)}${field(tr('shipping.dhlSent', 'DHL sent'), shipment.dhl_sent_date)}${field(tr('shipping.dhlTracking', 'DHL tracking'), shipment.dhl_tracking_no)}</div>${write ? `<div class="grid grid-cols-1 md:grid-cols-3 gap-2 text-xs"><input id="phase6DigitalDocsDate" type="date" value="${escapePhase6Text(shipment.digital_docs_sent_date)}" class="border rounded p-2"><label class="border rounded p-2"><input id="phase6OriginalDocs" type="checkbox" ${shipment.original_docs_required ? 'checked' : ''}> ${tr('shipping.originalDocsReq', 'Original docs required')}</label><input id="phase6DhlDate" type="date" value="${escapePhase6Text(shipment.dhl_sent_date)}" class="border rounded p-2"><input id="phase6DhlTracking" value="${escapePhase6Text(shipment.dhl_tracking_no)}" placeholder="${tr('shipping.dhlTracking', 'DHL tracking no.')}" class="border rounded p-2"><input id="phase6DocsNote" value="${escapePhase6Text(shipment.docs_note)}" placeholder="${tr('common.note', 'Document note')}" class="border rounded p-2">${action('save-documents', tr('shipping.saveDocuments', 'Save Documents'), 'md:col-span-3 bg-blue-600 text-white rounded p-2 font-bold')}</div>` : ''}`)}
-                ${section(tr('shipping.secPayment', 'Payment'), `<div class="grid grid-cols-2 md:grid-cols-4 gap-3 text-xs">${field(tr('shipping.colPayStatus', 'Payment status'), typeof translateStatus === 'function' ? translateStatus(shipment.payment_status) : shipment.payment_status)}${field(tr('shipping.finalInvoiceTotal', 'Final invoice total'), shipment.final_invoice_total)}${field(tr('shipping.cashReceived', 'Cash received'), shipment.cash_received_amount)}${field(tr('shipping.creditAllocated', 'Credit allocated'), shipment.allocated_credit_amount)}</div>${write ? `<div class="grid grid-cols-1 md:grid-cols-3 gap-2 text-xs"><input id="phase6CashReceived" type="number" min="0" step="0.01" value="${escapePhase6Text(shipment.cash_received_amount || 0)}" class="border rounded p-2"><input id="phase6PaymentNote" value="${escapePhase6Text(shipment.payment_note)}" placeholder="${tr('payments.paymentNote', 'Payment note')}" class="border rounded p-2">${action('save-payment', tr('shipping.savePayment', 'Save Payment'), 'bg-blue-600 text-white rounded p-2 font-bold')}<select id="phase6CreditId" class="border rounded p-2"><option value="">${tr('shipping.applyCustCreditOpt', 'Apply customer credit')}</option>${credits.filter(credit => Number(credit.remaining_amount || 0) > 0).map(credit => `<option value="${escapePhase6Text(credit.credit_id)}">${escapePhase6Text(credit.credit_id)} · ${Number(credit.remaining_amount).toFixed(2)}</option>`).join('')}</select><input id="phase6CreditAmount" type="number" min="0" step="0.01" placeholder="${tr('shipping.creditAmountPh', 'Credit amount')}" class="border rounded p-2">${action('apply-credit', tr('shipping.applyCredit', 'Apply Credit'), 'border border-blue-600 text-blue-700 rounded p-2 font-bold')}</div>` : ''}`)}
+                ${section(tr('shipping.secPayment', 'Payment'), `<div class="grid grid-cols-2 md:grid-cols-4 gap-3 text-xs"><div><div class="text-[10px] uppercase font-bold text-slate-400">${tr('shipping.colPayStatus', 'Payment status')}</div><div class="mt-1">${renderSemanticStatusBadge(shipment.payment_status)}</div></div>${field(tr('shipping.finalInvoiceTotal', 'Final invoice total'), shipment.final_invoice_total)}${field(tr('shipping.cashReceived', 'Cash received'), shipment.cash_received_amount)}${field(tr('shipping.creditAllocated', 'Credit allocated'), shipment.allocated_credit_amount)}</div>${write ? `<div class="grid grid-cols-1 md:grid-cols-3 gap-2 text-xs"><input id="phase6CashReceived" type="number" min="0" step="0.01" value="${escapePhase6Text(shipment.cash_received_amount || 0)}" class="border rounded p-2"><input id="phase6PaymentNote" value="${escapePhase6Text(shipment.payment_note)}" placeholder="${tr('payments.paymentNote', 'Payment note')}" class="border rounded p-2">${action('save-payment', tr('shipping.savePayment', 'Save Payment'), 'bg-blue-600 text-white rounded p-2 font-bold')}<select id="phase6CreditId" class="border rounded p-2"><option value="">${tr('shipping.applyCustCreditOpt', 'Apply customer credit')}</option>${credits.filter(credit => Number(credit.remaining_amount || 0) > 0).map(credit => `<option value="${escapePhase6Text(credit.credit_id)}">${escapePhase6Text(credit.credit_id)} · ${Number(credit.remaining_amount).toFixed(2)}</option>`).join('')}</select><input id="phase6CreditAmount" type="number" min="0" step="0.01" placeholder="${tr('shipping.creditAmountPh', 'Credit amount')}" class="border rounded p-2">${action('apply-credit', tr('shipping.applyCredit', 'Apply Credit'), 'border border-blue-600 text-blue-700 rounded p-2 font-bold')}</div>` : ''}`)}
                 ${section(tr('shipping.secHistory', 'History'), history.length ? `<div class="space-y-2 text-xs">${history.map(event => `<div class="border-l-2 border-slate-200 pl-3"><strong>${escapePhase6Text(event.event_type)}</strong> <span class="text-slate-500">${escapePhase6Text(event.created_at || '')} · ${escapePhase6Text(event.actor_id || '')}</span></div>`).join('')}</div>` : `<p class="text-xs text-slate-500">${tr('shipping.noHistory', 'No history is available for this view.')}</p>`)}
             </div>`;
         }
@@ -15481,10 +15504,7 @@
         }
 
         function paymentStatusBadge(status) {
-            const s = String(status || 'UNPAID').toUpperCase();
-            if (s === 'PAID') return '<span class="px-2 py-1 rounded bg-emerald-100 text-emerald-700 font-bold text-[10px]">PAID</span>';
-            if (s === 'PARTIAL') return '<span class="px-2 py-1 rounded bg-amber-100 text-amber-700 font-bold text-[10px]">PARTIAL</span>';
-            return '<span class="px-2 py-1 rounded bg-rose-100 text-rose-700 font-bold text-[10px]">UNPAID</span>';
+            return renderSemanticStatusBadge(status || 'UNPAID');
         }
 
         function formatMoney(value, currency='USD') {
@@ -15644,11 +15664,8 @@
             const credits = Array.isArray(pd.customerCredits) ? pd.customerCredits : [];
             const filters = pd.filters || { paymentStatus: 'ALL', invoiceReadiness: 'ALL', shipmentStatus: 'ALL', currency: 'ALL', customerId: 'ALL', search: '' };
 
-            const readinessBadge = (r) => {
-                if (r === 'FINALIZED') return '<span class="px-1.5 py-0.5 rounded bg-emerald-50 text-emerald-700 font-bold text-[9px]">FINAL</span>';
-                if (r === 'PRELIMINARY_ONLY') return '<span class="px-1.5 py-0.5 rounded bg-amber-50 text-amber-700 font-bold text-[9px]">PRELIM ONLY</span>';
-                return '<span class="px-1.5 py-0.5 rounded bg-slate-100 text-slate-500 font-bold text-[9px]">NO INVOICE</span>';
-            };
+            const readinessBadge = r => renderSemanticStatusBadge(r || 'NO_FINAL_INVOICE',
+                r === 'FINALIZED' ? tr('shipping.final','FINAL') : r === 'PRELIMINARY_ONLY' ? tr('shipping.preliminary','PRELIMINARY') : tr('crm.noInvoice','No final invoice'));
 
             const currencyTotalsHtml = (summary.totals_by_currency || []).length
                 ? `<div class="grid md:grid-cols-3 gap-3">${summary.totals_by_currency.map(curTot => `
